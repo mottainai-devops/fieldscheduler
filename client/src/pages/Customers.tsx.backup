@@ -1,0 +1,238 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Search, Users, MapPin, Plus, X } from "lucide-react";
+import { Link } from "wouter";
+import { trpc } from "@/lib/trpc";
+import { useState, useMemo } from "react";
+import AppHeader from "@/components/AppHeader";
+import { TableSkeleton } from "@/components/LoadingComponents";
+import { ErrorState } from "@/components/ErrorComponents";
+
+export default function Customers() {
+  const { data: customers = [], isLoading, error, refetch } = trpc.fieldWorker.getCustomers.useQuery();
+  const { data: workers = [] } = trpc.fieldWorker.getWorkers.useQuery();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedBuilding, setSelectedBuilding] = useState("");
+  const [selectedFieldManager, setSelectedFieldManager] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("");
+
+  // Create a map of worker ID to worker name
+  const workerMap = useMemo(() => {
+    const map: Record<number, string> = {};
+    workers.forEach(worker => {
+      map[worker.id] = worker.name || `Worker ${worker.id}`;
+    });
+    return map;
+  }, [workers]);
+
+  // Extract unique building IDs from customers
+  const uniqueBuildings = useMemo(() => {
+    const buildings = new Set(customers.map(c => c.buildingId).filter(Boolean));
+    return Array.from(buildings).sort();
+  }, [customers]);
+
+  // Extract unique field managers from customers
+  const uniqueFieldManagers = useMemo(() => {
+    const managers = new Set<number>();
+    customers.forEach(c => {
+      if (c.fieldManager) managers.add(c.fieldManager);
+    });
+    return Array.from(managers).sort();
+  }, [customers]);
+
+  const filteredCustomers = useMemo(() => {
+    return customers.filter(customer => {
+      // Search filter
+      if (searchTerm && !customer.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+        return false;
+      }
+      
+      // Building ID (CUSTOMERMAF) filter
+      if (selectedBuilding && customer.buildingId !== selectedBuilding) {
+        return false;
+      }
+      
+      // Field Manager filter
+      if (selectedFieldManager && customer.fieldManager !== parseInt(selectedFieldManager)) {
+        return false;
+      }
+      
+      // Status filter
+      if (selectedStatus && customer.assignmentStatus !== selectedStatus) {
+        return false;
+      }
+      
+      return true;
+    });
+  }, [customers, searchTerm, selectedBuilding, selectedFieldManager, selectedStatus]);
+
+  const hasActiveFilters = selectedBuilding || selectedFieldManager || selectedStatus;
+
+  const clearFilters = () => {
+    setSelectedBuilding("");
+    setSelectedFieldManager("");
+    setSelectedStatus("");
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900">
+      <AppHeader title="Customers" subtitle="Manage customer locations and details" />
+
+      {/* Main Content */}
+      <main className="container mx-auto px-6 py-8">
+        {/* Filters */}
+        <Card className="bg-slate-800/50 border-slate-700 mb-6">
+          <CardContent className="pt-6">
+            <div className="space-y-4">
+              {/* Search Bar */}
+              <div className="flex items-center gap-2">
+                <Search className="w-4 h-4 text-slate-400" />
+                <Input
+                  type="text"
+                  placeholder="Search customers by name..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="bg-slate-700 border-slate-600 text-white flex-1"
+                />
+              </div>
+
+              {/* Filter Controls */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Building ID Filter */}
+                <div>
+                  <label className="text-xs text-slate-400 mb-2 block">Filter by CUSTOMERMAF (Building ID)</label>
+                  <select
+                    value={selectedBuilding}
+                    onChange={(e) => setSelectedBuilding(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
+                  >
+                    <option value="">All Buildings ({uniqueBuildings.length})</option>
+                    {uniqueBuildings.map(building => (
+                      <option key={building} value={building}>{building}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Field Manager Filter */}
+                <div>
+                  <label className="text-xs text-slate-400 mb-2 block">Filter by Field Manager</label>
+                  <select
+                    value={selectedFieldManager}
+                    onChange={(e) => setSelectedFieldManager(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
+                  >
+                    <option value="">All Managers ({uniqueFieldManagers.length})</option>
+                    {uniqueFieldManagers.map(managerId => (
+                      <option key={managerId} value={managerId.toString()}>
+                        {workerMap[managerId] || `Worker ${managerId}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <label className="text-xs text-slate-400 mb-2 block">Filter by Assignment Status</label>
+                  <select
+                    value={selectedStatus}
+                    onChange={(e) => setSelectedStatus(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white text-sm"
+                  >
+                    <option value="">All Status</option>
+                    <option value="unassigned">Unassigned</option>
+                    <option value="assigned">Assigned</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Clear Filters Button */}
+              {hasActiveFilters && (
+                <div className="flex justify-end">
+                  <Button
+                    onClick={clearFilters}
+                    variant="outline"
+                    size="sm"
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3 h-3 mr-1" />
+                    Clear Filters
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Customer List */}
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-white">Customer Locations</CardTitle>
+                <p className="text-sm text-slate-400 mt-1">
+                  Showing {filteredCustomers.length} of {customers.length} customers
+                </p>
+              </div>
+              <Link href="/customers/new">
+                <Button className="bg-green-600 hover:bg-green-700 text-white">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Customer
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {error ? (
+              <ErrorState error={error} onRetry={refetch} compact />
+            ) : isLoading ? (
+              <TableSkeleton rows={8} columns={6} />
+            ) : filteredCustomers.length === 0 ? (
+              <div className="text-center py-8 text-slate-400">
+                {customers.length === 0 ? "No customers found" : "No customers match your filters"}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredCustomers.map((customer) => (
+                  <Link key={customer.id} href={`/customers/${customer.id}`}>
+                    <div className="p-4 bg-slate-700/30 border border-slate-600 rounded-lg hover:bg-slate-700/50 transition-colors cursor-pointer">
+                      <div className="flex items-start justify-between mb-2">
+                        <h3 className="font-medium text-white">{customer.name}</h3>
+                        <span className={`text-xs px-2 py-1 rounded ${
+                          customer.assignmentStatus === "assigned" ? "bg-blue-600/20 text-blue-400" :
+                          "bg-gray-600/20 text-gray-400"
+                        }`}>
+                          {customer.assignmentStatus || "unassigned"}
+                        </span>
+                      </div>
+                      
+                      <p className="text-sm text-slate-400 mb-2">{customer.address}</p>
+                      
+                      <div className="space-y-2 text-xs text-slate-500">
+                        <div className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3" />
+                          <span>{customer.latitude}, {customer.longitude}</span>
+                        </div>
+                        {customer.buildingId && (
+                          <div className="text-blue-400">
+                            <strong>CUSTOMERMAF:</strong> {customer.buildingId}
+                          </div>
+                        )}
+                        {customer.fieldManager && (
+                          <div className="text-purple-400">
+                            <strong>Manager:</strong> {workerMap[customer.fieldManager] || `Worker ${customer.fieldManager}`}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
+

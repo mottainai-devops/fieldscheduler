@@ -1,0 +1,38 @@
+{
+  "query": "SELECT \n  'Total Customers' as metric, COUNT(*) as value FROM customers\nUNION ALL\nSELECT 'Customers with Building ID', COUNT(*) FROM customers WHERE buildingId IS NOT NULL\nUNION ALL\nSELECT 'Unique Building IDs', COUNT(DISTINCT buildingId) FROM customers WHERE buildingId IS NOT NULL\nUNION ALL\nSELECT 'Customers with Field Manager', COUNT(*) FROM customers WHERE fieldManager IS NOT NULL\nUNION ALL\nSELECT 'Unique Field Managers', COUNT(DISTINCT fieldManager) FROM customers WHERE fieldManager IS NOT NULL\nUNION ALL\nSELECT 'Total Workers', COUNT(*) FROM workers\nUNION ALL\nSELECT 'Field Manager Workers', COUNT(*) FROM workers WHERE name NOT IN ('Admin User');",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT \n  'Total Customers' as metric, COUNT(*) as value FROM customers\nUNION ALL\nSELECT 'Customers with Building ID', COUNT(*) FROM customers WHERE buildingId IS NOT NULL\nUNION ALL\nSELECT 'Unique Building IDs', COUNT(DISTINCT buildingId) FROM customers WHERE buildingId IS NOT NULL\nUNION ALL\nSELECT 'Customers with Field Manager', COUNT(*) FROM customers WHERE fieldManager IS NOT NULL\nUNION ALL\nSELECT 'Unique Field Managers', COUNT(DISTINCT fieldManager) FROM customers WHERE fieldManager IS NOT NULL\nUNION ALL\nSELECT 'Total Workers', COUNT(*) FROM workers\nUNION ALL\nSELECT 'Field Manager Workers', COUNT(*) FROM workers WHERE name NOT IN ('Admin User');",
+  "rows": [
+    {
+      "metric": "Unique Field Managers",
+      "value": "3"
+    },
+    {
+      "metric": "Total Customers",
+      "value": "6473"
+    },
+    {
+      "metric": "Customers with Field Manager",
+      "value": "21"
+    },
+    {
+      "metric": "Customers with Building ID",
+      "value": "6451"
+    },
+    {
+      "metric": "Total Workers",
+      "value": "4"
+    },
+    {
+      "metric": "Field Manager Workers",
+      "value": "3"
+    },
+    {
+      "metric": "Unique Building IDs",
+      "value": "40"
+    }
+  ],
+  "messages": [],
+  "stdout": "metric\tvalue\nUnique Field Managers\t3\nTotal Customers\t6473\nCustomers with Field Manager\t21\nCustomers with Building ID\t6451\nTotal Workers\t4\nField Manager Workers\t3\nUnique Building IDs\t40\n",
+  "stderr": "",
+  "execution_time_ms": 62
+}

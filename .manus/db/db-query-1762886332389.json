@@ -1,0 +1,15 @@
+{
+  "query": "SELECT COUNT(*) as total_customers, COUNT(fieldManager) as with_field_manager, COUNT(DISTINCT fieldManager) as unique_field_managers FROM customers;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as total_customers, COUNT(fieldManager) as with_field_manager, COUNT(DISTINCT fieldManager) as unique_field_managers FROM customers;",
+  "rows": [
+    {
+      "total_customers": "6473",
+      "with_field_manager": "21",
+      "unique_field_managers": "3"
+    }
+  ],
+  "messages": [],
+  "stdout": "total_customers\twith_field_manager\tunique_field_managers\n6473\t21\t3\n",
+  "stderr": "",
+  "execution_time_ms": 63
+}

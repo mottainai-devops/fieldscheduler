@@ -1,0 +1,16 @@
+{
+  "query": "SELECT id, name, buildingId, zohoContactId FROM customers WHERE buildingId = '56420' LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, buildingId, zohoContactId FROM customers WHERE buildingId = '56420' LIMIT 5;",
+  "rows": [
+    {
+      "id": "94014",
+      "name": "56420 OYSISW12 076",
+      "buildingId": "56420",
+      "zohoContactId": "5300119000002195001"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tbuildingId\tzohoContactId\n94014\t56420 OYSISW12 076\t56420\t5300119000002195001\n",
+  "stderr": "",
+  "execution_time_ms": 65
+}

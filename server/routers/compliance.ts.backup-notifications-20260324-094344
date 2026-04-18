@@ -1,0 +1,137 @@
+import { router, protectedProcedure, publicProcedure } from '../_core/trpc';
+import { z } from 'zod';
+import * as complianceDb from '../complianceDb';
+
+export const complianceRouter = router({
+  /**
+   * Get all violation types
+   */
+  getViolationTypes: publicProcedure
+    .input(z.object({}).optional())
+    .query(async () => {
+      return await complianceDb.getAllViolationTypes();
+    }),
+
+  /**
+   * Create a new violation type
+   */
+  createViolationType: publicProcedure
+    .input(z.object({
+      name: z.string(),
+      description: z.string().optional(),
+      severity: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return await complianceDb.createViolationType(input);
+    }),
+
+  /**
+   * Update an existing violation type
+   */
+  updateViolationType: publicProcedure
+    .input(z.object({
+      id: z.number(),
+      name: z.string().optional(),
+      description: z.string().optional(),
+      severity: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { id, ...data } = input;
+      return await complianceDb.updateViolationType(id, data);
+    }),
+
+  /**
+   * Get all violation types (alias for compatibility)
+   */
+  getAllViolationTypes: publicProcedure
+    .query(async () => {
+      return await complianceDb.getAllViolationTypes();
+    }),
+
+  /**
+   * Create/Report a violation
+   */
+  createViolation: publicProcedure
+    .input(z.object({
+      customerId: z.number(),
+      violationTypeId: z.number(),
+      reportedBy: z.number().optional(),
+      notes: z.string().optional(),
+      evidenceUrls: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return await complianceDb.createViolation(input);
+    }),
+
+  /**
+   * Get all violations
+   */
+  getAllViolations: publicProcedure
+    .query(async () => {
+      return await complianceDb.getAllViolations();
+    }),
+
+  /**
+   * Get violations for a customer
+   */
+  getViolationsByCustomer: publicProcedure
+    .input(z.object({
+      customerId: z.number()
+    }))
+    .query(async ({ input }) => {
+      return await complianceDb.getViolationsByCustomer(input.customerId);
+    }),
+
+  /**
+   * Update violation status
+   */
+  updateViolationStatus: publicProcedure
+    .input(z.object({
+      violationId: z.number(),
+      status: z.enum(["reported", "under_review", "resolved", "dismissed"]),
+      resolutionNotes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return await complianceDb.updateViolationStatus(input);
+    }),
+
+  /**
+   * Get all abatement notices
+   */
+  getAllAbatementNotices: publicProcedure
+    .query(async () => {
+      return await complianceDb.getAllAbatementNotices();
+    }),
+
+  /**
+   * Create an abatement notice
+   */
+  createAbatementNotice: publicProcedure
+    .input(z.object({
+      customerId: z.number(),
+      violationId: z.number().optional(),
+      noticeNumber: z.string().optional(),
+      dueDate: z.date().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return await complianceDb.createAbatementNotice(input);
+    }),
+
+  /**
+   * Update abatement notice status
+   */
+  updateAbatementNoticeStatus: publicProcedure
+    .input(z.object({
+      noticeId: z.number(),
+      status: z.string(),
+      complianceDate: z.date().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return await complianceDb.updateAbatementNoticeStatus(
+        input.noticeId,
+        input.status,
+        input.complianceDate
+      );
+    }),
+});

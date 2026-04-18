@@ -1,0 +1,8 @@
+{
+  "query": "UPDATE customers SET \n  fieldManager = CASE \n    WHEN id <= 5 THEN 'Adeya Deweyi'\n    WHEN id <= 10 THEN 'Test Worker 1'\n    WHEN id <= 15 THEN 'Test Worker 2'\n    ELSE 'Unassigned'\n  END,\n  assignmentStatus = CASE \n    WHEN id <= 8 THEN 'completed'\n    WHEN id <= 18 THEN 'assigned'\n    ELSE 'unassigned'\n  END\nWHERE id > 0;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute UPDATE customers SET \n  fieldManager = CASE \n    WHEN id <= 5 THEN 'Adeya Deweyi'\n    WHEN id <= 10 THEN 'Test Worker 1'\n    WHEN id <= 15 THEN 'Test Worker 2'\n    ELSE 'Unassigned'\n  END,\n  assignmentStatus = CASE \n    WHEN id <= 8 THEN 'completed'\n    WHEN id <= 18 THEN 'assigned'\n    ELSE 'unassigned'\n  END\nWHERE id > 0;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1292 (22007) at line 1: Truncated incorrect DOUBLE value: '?'"
+  ]
+}

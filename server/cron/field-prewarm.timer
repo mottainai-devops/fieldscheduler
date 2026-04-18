@@ -1,0 +1,10 @@
+# /etc/systemd/system/field-prewarm.timer
+[Unit]
+Description=Run matrix prewarm nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

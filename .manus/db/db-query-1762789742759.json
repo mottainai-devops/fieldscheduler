@@ -1,0 +1,19 @@
+{
+  "query": "SELECT COUNT(*) as total_count FROM customers; SELECT COUNT(*) as with_buildingid FROM customers WHERE buildingId IS NOT NULL;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as total_count FROM customers; SELECT COUNT(*) as with_buildingid FROM customers WHERE buildingId IS NOT NULL;",
+  "rows": [
+    {
+      "total_count": "58"
+    },
+    {
+      "total_count": "with_buildingid"
+    },
+    {
+      "total_count": "58"
+    }
+  ],
+  "messages": [],
+  "stdout": "total_count\n58\nwith_buildingid\n58\n",
+  "stderr": "",
+  "execution_time_ms": 219
+}

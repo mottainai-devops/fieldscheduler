@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO `zohoSyncHistory` (\n  `syncType`,\n  `status`,\n  `totalContacts`,\n  `syncedContacts`,\n  `failedContacts`,\n  `fieldManagerCount`,\n  `customermafCount`,\n  `durationMs`,\n  `errorMessage`\n) VALUES \n('manual', 'success', 45, 45, 0, 12, 35, 3500, NULL),\n('scheduled', 'success', 42, 42, 0, 11, 33, 2800, NULL),\n('webhook', 'success', 5, 5, 0, 1, 4, 800, NULL),\n('manual', 'failed', 10, 8, 2, 2, 6, 1200, 'Some contacts failed to sync');",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute INSERT INTO `zohoSyncHistory` (\n  `syncType`,\n  `status`,\n  `totalContacts`,\n  `syncedContacts`,\n  `failedContacts`,\n  `fieldManagerCount`,\n  `customermafCount`,\n  `durationMs`,\n  `errorMessage`\n) VALUES \n('manual', 'success', 45, 45, 0, 12, 35, 3500, NULL),\n('scheduled', 'success', 42, 42, 0, 11, 33, 2800, NULL),\n('webhook', 'success', 5, 5, 0, 1, 4, 800, NULL),\n('manual', 'failed', 10, 8, 2, 2, 6, 1200, 'Some contacts failed to sync');",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 135
+}

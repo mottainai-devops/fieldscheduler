@@ -1,0 +1,22 @@
+{
+  "query": "SELECT id, name FROM workers LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name FROM workers LIMIT 10;",
+  "rows": [
+    {
+      "id": "210001",
+      "name": "Admin User"
+    },
+    {
+      "id": "210002",
+      "name": "Test Worker 1"
+    },
+    {
+      "id": "210003",
+      "name": "Test Worker 2"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\n210001\tAdmin User\n210002\tTest Worker 1\n210003\tTest Worker 2\n",
+  "stderr": "",
+  "execution_time_ms": 175
+}

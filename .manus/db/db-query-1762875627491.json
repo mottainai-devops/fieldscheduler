@@ -1,0 +1,70 @@
+{
+  "query": "SELECT DISTINCT buildingId FROM customers WHERE buildingId IS NOT NULL ORDER BY buildingId LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT DISTINCT buildingId FROM customers WHERE buildingId IS NOT NULL ORDER BY buildingId LIMIT 20;",
+  "rows": [
+    {
+      "buildingId": "12997"
+    },
+    {
+      "buildingId": "13171"
+    },
+    {
+      "buildingId": "13633"
+    },
+    {
+      "buildingId": "13872"
+    },
+    {
+      "buildingId": "14367"
+    },
+    {
+      "buildingId": "15198"
+    },
+    {
+      "buildingId": "15212"
+    },
+    {
+      "buildingId": "15274"
+    },
+    {
+      "buildingId": "15421"
+    },
+    {
+      "buildingId": "15837"
+    },
+    {
+      "buildingId": "16007"
+    },
+    {
+      "buildingId": "16819"
+    },
+    {
+      "buildingId": "16847"
+    },
+    {
+      "buildingId": "16916"
+    },
+    {
+      "buildingId": "22646"
+    },
+    {
+      "buildingId": "29962"
+    },
+    {
+      "buildingId": "29998"
+    },
+    {
+      "buildingId": "30413"
+    },
+    {
+      "buildingId": "31231"
+    },
+    {
+      "buildingId": "31584"
+    }
+  ],
+  "messages": [],
+  "stdout": "buildingId\n12997\n13171\n13633\n13872\n14367\n15198\n15212\n15274\n15421\n15837\n16007\n16819\n16847\n16916\n22646\n29962\n29998\n30413\n31231\n31584\n",
+  "stderr": "",
+  "execution_time_ms": 67
+}

@@ -1,0 +1,45 @@
+{
+  "query": "SELECT COUNT(*) as total, COUNT(DISTINCT customermaf) as with_maf, COUNT(DISTINCT fieldManager) as with_manager FROM customers LIMIT 1; SELECT name, customermaf, fieldManager FROM customers WHERE customermaf IS NOT NULL LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as total, COUNT(DISTINCT customermaf) as with_maf, COUNT(DISTINCT fieldManager) as with_manager FROM customers LIMIT 1; SELECT name, customermaf, fieldManager FROM customers WHERE customermaf IS NOT NULL LIMIT 5;",
+  "rows": [
+    {
+      "total": "15",
+      "with_maf": "15",
+      "with_manager": "5"
+    },
+    {
+      "total": "name",
+      "with_maf": "customermaf",
+      "with_manager": "fieldManager"
+    },
+    {
+      "total": "Lagos Distribution Center",
+      "with_maf": "AFT-200",
+      "with_manager": "1"
+    },
+    {
+      "total": "Ikeja Warehouse",
+      "with_maf": "AFT-221",
+      "with_manager": "2"
+    },
+    {
+      "total": "Victoria Island Office",
+      "with_maf": "CUM-095",
+      "with_manager": "3"
+    },
+    {
+      "total": "Abuja Central Hub",
+      "with_maf": "ADK-062",
+      "with_manager": "4"
+    },
+    {
+      "total": "Garki Distribution",
+      "with_maf": "DIC-087",
+      "with_manager": "5"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\twith_maf\twith_manager\n15\t15\t5\nname\tcustomermaf\tfieldManager\nLagos Distribution Center\tAFT-200\t1\nIkeja Warehouse\tAFT-221\t2\nVictoria Island Office\tCUM-095\t3\nAbuja Central Hub\tADK-062\t4\nGarki Distribution\tDIC-087\t5\n",
+  "stderr": "",
+  "execution_time_ms": 136
+}

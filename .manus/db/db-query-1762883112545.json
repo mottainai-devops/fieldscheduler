@@ -1,0 +1,19 @@
+{
+  "query": "SELECT DISTINCT fieldManager FROM customers WHERE fieldManager IS NOT NULL LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT DISTINCT fieldManager FROM customers WHERE fieldManager IS NOT NULL LIMIT 10;",
+  "rows": [
+    {
+      "fieldManager": "2"
+    },
+    {
+      "fieldManager": "1"
+    },
+    {
+      "fieldManager": "3"
+    }
+  ],
+  "messages": [],
+  "stdout": "fieldManager\n2\n1\n3\n",
+  "stderr": "",
+  "execution_time_ms": 194
+}

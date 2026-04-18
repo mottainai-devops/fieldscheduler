@@ -1,0 +1,40 @@
+{
+  "query": "SELECT id, name, latitude, longitude FROM customers LIMIT 5",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, latitude, longitude FROM customers LIMIT 5",
+  "rows": [
+    {
+      "id": "1",
+      "name": "Victoria Island Plaza",
+      "latitude": "6.4281",
+      "longitude": "3.4219"
+    },
+    {
+      "id": "2",
+      "name": "Ikoyi Heights",
+      "latitude": "6.4541",
+      "longitude": "3.4316"
+    },
+    {
+      "id": "3",
+      "name": "Lekki Gardens",
+      "latitude": "6.4474",
+      "longitude": "3.4706"
+    },
+    {
+      "id": "4",
+      "name": "Ikeja City Mall",
+      "latitude": "6.6018",
+      "longitude": "3.3515"
+    },
+    {
+      "id": "5",
+      "name": "Surulere Shopping Complex",
+      "latitude": "6.4969",
+      "longitude": "3.3606"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tlatitude\tlongitude\n1\tVictoria Island Plaza\t6.4281\t3.4219\n2\tIkoyi Heights\t6.4541\t3.4316\n3\tLekki Gardens\t6.4474\t3.4706\n4\tIkeja City Mall\t6.6018\t3.3515\n5\tSurulere Shopping Complex\t6.4969\t3.3606\n",
+  "stderr": "",
+  "execution_time_ms": 510
+}

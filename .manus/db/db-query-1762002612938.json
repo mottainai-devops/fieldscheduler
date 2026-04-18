@@ -1,0 +1,9 @@
+{
+  "query": "SELECT id, name, zohoContactId FROM customers WHERE id = 4234 LIMIT 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, zohoContactId FROM customers WHERE id = 4234 LIMIT 1;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 872
+}

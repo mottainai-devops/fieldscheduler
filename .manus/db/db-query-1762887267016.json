@@ -1,0 +1,16 @@
+{
+  "query": "SELECT \n  (SELECT COUNT(*) FROM customers) as total_customers,\n  (SELECT COUNT(DISTINCT buildingId) FROM customers WHERE buildingId IS NOT NULL) as unique_building_ids,\n  (SELECT COUNT(DISTINCT fieldManager) FROM customers WHERE fieldManager IS NOT NULL) as unique_field_managers,\n  (SELECT COUNT(*) FROM workers WHERE name NOT IN ('Admin User')) as field_manager_workers;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT \n  (SELECT COUNT(*) FROM customers) as total_customers,\n  (SELECT COUNT(DISTINCT buildingId) FROM customers WHERE buildingId IS NOT NULL) as unique_building_ids,\n  (SELECT COUNT(DISTINCT fieldManager) FROM customers WHERE fieldManager IS NOT NULL) as unique_field_managers,\n  (SELECT COUNT(*) FROM workers WHERE name NOT IN ('Admin User')) as field_manager_workers;",
+  "rows": [
+    {
+      "total_customers": "6473",
+      "unique_building_ids": "40",
+      "unique_field_managers": "3",
+      "field_manager_workers": "3"
+    }
+  ],
+  "messages": [],
+  "stdout": "total_customers\tunique_building_ids\tunique_field_managers\tfield_manager_workers\n6473\t40\t3\t3\n",
+  "stderr": "",
+  "execution_time_ms": 71
+}

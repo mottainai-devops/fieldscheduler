@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline - Field Worker Scheduler</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .offline-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+        }
+
+        .offline-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: #f3f4f6;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+        }
+
+        h1 {
+            color: #1f2937;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 16px;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+
+        .status-info {
+            background: #f9fafb;
+            border-left: 4px solid #ef4444;
+            padding: 15px;
+            margin-bottom: 30px;
+            text-align: left;
+            border-radius: 4px;
+        }
+
+        .status-label {
+            color: #6b7280;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            color: #1f2937;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .features {
+            text-align: left;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f0f9ff;
+            border-radius: 8px;
+        }
+
+        .features-title {
+            color: #1f2937;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+
+        .feature-list {
+            list-style: none;
+        }
+
+        .feature-list li {
+            color: #4b5563;
+            font-size: 13px;
+            padding: 8px 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .feature-list li:before {
+            content: '✓';
+            color: #10b981;
+            font-weight: bold;
+            margin-right: 10px;
+            font-size: 16px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .btn-secondary:hover {
+            background: #d1d5db;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+            color: #9ca3af;
+            font-size: 12px;
+        }
+
+        .connection-status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .connection-status.offline {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .connection-status.online {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        @media (max-width: 480px) {
+            .offline-container {
+                padding: 30px 20px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .actions {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="offline-container">
+        <div class="offline-icon">📡</div>
+        <h1>You're Offline</h1>
+        <p class="subtitle">
+            No internet connection detected. But don't worry, you can still access your cached routes and customer information.
+        </p>
+
+        <div class="status-info">
+            <div class="status-label">Connection Status</div>
+            <div class="status-value" id="connectionStatus">Checking...</div>
+        </div>
+
+        <div class="features">
+            <div class="features-title">What you can do offline:</div>
+            <ul class="feature-list">
+                <li>View your assigned routes</li>
+                <li>Access customer details and addresses</li>
+                <li>Track GPS location</li>
+                <li>Queue updates for later sync</li>
+                <li>View offline sync status</li>
+            </ul>
+        </div>
+
+        <div class="actions">
+            <button class="btn-primary" onclick="goToApp()">Go to App</button>
+            <button class="btn-secondary" onclick="location.reload()">Retry Connection</button>
+        </div>
+
+        <div class="connection-status offline" id="connectionIndicator">
+            ⚠️ Offline Mode - Changes will sync when you're back online
+        </div>
+
+        <div class="footer">
+            <p>Field Worker Scheduler v1.0 | Offline-First Architecture</p>
+        </div>
+    </div>
+
+    <script>
+        // Check connection status
+        function updateConnectionStatus() {
+            const isOnline = navigator.onLine;
+            const statusEl = document.getElementById('connectionStatus');
+            const indicatorEl = document.getElementById('connectionIndicator');
+
+            if (isOnline) {
+                statusEl.textContent = 'Connected ✓';
+                indicatorEl.className = 'connection-status online';
+                indicatorEl.textContent = '✓ Back Online - Syncing your data...';
+                
+                // Redirect to app after 2 seconds
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            } else {
+                statusEl.textContent = 'Disconnected';
+                indicatorEl.className = 'connection-status offline';
+                indicatorEl.textContent = '⚠️ Offline Mode - Changes will sync when you\'re back online';
+            }
+        }
+
+        function goToApp() {
+            window.location.href = '/';
+        }
+
+        // Check status on load
+        updateConnectionStatus();
+
+        // Listen for connection changes
+        window.addEventListener('online', updateConnectionStatus);
+        window.addEventListener('offline', updateConnectionStatus);
+
+        // Check periodically
+        setInterval(updateConnectionStatus, 5000);
+    </script>
+</body>
+</html>
+

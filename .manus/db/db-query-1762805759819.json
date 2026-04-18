@@ -1,0 +1,9 @@
+{
+  "query": "UPDATE customers SET \n  fieldManager = CASE \n    WHEN id <= 5 THEN 1\n    WHEN id <= 10 THEN 2\n    WHEN id <= 15 THEN 3\n    ELSE NULL\n  END,\n  assignmentStatus = CASE \n    WHEN id <= 10 THEN 'assigned'\n    ELSE 'unassigned'\n  END\nWHERE id > 0;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute UPDATE customers SET \n  fieldManager = CASE \n    WHEN id <= 5 THEN 1\n    WHEN id <= 10 THEN 2\n    WHEN id <= 15 THEN 3\n    ELSE NULL\n  END,\n  assignmentStatus = CASE \n    WHEN id <= 10 THEN 'assigned'\n    ELSE 'unassigned'\n  END\nWHERE id > 0;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 50
+}

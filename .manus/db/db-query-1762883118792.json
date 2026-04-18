@@ -1,0 +1,26 @@
+{
+  "query": "SELECT id, name FROM workers ORDER BY id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name FROM workers ORDER BY id;",
+  "rows": [
+    {
+      "id": "270001",
+      "name": "Hallelujah"
+    },
+    {
+      "id": "270002",
+      "name": "Juwon"
+    },
+    {
+      "id": "270003",
+      "name": "Bukola"
+    },
+    {
+      "id": "300001",
+      "name": "Admin User"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\n270001\tHallelujah\n270002\tJuwon\n270003\tBukola\n300001\tAdmin User\n",
+  "stderr": "",
+  "execution_time_ms": 53
+}

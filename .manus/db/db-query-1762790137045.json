@@ -1,0 +1,70 @@
+{
+  "query": "SELECT id, name, buildingId, createdAt FROM customers ORDER BY id DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, buildingId, createdAt FROM customers ORDER BY id DESC LIMIT 10;",
+  "rows": [
+    {
+      "id": "180058",
+      "name": "Warri Logistics",
+      "buildingId": "VWX-790",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180057",
+      "name": "Asaba Distribution",
+      "buildingId": "STU-767",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180056",
+      "name": "Benin City Warehouse",
+      "buildingId": "PQR-734",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180055",
+      "name": "Uyo Operations",
+      "buildingId": "MNO-701",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180054",
+      "name": "Calabar Regional Center",
+      "buildingId": "JKL-678",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180053",
+      "name": "Funtua Branch",
+      "buildingId": "GHI-645",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180052",
+      "name": "Katsina North Facility",
+      "buildingId": "DEF-612",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180051",
+      "name": "Katsina Distribution",
+      "buildingId": "ABC-579",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180050",
+      "name": "Bonny Island Terminal",
+      "buildingId": "XYZ-556",
+      "createdAt": "2025-11-10 15:39:02"
+    },
+    {
+      "id": "180049",
+      "name": "Rivers State Depot",
+      "buildingId": "UVW-523",
+      "createdAt": "2025-11-10 15:39:02"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tbuildingId\tcreatedAt\n180058\tWarri Logistics\tVWX-790\t2025-11-10 15:39:02\n180057\tAsaba Distribution\tSTU-767\t2025-11-10 15:39:02\n180056\tBenin City Warehouse\tPQR-734\t2025-11-10 15:39:02\n180055\tUyo Operations\tMNO-701\t2025-11-10 15:39:02\n180054\tCalabar Regional Center\tJKL-678\t2025-11-10 15:39:02\n180053\tFuntua Branch\tGHI-645\t2025-11-10 15:39:02\n180052\tKatsina North Facility\tDEF-612\t2025-11-10 15:39:02\n180051\tKatsina Distribution\tABC-579\t2025-11-10 15:39:02\n180050\tBonny Island Terminal\tXYZ-556\t2025-11-10 15:39:02\n180049\tRivers State Depot\tUVW-523\t2025-11-10 15:39:02\n",
+  "stderr": "",
+  "execution_time_ms": 153
+}

@@ -1,0 +1,9 @@
+{
+  "query": "SET FOREIGN_KEY_CHECKS=0; DELETE FROM customers; DELETE FROM workers; DELETE FROM routes; DELETE FROM routeCustomers; DELETE FROM vehicles; DELETE FROM workerLocations; SET FOREIGN_KEY_CHECKS=1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SET FOREIGN_KEY_CHECKS=0; DELETE FROM customers; DELETE FROM workers; DELETE FROM routes; DELETE FROM routeCustomers; DELETE FROM vehicles; DELETE FROM workerLocations; SET FOREIGN_KEY_CHECKS=1;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 121
+}

@@ -1,0 +1,8 @@
+{
+  "query": "RENAME TABLE customers TO customers_corrupted;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute RENAME TABLE customers TO customers_corrupted;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1050 (42S01) at line 1: Table 'WLXvxD3KZrDSqjCVfXw3HU.customers_corrupted' already exists"
+  ]
+}

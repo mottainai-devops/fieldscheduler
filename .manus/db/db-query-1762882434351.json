@@ -1,0 +1,34 @@
+{
+  "query": "SELECT id, name, email, status FROM workers ORDER BY id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, email, status FROM workers ORDER BY id;",
+  "rows": [
+    {
+      "id": "270001",
+      "name": "Hallelujah",
+      "email": "hallelujah@fieldscheduler.net",
+      "status": "active"
+    },
+    {
+      "id": "270002",
+      "name": "Juwon",
+      "email": "juwon@fieldscheduler.net",
+      "status": "active"
+    },
+    {
+      "id": "270003",
+      "name": "Bukola",
+      "email": "bukola@fieldscheduler.net",
+      "status": "active"
+    },
+    {
+      "id": "300001",
+      "name": "Admin User",
+      "email": "admin@fieldscheduler.net",
+      "status": "active"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\temail\tstatus\n270001\tHallelujah\thallelujah@fieldscheduler.net\tactive\n270002\tJuwon\tjuwon@fieldscheduler.net\tactive\n270003\tBukola\tbukola@fieldscheduler.net\tactive\n300001\tAdmin User\tadmin@fieldscheduler.net\tactive\n",
+  "stderr": "",
+  "execution_time_ms": 51
+}

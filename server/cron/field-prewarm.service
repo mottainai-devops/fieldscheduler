@@ -1,0 +1,11 @@
+# /etc/systemd/system/field-prewarm.service
+[Unit]
+Description=Field Scheduler Matrix Prewarm
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/field-worker-scheduler-demo
+EnvironmentFile=/home/ubuntu/field-worker-scheduler-demo/server/_core/.env.local
+ExecStart=/usr/bin/node /home/ubuntu/field-worker-scheduler-demo/server/scripts/prewarm_matrix.mjs
+User=ubuntu
+Group=ubuntu

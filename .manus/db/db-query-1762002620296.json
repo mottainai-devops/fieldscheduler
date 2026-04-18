@@ -1,0 +1,40 @@
+{
+  "query": "SELECT id, name, buildingId, zohoContactId FROM customers WHERE zohoContactId IS NOT NULL LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, buildingId, zohoContactId FROM customers WHERE zohoContactId IS NOT NULL LIMIT 5;",
+  "rows": [
+    {
+      "id": "30001",
+      "name": "1050043 OYSISW02 413",
+      "buildingId": "1050043",
+      "zohoContactId": "5300119000008065080"
+    },
+    {
+      "id": "30002",
+      "name": "1050043 OYSISW02 413 - Mr Ayodeji(No28 main Avenue Alalubosa Gra)",
+      "buildingId": "1050043",
+      "zohoContactId": "5300119000001866912"
+    },
+    {
+      "id": "30003",
+      "name": "1050048 OYSISW08 410",
+      "buildingId": "1050048",
+      "zohoContactId": "5300119000000865001"
+    },
+    {
+      "id": "30004",
+      "name": "1050052 OYSISW08 410 - Engineer",
+      "buildingId": "1050052",
+      "zohoContactId": "5300119000001458213"
+    },
+    {
+      "id": "30005",
+      "name": "1050053 OYSISW08 410",
+      "buildingId": "1050053",
+      "zohoContactId": "5300119000000332085"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tbuildingId\tzohoContactId\n30001\t1050043 OYSISW02 413\t1050043\t5300119000008065080\n30002\t1050043 OYSISW02 413 - Mr Ayodeji(No28 main Avenue Alalubosa Gra)\t1050043\t5300119000001866912\n30003\t1050048 OYSISW08 410\t1050048\t5300119000000865001\n30004\t1050052 OYSISW08 410 - Engineer\t1050052\t5300119000001458213\n30005\t1050053 OYSISW08 410\t1050053\t5300119000000332085\n",
+  "stderr": "",
+  "execution_time_ms": 62
+}

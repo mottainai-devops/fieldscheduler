@@ -1,0 +1,16 @@
+{
+  "query": "SELECT COUNT(*) as total, COUNT(fieldManager) as with_manager, COUNT(DISTINCT fieldManager) as unique_managers, COUNT(DISTINCT buildingId) as unique_buildings FROM customers WHERE buildingId IS NOT NULL;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as total, COUNT(fieldManager) as with_manager, COUNT(DISTINCT fieldManager) as unique_managers, COUNT(DISTINCT buildingId) as unique_buildings FROM customers WHERE buildingId IS NOT NULL;",
+  "rows": [
+    {
+      "total": "6451",
+      "with_manager": "21",
+      "unique_managers": "3",
+      "unique_buildings": "40"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\twith_manager\tunique_managers\tunique_buildings\n6451\t21\t3\t40\n",
+  "stderr": "",
+  "execution_time_ms": 73
+}

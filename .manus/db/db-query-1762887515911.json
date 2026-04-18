@@ -1,0 +1,28 @@
+{
+  "query": "SELECT w.id, w.name, w.email, COUNT(c.id) as customer_count \nFROM workers w \nLEFT JOIN customers c ON c.fieldManager = w.id \nWHERE w.name != 'Admin User'\nGROUP BY w.id, w.name, w.email\nORDER BY customer_count DESC;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT w.id, w.name, w.email, COUNT(c.id) as customer_count \nFROM workers w \nLEFT JOIN customers c ON c.fieldManager = w.id \nWHERE w.name != 'Admin User'\nGROUP BY w.id, w.name, w.email\nORDER BY customer_count DESC;",
+  "rows": [
+    {
+      "id": "270002",
+      "name": "Juwon",
+      "email": "juwon@fieldscheduler.net",
+      "customer_count": "0"
+    },
+    {
+      "id": "270003",
+      "name": "Bukola",
+      "email": "bukola@fieldscheduler.net",
+      "customer_count": "0"
+    },
+    {
+      "id": "270001",
+      "name": "Hallelujah",
+      "email": "hallelujah@fieldscheduler.net",
+      "customer_count": "0"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\temail\tcustomer_count\n270002\tJuwon\tjuwon@fieldscheduler.net\t0\n270003\tBukola\tbukola@fieldscheduler.net\t0\n270001\tHallelujah\thallelujah@fieldscheduler.net\t0\n",
+  "stderr": "",
+  "execution_time_ms": 143
+}

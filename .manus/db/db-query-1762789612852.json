@@ -1,0 +1,70 @@
+{
+  "query": "SELECT COUNT(*) as total, MIN(id) as min_id, MAX(id) as max_id FROM customers; SELECT id, name, buildingId FROM customers LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as total, MIN(id) as min_id, MAX(id) as max_id FROM customers; SELECT id, name, buildingId FROM customers LIMIT 10;",
+  "rows": [
+    {
+      "total": "58",
+      "min_id": "180001",
+      "max_id": "180058"
+    },
+    {
+      "total": "id",
+      "min_id": "name",
+      "max_id": "buildingId"
+    },
+    {
+      "total": "180001",
+      "min_id": "Lagos Distribution Center",
+      "max_id": "AFT-200"
+    },
+    {
+      "total": "180002",
+      "min_id": "Ikeja Warehouse",
+      "max_id": "AFT-221"
+    },
+    {
+      "total": "180003",
+      "min_id": "Victoria Island Office",
+      "max_id": "CUM-095"
+    },
+    {
+      "total": "180004",
+      "min_id": "Abuja Central Hub",
+      "max_id": "ADK-062"
+    },
+    {
+      "total": "180005",
+      "min_id": "Garki Distribution",
+      "max_id": "DIC-087"
+    },
+    {
+      "total": "180006",
+      "min_id": "Wuse Market Branch",
+      "max_id": "EFG-143"
+    },
+    {
+      "total": "180007",
+      "min_id": "Enugu Regional Office",
+      "max_id": "HIJ-156"
+    },
+    {
+      "total": "180008",
+      "min_id": "Nsukka Operations",
+      "max_id": "KLM-189"
+    },
+    {
+      "total": "180009",
+      "min_id": "Coal City Logistics",
+      "max_id": "NOP-201"
+    },
+    {
+      "total": "180010",
+      "min_id": "Ibadan Warehouse",
+      "max_id": "QRS-234"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\tmin_id\tmax_id\n58\t180001\t180058\nid\tname\tbuildingId\n180001\tLagos Distribution Center\tAFT-200\n180002\tIkeja Warehouse\tAFT-221\n180003\tVictoria Island Office\tCUM-095\n180004\tAbuja Central Hub\tADK-062\n180005\tGarki Distribution\tDIC-087\n180006\tWuse Market Branch\tEFG-143\n180007\tEnugu Regional Office\tHIJ-156\n180008\tNsukka Operations\tKLM-189\n180009\tCoal City Logistics\tNOP-201\n180010\tIbadan Warehouse\tQRS-234\n",
+  "stderr": "",
+  "execution_time_ms": 54
+}

@@ -1,0 +1,424 @@
+import { syncZohoContacts } from "./zoho";
+import { getDb } from "../db";
+import { zohoSyncHistory, zohoSyncJobs } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
+
+interface ScheduledJob {
+  id: number;
+  jobName: string;
+  enabled: boolean;
+  scheduleType: "hourly" | "daily" | "weekly" | "monthly";
+  scheduleTime?: string;
+  scheduleDay?: string;
+  nextRunAt: Date;
+}
+
+let activeJobs: Map<number, NodeJS.Timeout> = new Map();
+
+/**
+ * Calculate next run time based on schedule type
+ */
+function calculateNextRunTime(
+  scheduleType: string,
+  scheduleTime?: string,
+  scheduleDay?: string
+): Date {
+  const now = new Date();
+  const next = new Date(now);
+
+  switch (scheduleType) {
+    case "hourly":
+      next.setHours(next.getHours() + 1);
+      next.setMinutes(0);
+      next.setSeconds(0);
+      break;
+
+    case "daily":
+      if (scheduleTime) {
+        const [hours, minutes] = scheduleTime.split(":").map(Number);
+        next.setDate(next.getDate() + 1);
+        next.setHours(hours, minutes, 0, 0);
+      } else {
+        next.setDate(next.getDate() + 1);
+        next.setHours(0, 0, 0, 0);
+      }
+      break;
+
+    case "weekly":
+      const dayMap: { [key: string]: number } = {
+        sunday: 0,
+        monday: 1,
+        tuesday: 2,
+        wednesday: 3,
+        thursday: 4,
+        friday: 5,
+        saturday: 6,
+      };
+      const targetDay = dayMap[scheduleDay?.toLowerCase() || "monday"] || 1;
+      const currentDay = next.getDay();
+      let daysUntilTarget = targetDay - currentDay;
+      if (daysUntilTarget <= 0) daysUntilTarget += 7;
+
+      next.setDate(next.getDate() + daysUntilTarget);
+      if (scheduleTime) {
+        const [hours, minutes] = scheduleTime.split(":").map(Number);
+        next.setHours(hours, minutes, 0, 0);
+      } else {
+        next.setHours(0, 0, 0, 0);
+      }
+      break;
+
+    case "monthly":
+      next.setMonth(next.getMonth() + 1);
+      next.setDate(1);
+      if (scheduleTime) {
+        const [hours, minutes] = scheduleTime.split(":").map(Number);
+        next.setHours(hours, minutes, 0, 0);
+      } else {
+        next.setHours(0, 0, 0, 0);
+      }
+      break;
+
+    default:
+      next.setHours(next.getHours() + 1);
+  }
+
+  return next;
+}
+
+/**
+ * Execute a sync job
+ */
+async function executeSyncJob(jobId: number, jobName: string) {
+  const db = await getDb();
+  if (!db) {
+    console.error("[Zoho Scheduler] Database not available");
+    return;
+  }
+
+  const startTime = Date.now();
+  let syncResult;
+
+  try {
+    // Update job status to in_progress
+    await db
+      .update(zohoSyncJobs)
+      .set({
+        lastStatus: "pending",
+        lastRunAt: new Date(),
+      })
+      .where(eq(zohoSyncJobs.id, jobId));
+
+    console.log(`[Zoho Scheduler] Starting scheduled sync job: ${jobName}`);
+
+    // Execute the sync
+    syncResult = await syncZohoContacts();
+
+    const durationMs = Date.now() - startTime;
+
+    // Log sync history
+    await db.insert(zohoSyncHistory).values({
+      syncType: "scheduled",
+      status: syncResult.success ? "success" : "failed",
+      totalContacts: syncResult.synced + syncResult.errors,
+      syncedContacts: syncResult.synced,
+      failedContacts: syncResult.errors,
+      fieldManagerCount: syncResult.fieldManagerCount || 0,
+      customermafCount: syncResult.customermafCount || 0,
+      durationMs,
+      errorMessage: syncResult.success ? null : "Sync completed with errors",
+    });
+
+    // Update job with success status
+    await db
+      .update(zohoSyncJobs)
+      .set({
+        lastStatus: "success",
+        lastErrorMessage: null,
+        nextRunAt: calculateNextRunTime(
+          "daily",
+          "00:00",
+          undefined
+        ),
+      })
+      .where(eq(zohoSyncJobs.id, jobId));
+
+    console.log(
+      `[Zoho Scheduler] Sync job completed: ${syncResult.synced} synced, ${syncResult.errors} errors in ${durationMs}ms`
+    );
+  } catch (error: any) {
+    const durationMs = Date.now() - startTime;
+
+    console.error(`[Zoho Scheduler] Sync job failed:`, error.message);
+
+    // Log sync history with error
+    await db.insert(zohoSyncHistory).values({
+      syncType: "scheduled",
+      status: "failed",
+      durationMs,
+      errorMessage: error.message,
+      errorStack: error.stack,
+    });
+
+    // Update job with error status
+    await db
+      .update(zohoSyncJobs)
+      .set({
+        lastStatus: "failed",
+        lastErrorMessage: error.message,
+        nextRunAt: calculateNextRunTime("daily", "00:00", undefined),
+      })
+      .where(eq(zohoSyncJobs.id, jobId));
+  }
+}
+
+/**
+ * Schedule a job to run at the specified time
+ */
+function scheduleJobExecution(job: ScheduledJob) {
+  if (!job.enabled) {
+    console.log(`[Zoho Scheduler] Job ${job.jobName} is disabled`);
+    return;
+  }
+
+  const now = new Date();
+  const nextRun = job.nextRunAt;
+  const delayMs = nextRun.getTime() - now.getTime();
+
+  if (delayMs < 0) {
+    console.warn(
+      `[Zoho Scheduler] Job ${job.jobName} next run time is in the past`
+    );
+    return;
+  }
+
+  console.log(
+    `[Zoho Scheduler] Scheduling job ${job.jobName} to run in ${Math.round(delayMs / 1000)}s at ${nextRun.toISOString()}`
+  );
+
+  // Clear existing timeout if any
+  if (activeJobs.has(job.id)) {
+    clearTimeout(activeJobs.get(job.id));
+  }
+
+  // Schedule the job
+  const timeout = setTimeout(() => {
+    executeSyncJob(job.id, job.jobName)
+      .then(() => {
+        // Reschedule after execution
+        loadAndScheduleJobs();
+      })
+      .catch((error) => {
+        console.error(
+          `[Zoho Scheduler] Error executing job ${job.jobName}:`,
+          error
+        );
+        // Try to reschedule anyway
+        loadAndScheduleJobs();
+      });
+  }, delayMs);
+
+  activeJobs.set(job.id, timeout);
+}
+
+/**
+ * Load all jobs from database and schedule them
+ */
+export async function loadAndScheduleJobs() {
+  const db = await getDb();
+  if (!db) {
+    console.error("[Zoho Scheduler] Database not available");
+    return;
+  }
+
+  try {
+    // Clear existing jobs
+    activeJobs.forEach((timeout) => clearTimeout(timeout));
+    activeJobs.clear();
+
+    // Load jobs from database
+    const jobs = await db.select().from(zohoSyncJobs);
+
+    console.log(`[Zoho Scheduler] Loaded ${jobs.length} jobs from database`);
+
+    for (const job of jobs) {
+      if (job.enabled && job.nextRunAt) {
+        scheduleJobExecution({
+          id: job.id,
+          jobName: job.jobName,
+          enabled: job.enabled === 1,
+          scheduleType: job.scheduleType as "hourly" | "daily" | "weekly" | "monthly",
+          scheduleTime: job.scheduleTime || undefined,
+          scheduleDay: job.scheduleDay || undefined,
+          nextRunAt: job.nextRunAt,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[Zoho Scheduler] Error loading jobs:", error);
+  }
+}
+
+/**
+ * Create a new scheduled sync job
+ */
+export async function createSyncJob(
+  jobName: string,
+  scheduleType: "hourly" | "daily" | "weekly" | "monthly",
+  scheduleTime?: string,
+  scheduleDay?: string
+) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  const nextRunAt = calculateNextRunTime(scheduleType, scheduleTime, scheduleDay);
+
+  const result = await db.insert(zohoSyncJobs).values({
+    jobName,
+    enabled: 1,
+    scheduleType,
+    scheduleTime,
+    scheduleDay,
+    nextRunAt,
+    lastStatus: "pending",
+  });
+
+  console.log(
+    `[Zoho Scheduler] Created new job: ${jobName} (${scheduleType})`
+  );
+
+  // Reload and reschedule all jobs
+  await loadAndScheduleJobs();
+
+  return result;
+}
+
+/**
+ * Update a scheduled sync job
+ */
+export async function updateSyncJob(
+  jobId: number,
+  updates: {
+    enabled?: boolean;
+    scheduleType?: "hourly" | "daily" | "weekly" | "monthly";
+    scheduleTime?: string;
+    scheduleDay?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  const updateData: any = {};
+  if (updates.enabled !== undefined) {
+    updateData.enabled = updates.enabled ? 1 : 0;
+  }
+  if (updates.scheduleType) {
+    updateData.scheduleType = updates.scheduleType;
+  }
+  if (updates.scheduleTime !== undefined) {
+    updateData.scheduleTime = updates.scheduleTime;
+  }
+  if (updates.scheduleDay !== undefined) {
+    updateData.scheduleDay = updates.scheduleDay;
+  }
+
+  // Recalculate next run time if schedule changed
+  if (updates.scheduleType || updates.scheduleTime || updates.scheduleDay) {
+    const job = await db
+      .select()
+      .from(zohoSyncJobs)
+      .where(eq(zohoSyncJobs.id, jobId))
+      .limit(1);
+
+    if (job.length > 0) {
+      const nextRunAt = calculateNextRunTime(
+        updates.scheduleType || job[0].scheduleType,
+        updates.scheduleTime || job[0].scheduleTime || undefined,
+        updates.scheduleDay || job[0].scheduleDay || undefined
+      );
+      updateData.nextRunAt = nextRunAt;
+    }
+  }
+
+  await db.update(zohoSyncJobs).set(updateData).where(eq(zohoSyncJobs.id, jobId));
+
+  console.log(`[Zoho Scheduler] Updated job ${jobId}`);
+
+  // Reload and reschedule all jobs
+  await loadAndScheduleJobs();
+}
+
+/**
+ * Delete a scheduled sync job
+ */
+export async function deleteSyncJob(jobId: number) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  await db.delete(zohoSyncJobs).where(eq(zohoSyncJobs.id, jobId));
+
+  console.log(`[Zoho Scheduler] Deleted job ${jobId}`);
+
+  // Clear the job timeout
+  if (activeJobs.has(jobId)) {
+    clearTimeout(activeJobs.get(jobId));
+    activeJobs.delete(jobId);
+  }
+
+  // Reload and reschedule remaining jobs
+  await loadAndScheduleJobs();
+}
+
+/**
+ * Get all sync jobs
+ */
+export async function getAllSyncJobs() {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  return await db.select().from(zohoSyncJobs);
+}
+
+/**
+ * Get sync history
+ */
+export async function getSyncHistory(limit: number = 50) {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  return await db
+    .select()
+    .from(zohoSyncHistory)
+    .orderBy((t) => t.createdAt)
+    .limit(limit);
+}
+
+/**
+ * Initialize the scheduler on server startup
+ */
+export async function initializeScheduler() {
+  console.log("[Zoho Scheduler] Initializing scheduler...");
+  await loadAndScheduleJobs();
+  console.log("[Zoho Scheduler] Scheduler initialized");
+}
+
+/**
+ * Shutdown the scheduler
+ */
+export function shutdownScheduler() {
+  console.log("[Zoho Scheduler] Shutting down scheduler...");
+  activeJobs.forEach((timeout) => clearTimeout(timeout));
+  activeJobs.clear();
+  console.log("[Zoho Scheduler] Scheduler shut down");
+}
+

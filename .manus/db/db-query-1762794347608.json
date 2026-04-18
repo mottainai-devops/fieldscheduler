@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO workers (name, email, phone, status, createdAt, updatedAt) VALUES \n('Admin User', 'admin@fieldscheduler.net', '+234-800-0000001', 'active', NOW(), NOW()),\n('Test Worker 1', 'worker1@fieldscheduler.net', '+234-800-0000002', 'active', NOW(), NOW()),\n('Test Worker 2', 'worker2@fieldscheduler.net', '+234-800-0000003', 'active', NOW(), NOW());",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute INSERT INTO workers (name, email, phone, status, createdAt, updatedAt) VALUES \n('Admin User', 'admin@fieldscheduler.net', '+234-800-0000001', 'active', NOW(), NOW()),\n('Test Worker 1', 'worker1@fieldscheduler.net', '+234-800-0000002', 'active', NOW(), NOW()),\n('Test Worker 2', 'worker2@fieldscheduler.net', '+234-800-0000003', 'active', NOW(), NOW());",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 159
+}

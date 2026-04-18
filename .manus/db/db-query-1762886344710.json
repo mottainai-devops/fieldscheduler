@@ -1,0 +1,28 @@
+{
+  "query": "SELECT id, name, buildingId, fieldManager FROM customers WHERE fieldManager IS NOT NULL LIMIT 3;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, buildingId, fieldManager FROM customers WHERE fieldManager IS NOT NULL LIMIT 3;",
+  "rows": [
+    {
+      "id": "30026",
+      "name": "Lekki Phase 1 - Customer A",
+      "buildingId": "LEK-001",
+      "fieldManager": "1"
+    },
+    {
+      "id": "30027",
+      "name": "Lekki Phase 1 - Customer B",
+      "buildingId": "LEK-001",
+      "fieldManager": "1"
+    },
+    {
+      "id": "30028",
+      "name": "Lekki Phase 2 - Customer C",
+      "buildingId": "LEK-002",
+      "fieldManager": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tbuildingId\tfieldManager\n30026\tLekki Phase 1 - Customer A\tLEK-001\t1\n30027\tLekki Phase 1 - Customer B\tLEK-001\t1\n30028\tLekki Phase 2 - Customer C\tLEK-002\t1\n",
+  "stderr": "",
+  "execution_time_ms": 61
+}

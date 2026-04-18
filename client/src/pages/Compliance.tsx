@@ -1,0 +1,506 @@
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AlertTriangle, FileText, DollarSign, Plus, Shield, Download } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
+import AppHeader from "@/components/AppHeader";
+
+export default function Compliance() {
+  const { data: violations = [], refetch: refetchViolations } = trpc.compliance.getAllViolations.useQuery();
+  const { data: notices = [], refetch: refetchNotices } = trpc.compliance.getAllAbatementNotices.useQuery();
+  const { data: violationTypes = [] } = trpc.compliance.getViolationTypes.useQuery();
+  const seedViolations = trpc.compliance.seedDefaultViolations.useMutation();
+  const generateNoticePDF = trpc.compliance.generateAbatementNoticePDF.useMutation();
+  const generateReportPDF = trpc.compliance.generateComplianceReportPDF.useMutation();
+  const updateStatus = trpc.compliance.updateViolationStatus.useMutation();
+  const createNotice = trpc.compliance.createAbatementNotice.useMutation();
+  const updateNoticeStatus = trpc.compliance.updateAbatementNoticeStatus.useMutation();
+  const createViolationType = trpc.compliance.createViolationType.useMutation();
+  const updateViolationType = trpc.compliance.updateViolationType.useMutation();
+  const [editingType, setEditingType] = useState<any>(null);
+  const [showAddTypeForm, setShowAddTypeForm] = useState(false);
+
+  const handleDownloadNotice = async (noticeId: number) => {
+    try {
+      const result = await generateNoticePDF.mutateAsync({ noticeId });
+      const link = document.createElement('a');
+      link.href = `data:application/pdf;base64,${result.pdf}`;
+      link.download = result.filename;
+      link.click();
+      toast.success("PDF downloaded successfully");
+    } catch (error) {
+      toast.error("Failed to generate PDF");
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    try {
+      const result = await generateReportPDF.mutateAsync();
+      const link = document.createElement('a');
+      link.href = `data:application/pdf;base64,${result.pdf}`;
+      link.download = result.filename;
+      link.click();
+      toast.success("Report downloaded successfully");
+    } catch (error) {
+      toast.error("Failed to generate report");
+    }
+  };
+
+  const handleUpdateStatus = async (violationId: number, status: "under_review" | "resolved" | "dismissed") => {
+    try {
+      let resolutionNotes: string | undefined;
+      
+      // If resolving, ask for resolution notes
+      if (status === "resolved") {
+        resolutionNotes = prompt("Enter resolution notes (optional):") || undefined;
+      }
+      
+      await updateStatus.mutateAsync({
+        violationId,
+        status,
+        resolutionNotes,
+      });
+      
+      toast.success(`Violation marked as ${status.replace('_', ' ')}`);
+      refetchViolations();
+    } catch (error) {
+      toast.error("Failed to update violation status");
+      console.error(error);
+    }
+  };
+
+  const handleIssueNotice = async (violation: any) => {
+    try {
+      const daysStr = prompt("Enter number of days until due date:", "14");
+      if (!daysStr) return;
+      
+      const days = parseInt(daysStr);
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + days);
+      
+      const notes = prompt("Enter notice notes (optional):") || undefined;
+      
+      await createNotice.mutateAsync({
+        customerId: violation.customerId,
+        violationId: violation.id,
+        dueDate,
+        notes,
+      });
+      
+      toast.success("Abatement notice issued successfully");
+      refetchNotices();
+    } catch (error) {
+      toast.error("Failed to issue notice");
+      console.error(error);
+    }
+  };
+
+  const handleUpdateNoticeStatus = async (noticeId: number, status: string) => {
+    try {
+      const complianceDate = status === 'complied' ? new Date() : undefined;
+      
+      await updateNoticeStatus.mutateAsync({
+        noticeId,
+        status,
+        complianceDate,
+      });
+      
+      toast.success(`Notice marked as ${status}`);
+      refetchNotices();
+    } catch (error) {
+      toast.error("Failed to update notice status");
+      console.error(error);
+    }
+  };
+
+  const handleCreateViolationType = async () => {
+    try {
+      const name = prompt("Enter violation type name:");
+      if (!name) return;
+      
+      const description = prompt("Enter description (optional):") || undefined;
+      const severity = prompt("Enter severity (low/medium/high/critical):", "medium") || "medium";
+      
+      await createViolationType.mutateAsync({
+        name,
+        description,
+        severity,
+      });
+      
+      toast.success("Violation type created successfully");
+      window.location.reload(); // Reload to refresh violation types
+    } catch (error) {
+      toast.error("Failed to create violation type");
+      console.error(error);
+    }
+  };
+
+  const handleEditViolationType = async (type: any) => {
+    try {
+      const name = prompt("Enter new name:", type.name);
+      if (!name) return;
+      
+      const description = prompt("Enter new description:", type.description || "") || undefined;
+      const severity = prompt("Enter new severity (low/medium/high/critical):", type.severity) || type.severity;
+      
+      await updateViolationType.mutateAsync({
+        id: type.id,
+        name,
+        description,
+        severity,
+      });
+      
+      toast.success("Violation type updated successfully");
+      window.location.reload(); // Reload to refresh violation types
+    } catch (error) {
+      toast.error("Failed to update violation type");
+      console.error(error);
+    }
+  };
+
+  useEffect(() => {
+    // Seed default violation types on first load if empty
+    if (violationTypes.length === 0) {
+      seedViolations.mutate(undefined, {
+        onSuccess: () => {
+          toast.success("Default violation types loaded");
+        },
+      });
+    }
+  }, [violationTypes.length]);
+
+  const activeViolations = violations.filter(v => v.status === "reported" || v.status === "under_review");
+  const resolvedViolations = violations.filter(v => v.status === "resolved");
+  const activeNotices = notices.filter(n => n.status === "issued" || n.status === "acknowledged");
+
+  return (
+    <div className="min-h-screen bg-slate-900">
+      <AppHeader title="Compliance Management" subtitle="Track violations, notices, and payment compliance" />
+
+      {/* Main Content */}
+      <div className="container mx-auto px-6 py-8">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-300">Active Violations</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-red-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-white">{activeViolations.length}</div>
+              <p className="text-xs text-slate-400 mt-1">Requires attention</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-300">Resolved</CardTitle>
+              <Shield className="h-4 w-4 text-green-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-white">{resolvedViolations.length}</div>
+              <p className="text-xs text-slate-400 mt-1">Compliance achieved</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-300">Active Notices</CardTitle>
+              <FileText className="h-4 w-4 text-yellow-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-white">{activeNotices.length}</div>
+              <p className="text-xs text-slate-400 mt-1">Pending compliance</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-slate-300">Violation Types</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-blue-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-white">{violationTypes.length}</div>
+              <p className="text-xs text-slate-400 mt-1">Configured types</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Tabs */}
+        <Tabs defaultValue="violations" className="space-y-6">
+          <TabsList className="bg-slate-800 border-slate-700">
+            <TabsTrigger value="violations">Violations</TabsTrigger>
+            <TabsTrigger value="notices">Abatement Notices</TabsTrigger>
+            <TabsTrigger value="types">Violation Types</TabsTrigger>
+          </TabsList>
+
+          {/* Violations Tab */}
+          <TabsContent value="violations" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-white">All Violations</h2>
+            </div>
+
+            {violations.length === 0 ? (
+              <Card className="bg-slate-800/50 border-slate-700">
+                <CardContent className="py-16 text-center">
+                  <AlertTriangle className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-300 mb-2">No Violations Reported</h3>
+                  <p className="text-slate-400">Violations will appear here when reported by field workers.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {violations.map((violation) => (
+                  <Card key={violation.id} className="bg-slate-800/50 border-slate-700">
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="text-lg font-semibold text-white">
+                              {violation.violationType?.name || "Unknown Violation"}
+                            </h3>
+                            <span
+                              className={`px-2 py-1 text-xs rounded-full ${
+                                violation.status === "resolved"
+                                  ? "bg-green-500/20 text-green-400"
+                                  : violation.status === "under_review"
+                                  ? "bg-yellow-500/20 text-yellow-400"
+                                  : "bg-red-500/20 text-red-400"
+                              }`}
+                            >
+                              {violation.status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400 mb-3">
+                            Customer: {violation.customer?.name || "Unknown"}
+                          </p>
+                          {violation.notes && (
+                            <p className="text-sm text-slate-300 mb-2">{violation.notes}</p>
+                          )}
+                          <div className="flex items-center gap-4 text-xs text-slate-500">
+                            <span>Reported: {new Date(violation.reportedAt).toLocaleDateString()}</span>
+                            {violation.reporter && <span>By: {violation.reporter.name}</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 ml-4">
+                          {violation.status === "reported" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateStatus(violation.id, "under_review")}
+                              disabled={updateStatus.isPending}
+                              className="border-yellow-600 text-yellow-400 hover:bg-yellow-900/20"
+                            >
+                              {updateStatus.isPending ? "Updating..." : "Review"}
+                            </Button>
+                          )}
+                          {violation.status !== "resolved" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateStatus(violation.id, "resolved")}
+                              disabled={updateStatus.isPending}
+                              className="border-green-600 text-green-400 hover:bg-green-900/20"
+                            >
+                              {updateStatus.isPending ? "Updating..." : "Resolve"}
+                            </Button>
+                          )}
+                          {(violation.status === "reported" || violation.status === "under_review") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleIssueNotice(violation)}
+                              disabled={createNotice.isPending}
+                              className="border-orange-600 text-orange-400 hover:bg-orange-900/20"
+                            >
+                              {createNotice.isPending ? "Issuing..." : "Issue Notice"}
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const customerName = violation.customer?.name || "Unknown";
+                              window.location.href = `/customers?search=${encodeURIComponent(customerName)}`;
+                            }}
+                            className="border-slate-600 hover:bg-slate-700"
+                          >
+                            View Customer
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Abatement Notices Tab */}
+          <TabsContent value="notices" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-white">Abatement Notices</h2>
+              <Button
+                onClick={handleDownloadReport}
+                disabled={generateReportPDF.isPending}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                {generateReportPDF.isPending ? "Generating..." : "Download Compliance Report"}
+              </Button>
+            </div>
+
+            {notices.length === 0 ? (
+              <Card className="bg-slate-800/50 border-slate-700">
+                <CardContent className="py-16 text-center">
+                  <FileText className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-300 mb-2">No Notices Issued</h3>
+                  <p className="text-slate-400">Abatement notices will appear here when issued.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {notices.map((notice) => (
+                  <Card key={notice.id} className="bg-slate-800/50 border-slate-700">
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="text-lg font-semibold text-white">
+                              {notice.noticeNumber || `Notice #${notice.id}`}
+                            </h3>
+                            <span
+                              className={`px-2 py-1 text-xs rounded-full ${
+                                notice.status === "complied"
+                                  ? "bg-green-500/20 text-green-400"
+                                  : notice.status === "escalated"
+                                  ? "bg-red-500/20 text-red-400"
+                                  : "bg-yellow-500/20 text-yellow-400"
+                              }`}
+                            >
+                              {notice.status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400 mb-3">
+                            Customer: {notice.customer?.name || "Unknown"}
+                          </p>
+                          {notice.notes && (
+                            <p className="text-sm text-slate-300 mb-2">{notice.notes}</p>
+                          )}
+                          <div className="flex items-center gap-4 text-xs text-slate-500">
+                            <span>Issued: {new Date(notice.issuedDate).toLocaleDateString()}</span>
+                            {notice.dueDate && (
+                              <span>Due: {new Date(notice.dueDate).toLocaleDateString()}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 ml-4">
+                          {notice.status === "issued" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateNoticeStatus(notice.id, "complied")}
+                              disabled={updateNoticeStatus.isPending}
+                              className="border-green-600 text-green-400 hover:bg-green-900/20"
+                            >
+                              {updateNoticeStatus.isPending ? "Updating..." : "Mark Complied"}
+                            </Button>
+                          )}
+                          {notice.status === "issued" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUpdateNoticeStatus(notice.id, "escalated")}
+                              disabled={updateNoticeStatus.isPending}
+                              className="border-red-600 text-red-400 hover:bg-red-900/20"
+                            >
+                              {updateNoticeStatus.isPending ? "Updating..." : "Escalate"}
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDownloadNotice(notice.id)}
+                            disabled={generateNoticePDF.isPending}
+                            className="border-slate-600 hover:bg-slate-700"
+                          >
+                            <Download className="w-4 h-4 mr-2" />
+                            {generateNoticePDF.isPending ? "Generating..." : "Download PDF"}
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Violation Types Tab */}
+          <TabsContent value="types" className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold text-white">Violation Types</h2>
+              <Button
+                onClick={handleCreateViolationType}
+                disabled={createViolationType.isPending}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                {createViolationType.isPending ? "Creating..." : "Add New Type"}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {violationTypes.map((type) => (
+                <Card key={type.id} className="bg-slate-800/50 border-slate-700">
+                  <CardContent className="p-6">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="text-lg font-semibold text-white">{type.name}</h3>
+                          <span
+                            className={`px-2 py-1 text-xs rounded-full ${
+                              type.severity === "critical"
+                                ? "bg-red-500/20 text-red-400"
+                                : type.severity === "high"
+                                ? "bg-orange-500/20 text-orange-400"
+                                : type.severity === "medium"
+                                ? "bg-yellow-500/20 text-yellow-400"
+                                : "bg-blue-500/20 text-blue-400"
+                            }`}
+                          >
+                            {type.severity}
+                          </span>
+                          {type.isCustom === 1 && (
+                            <span className="px-2 py-1 text-xs rounded-full bg-purple-500/20 text-purple-400">
+                              Custom
+                            </span>
+                          )}
+                        </div>
+                        {type.description && (
+                          <p className="text-sm text-slate-400">{type.description}</p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleEditViolationType(type)}
+                        disabled={updateViolationType.isPending}
+                        className="border-slate-600 hover:bg-slate-700"
+                      >
+                        {updateViolationType.isPending ? "Updating..." : "Edit"}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+

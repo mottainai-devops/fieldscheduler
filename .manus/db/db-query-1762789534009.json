@@ -1,0 +1,14 @@
+{
+  "query": "SELECT COUNT(*) as total_customers, COUNT(DISTINCT buildingId) as with_customermaf FROM customers;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as total_customers, COUNT(DISTINCT buildingId) as with_customermaf FROM customers;",
+  "rows": [
+    {
+      "total_customers": "58",
+      "with_customermaf": "29"
+    }
+  ],
+  "messages": [],
+  "stdout": "total_customers\twith_customermaf\n58\t29\n",
+  "stderr": "",
+  "execution_time_ms": 1494
+}

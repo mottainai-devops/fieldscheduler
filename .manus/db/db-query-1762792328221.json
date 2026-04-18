@@ -1,0 +1,19 @@
+{
+  "query": "SELECT COUNT(*) as customer_count FROM customers; SELECT COUNT(*) as worker_count FROM workers;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT COUNT(*) as customer_count FROM customers; SELECT COUNT(*) as worker_count FROM workers;",
+  "rows": [
+    {
+      "customer_count": "0"
+    },
+    {
+      "customer_count": "worker_count"
+    },
+    {
+      "customer_count": "0"
+    }
+  ],
+  "messages": [],
+  "stdout": "customer_count\n0\nworker_count\n0\n",
+  "stderr": "",
+  "execution_time_ms": 641
+}

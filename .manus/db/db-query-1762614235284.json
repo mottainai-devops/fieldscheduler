@@ -1,0 +1,30 @@
+{
+  "query": "SELECT id, name, status FROM workers LIMIT 10",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, status FROM workers LIMIT 10",
+  "rows": [
+    {
+      "id": "1",
+      "name": "John Smith",
+      "status": "active"
+    },
+    {
+      "id": "2",
+      "name": "Mary Johnson",
+      "status": "active"
+    },
+    {
+      "id": "3",
+      "name": "David Williams",
+      "status": "active"
+    },
+    {
+      "id": "30001",
+      "name": "adey adewuyi",
+      "status": "active"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tstatus\n1\tJohn Smith\tactive\n2\tMary Johnson\tactive\n3\tDavid Williams\tactive\n30001\tadey adewuyi\tactive\n",
+  "stderr": "",
+  "execution_time_ms": 51
+}

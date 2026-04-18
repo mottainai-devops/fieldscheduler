@@ -1,0 +1,16 @@
+{
+  "query": "SELECT id, name, buildingId, zohoContactId FROM customers WHERE zohoContactId IS NOT NULL ORDER BY id ASC LIMIT 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user TEKZ5J1LhZRsb4n.e44398312388 --database WLXvxD3KZrDSqjCVfXw3HU --execute SELECT id, name, buildingId, zohoContactId FROM customers WHERE zohoContactId IS NOT NULL ORDER BY id ASC LIMIT 1;",
+  "rows": [
+    {
+      "id": "30001",
+      "name": "1050043 OYSISW02 413",
+      "buildingId": "1050043",
+      "zohoContactId": "5300119000008065080"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tbuildingId\tzohoContactId\n30001\t1050043 OYSISW02 413\t1050043\t5300119000008065080\n",
+  "stderr": "",
+  "execution_time_ms": 46
+}
