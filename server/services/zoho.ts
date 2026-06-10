@@ -558,6 +558,26 @@ export async function syncZohoContacts() {
           console.log('[Zoho] No field manager found for contact:', contact.contact_name);
         }
         
+        // Extract ArcGIS-native identity fields from Zoho custom fields (cf_arcgis_building_id, cf_unit_code)
+        let arcgisBuildingId: string | undefined;
+        let unitCode: string | undefined;
+        if (contactAny.cf_arcgis_building_id && typeof contactAny.cf_arcgis_building_id === 'string') {
+          arcgisBuildingId = contactAny.cf_arcgis_building_id.trim() || undefined;
+        } else if (contact.custom_fields && Array.isArray(contact.custom_fields)) {
+          const arcgisField = contact.custom_fields.find((f: any) =>
+            f.label.toLowerCase().includes('arcgis') || f.label.toLowerCase().includes('building_id')
+          );
+          if (arcgisField?.value) arcgisBuildingId = arcgisField.value.trim() || undefined;
+        }
+        if (contactAny.cf_unit_code && typeof contactAny.cf_unit_code === 'string') {
+          unitCode = contactAny.cf_unit_code.trim() || undefined;
+        } else if (contact.custom_fields && Array.isArray(contact.custom_fields)) {
+          const unitField = contact.custom_fields.find((f: any) =>
+            f.label.toLowerCase().includes('unit_code') || f.label.toLowerCase() === 'unit code'
+          );
+          if (unitField?.value) unitCode = unitField.value.trim() || undefined;
+        }
+
         // Save to database
         await upsertCustomerFromZoho({
           zohoContactId: contact.contact_id,
@@ -568,6 +588,8 @@ export async function syncZohoContacts() {
           latitude: latitude?.toString(),
           longitude: longitude?.toString(),
           buildingId,
+          arcgisBuildingId,
+          unitCode,
         });
         
         // Assign field manager to customer

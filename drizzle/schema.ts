@@ -89,6 +89,9 @@ export const customers = mysqlTable("customers", {
   serviceType: varchar("serviceType", { length: 100 }).default("maintenance"),
   priority: mysqlEnum("priority", ["high", "medium", "low"]).default("medium"),
   buildingId: varchar("buildingId", { length: 100 }),
+  // ArcGIS-native identity fields (v3.5.0 — ArcGIS identity recalibration)
+  arcgisBuildingId: varchar("arcgisBuildingId", { length: 100 }), // e.g. "8038 LASIKA06 006"
+  unitCode: varchar("unitCode", { length: 20 }),                  // e.g. "R1", "C1"
   zohoContactId: varchar("zohoContactId", { length: 100 }),
   customerType: mysqlEnum("customerType", ["residential", "business"]).default("residential"),
   coordinateSource: varchar("coordinateSource", { length: 50 }).default("manual"),

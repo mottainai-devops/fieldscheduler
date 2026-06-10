@@ -136,6 +136,8 @@ export async function upsertCustomerFromZoho(data: {
   email?: string;
   phone?: string;
   buildingId?: string;
+  arcgisBuildingId?: string; // ArcGIS polygon ID e.g. "8038 LASIKA06 006"
+  unitCode?: string;         // Unit code e.g. "R1", "C1"
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -157,6 +159,8 @@ export async function upsertCustomerFromZoho(data: {
         latitude: data.latitude,
         longitude: data.longitude,
         buildingId: data.buildingId,
+        arcgisBuildingId: data.arcgisBuildingId,
+        unitCode: data.unitCode,
         coordinateSource: data.latitude && data.longitude ? "zoho" : "manual",
         updatedAt: new Date(),
       })
@@ -171,6 +175,8 @@ export async function upsertCustomerFromZoho(data: {
       latitude: data.latitude,
       longitude: data.longitude,
       buildingId: data.buildingId,
+      arcgisBuildingId: data.arcgisBuildingId,
+      unitCode: data.unitCode,
       coordinateSource: data.latitude && data.longitude ? "zoho" : "manual",
       serviceType: "maintenance",
       priority: "medium",

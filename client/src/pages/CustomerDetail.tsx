@@ -122,15 +122,25 @@ export default function CustomerDetail() {
                 
 
 
-                {customer.buildingId && (
+                {(customer.arcgisBuildingId || customer.buildingId) && (
                   <div className="flex items-start gap-3">
                     <Building className="w-5 h-5 text-blue-400 mt-1" />
                     <div>
                       <p className="text-sm text-slate-400">Building ID</p>
-                      <p className="text-white">{customer.buildingId}</p>
+                      <p className="text-white font-mono text-sm">{customer.arcgisBuildingId || customer.buildingId}</p>
                       {customer.isMainBuilding && (
                         <span className="text-xs text-green-400">Main Building</span>
                       )}
+                    </div>
+                  </div>
+                )}
+                {customer.arcgisBuildingId && customer.unitCode && (
+                  <div className="flex items-start gap-3">
+                    <Building className="w-5 h-5 text-green-400 mt-1" />
+                    <div>
+                      <p className="text-sm text-slate-400">Customer ID</p>
+                      <p className="text-white font-mono text-sm">{customer.arcgisBuildingId} {customer.unitCode}</p>
+                      <p className="text-xs text-slate-500">ArcGIS-native composite</p>
                     </div>
                   </div>
                 )}
@@ -241,11 +251,15 @@ export default function CustomerDetail() {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-sm text-slate-400">Customer ID</p>
-                        <p className="text-white font-semibold">#{customer.id}</p>
+                        {customer.arcgisBuildingId && customer.unitCode ? (
+                          <p className="text-white font-mono text-sm">{customer.arcgisBuildingId} {customer.unitCode}</p>
+                        ) : (
+                          <p className="text-white font-semibold">#{customer.id}</p>
+                        )}
                       </div>
                       <div>
-                        <p className="text-sm text-slate-400">Zoho Contact ID</p>
-                        <p className="text-white font-semibold">{customer.zohoContactId || 'N/A'}</p>
+                        <p className="text-sm text-slate-400">Building ID</p>
+                        <p className="text-white font-mono text-sm">{customer.arcgisBuildingId || customer.buildingId || 'N/A'}</p>
                       </div>
                       <div>
                         <p className="text-sm text-slate-400">Has Coordinates</p>
