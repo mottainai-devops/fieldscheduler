@@ -9,7 +9,6 @@ jobs:
   deploy:
     name: Build & Deploy to Production
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,43 +47,46 @@ jobs:
           cp -r drizzle deploy-package/ 2>/dev/null || true
           printf '#!/bin/bash\ncd /var/www/mottainai-fieldscheduler\nif [ -f .env ]; then set -a; source .env; set +a; fi\nexec node dist/index.js\n' > deploy-package/start.sh
           chmod +x deploy-package/start.sh
-          tar -czf /tmp/fieldscheduler-deploy.tar.gz -C deploy-package .
+          tar -czf fieldscheduler-deploy.tar.gz -C deploy-package .
+          ls -lh fieldscheduler-deploy.tar.gz
 
-      - name: Upload package to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: root
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          source: /tmp/fieldscheduler-deploy.tar.gz
-          target: /tmp/
-          strip_components: 2
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Upload to server
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no fieldscheduler-deploy.tar.gz root@${{ secrets.DEPLOY_HOST }}:/tmp/fieldscheduler-deploy.tar.gz
 
       - name: Deploy on server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: root
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
-          script: |
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DEPLOY_HOST }} 'bash -s' << 'ENDSSH'
             set -e
             echo "=== Extracting new build ==="
             mkdir -p /var/www/mottainai-fieldscheduler-new
             tar -xzf /tmp/fieldscheduler-deploy.tar.gz -C /var/www/mottainai-fieldscheduler-new
+
             echo "=== Installing production dependencies ==="
             cd /var/www/mottainai-fieldscheduler-new
-            npm install --production --legacy-peer-deps 2>&1 | tail -5
-            echo "=== Preserving .env ==="
+            npm install --production --legacy-peer-deps 2>&1 | tail -10
+
+            echo "=== Copying env file ==="
             if [ -f /var/www/mottainai-fieldscheduler/.env ]; then
-              cp /var/www/mottainai-fieldscheduler/.env /var/www/mottainai-fieldscheduler-new/.env
+              cp /var/www/mottainai-fieldscheduler/.env /var/www/mottainai-fieldscheduler-new/.env || true
             fi
+
             echo "=== Swapping deployment ==="
             rsync -a --checksum /var/www/mottainai-fieldscheduler-new/ /var/www/mottainai-fieldscheduler/
-            echo "=== Restarting PM2 ==="
-            cd /var/www/mottainai-fieldscheduler
-            pm2 restart mottainai-fieldscheduler || pm2 start start.sh --name mottainai-fieldscheduler
+
+            echo "=== Restarting PM2 process ==="
+            pm2 restart mottainai-fieldscheduler --update-env || pm2 start /var/www/mottainai-fieldscheduler/start.sh --name mottainai-fieldscheduler
             pm2 save
+
             echo "=== Cleanup ==="
             rm -rf /var/www/mottainai-fieldscheduler-new /tmp/fieldscheduler-deploy.tar.gz
-            echo "=== Deploy complete ==="
+
+            echo "Deploy complete!"
+          ENDSSH
