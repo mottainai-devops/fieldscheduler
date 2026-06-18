@@ -26,6 +26,8 @@ export const fieldWorkerRouter = router({
       shiftStart: z.string().optional(),
       shiftEnd: z.string().optional(),
       pin: z.string().optional(),
+      role: z.enum(["field_manager", "supervisor"]).optional(),
+      preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
     }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.createWorker(input);
@@ -42,6 +44,8 @@ export const fieldWorkerRouter = router({
       shiftStart: z.string().optional(),
       shiftEnd: z.string().optional(),
       pin: z.string().optional(),
+      role: z.enum(["field_manager", "supervisor"]).optional(),
+      preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
     }))
     .mutation(async ({ input }) => {
       const { id, ...data } = input;

@@ -32,6 +32,8 @@ export async function createWorker(data: {
   shiftStart?: string;
   shiftEnd?: string;
   pin?: string;
+  role?: "field_manager" | "supervisor";
+  preferredWebhookType?: "payt" | "monthly" | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -45,7 +47,9 @@ export async function createWorker(data: {
     shiftStart: data.shiftStart || "08:00",
     shiftEnd: data.shiftEnd || "17:00",
     pin: data.pin,
-  });
+    ...(data.role ? { role: data.role } : {}),
+    ...(data.preferredWebhookType !== undefined ? { preferredWebhookType: data.preferredWebhookType } : {}),
+  } as any);
   
   return result;
 }
@@ -59,6 +63,8 @@ export async function updateWorker(id: number, data: {
   shiftStart?: string;
   shiftEnd?: string;
   pin?: string;
+  role?: "field_manager" | "supervisor";
+  preferredWebhookType?: "payt" | "monthly" | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
