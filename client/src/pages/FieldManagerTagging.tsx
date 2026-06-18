@@ -13,8 +13,13 @@ import { toast } from "sonner";
 
 const FIELD_MANAGERS_DATA = [
   { id: 1, name: "Bukola", customermafCodes: ["AFT-200", "AFT-221", "AFT-223", "MTD-096", "TKB-052"] },
-  { id: 2, name: "Halleluyah", customermafCodes: ["CUM-099", "CUM-415", "DIC-413", "ECO-220", "SAY-076", "TKB-117"] },
-  { id: 3, name: "Juwon", customermafCodes: ["ADK-062", "DIC-087", "DIC-410", "EOA-414", "HSY-060", "WAS-061"] },
+  // SAY-076 replaced by MOT-076 (Mottainai retains lot 076)
+  // CUM-099 replaced by AFT-099 (AFT Okuleye takes lot 099)
+  // CUM-415 replaced by DAL-415 (Dalco Ventures takes lot 415)
+  // YUS-074 added (Yusro Enterprise takes lot 074, same field manager as SAY-076)
+  { id: 2, name: "Halleluyah", customermafCodes: ["AFT-099", "DAL-415", "DIC-413", "ECO-220", "MOT-076", "TKB-117", "YUS-074"] },
+  // EOA-414 replaced by DAL-414 (Dalco Ventures takes lot 414)
+  { id: 3, name: "Juwon", customermafCodes: ["ADK-062", "DAL-414", "DIC-087", "DIC-410", "HSY-060", "WAS-061"] },
   { id: 4, name: "Aishat", customermafCodes: ["MOT-108", "MOT-027", "MOT-107"] },
 ];
 
