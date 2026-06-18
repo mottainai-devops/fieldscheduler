@@ -9,6 +9,7 @@ jobs:
   deploy:
     name: Build & Deploy to Production
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,31 +25,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Clean previous build artifacts
-        run: rm -rf dist/
-
       - name: Build frontend
         env:
           VITE_APP_TITLE: "Mottainai Field Scheduler"
           VITE_APP_LOGO: "/favicon.ico"
-          VITE_APP_VERSION: "3.5.0"
-          VITE_SENTRY_DSN: ""
           VITE_APP_ID: ${{ secrets.VITE_APP_ID }}
           VITE_OAUTH_PORTAL_URL: ${{ secrets.VITE_OAUTH_PORTAL_URL }}
         run: pnpm build
-
-      - name: Bundle server for deployment
-        run: |
-          mkdir -p deploy-package
-          cp -r dist deploy-package/
-          cp package.json pnpm-lock.yaml deploy-package/
-          cp -r server deploy-package/
-          cp -r shared deploy-package/ 2>/dev/null || true
-          cp -r drizzle deploy-package/ 2>/dev/null || true
-          printf '#!/bin/bash\ncd /var/www/mottainai-fieldscheduler\nif [ -f .env ]; then set -a; source .env; set +a; fi\nexec node dist/index.js\n' > deploy-package/start.sh
-          chmod +x deploy-package/start.sh
-          tar -czf fieldscheduler-deploy.tar.gz -C deploy-package .
-          ls -lh fieldscheduler-deploy.tar.gz
 
       - name: Setup SSH key
         run: |
@@ -57,36 +40,25 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Upload to server
+      - name: Upload dist to server via rsync
         run: |
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no fieldscheduler-deploy.tar.gz root@${{ secrets.DEPLOY_HOST }}:/tmp/fieldscheduler-deploy.tar.gz
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o LogLevel=ERROR -q" \
+            dist/ \
+            ubuntu@${{ secrets.DEPLOY_HOST }}:/home/ubuntu/field-worker-scheduler/dist/
 
       - name: Deploy on server
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@${{ secrets.DEPLOY_HOST }} 'bash -s' << 'ENDSSH'
-            set -e
-            echo "=== Extracting new build ==="
-            mkdir -p /var/www/mottainai-fieldscheduler-new
-            tar -xzf /tmp/fieldscheduler-deploy.tar.gz -C /var/www/mottainai-fieldscheduler-new
-
-            echo "=== Installing production dependencies ==="
-            cd /var/www/mottainai-fieldscheduler-new
-            npm install --production --legacy-peer-deps 2>&1 | tail -10
-
-            echo "=== Copying env file ==="
-            if [ -f /var/www/mottainai-fieldscheduler/.env ]; then
-              cp /var/www/mottainai-fieldscheduler/.env /var/www/mottainai-fieldscheduler-new/.env || true
-            fi
-
-            echo "=== Swapping deployment ==="
-            rsync -a --checksum /var/www/mottainai-fieldscheduler-new/ /var/www/mottainai-fieldscheduler/
-
-            echo "=== Restarting PM2 process ==="
-            pm2 restart mottainai-fieldscheduler --update-env || pm2 start /var/www/mottainai-fieldscheduler/start.sh --name mottainai-fieldscheduler
-            pm2 save
-
-            echo "=== Cleanup ==="
-            rm -rf /var/www/mottainai-fieldscheduler-new /tmp/fieldscheduler-deploy.tar.gz
-
-            echo "Deploy complete!"
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          echo "Restarting application..."
+          pm2 restart field-worker-scheduler
+          pm2 save
+          echo "Deployment complete!"
+          pm2 list
           ENDSSH
