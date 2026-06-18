@@ -230,6 +230,7 @@ export async function getRouteCustomers(routeId: number) {
       sequenceNumber: routeCustomers.sequenceNumber,
       estimatedServiceTime: routeCustomers.estimatedServiceTime,
       completedAt: routeCustomers.completedAt,
+      pickedAt: (routeCustomers as any).pickedAt,
       customer: customers,
     })
     .from(routeCustomers)

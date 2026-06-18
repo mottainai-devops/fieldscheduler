@@ -23,6 +23,8 @@ export default function Workers() {
   const [shiftStart, setShiftStart] = useState("08:00");
   const [shiftEnd, setShiftEnd] = useState("17:00");
   const [pin, setPin] = useState("");
+  const [workerRole, setWorkerRole] = useState<"field_manager" | "supervisor">("field_manager");
+  const [preferredWebhookType, setPreferredWebhookType] = useState<"payt" | "monthly" | "">("payt");
 
   const { data: workers = [], isLoading } = trpc.fieldWorker.getWorkers.useQuery();
   const utils = trpc.useUtils();
@@ -86,7 +88,9 @@ export default function Workers() {
       status,
       shiftStart,
       shiftEnd,
-    });
+      role: workerRole,
+      preferredWebhookType: preferredWebhookType || undefined,
+    } as any);
   };
 
   const handleEdit = (worker: any) => {
@@ -99,6 +103,8 @@ export default function Workers() {
     setShiftStart(worker.shiftStart);
     setShiftEnd(worker.shiftEnd);
     setPin(""); // Don't pre-fill PIN for security
+    setWorkerRole(worker.role || "field_manager");
+    setPreferredWebhookType(worker.preferredWebhookType || "payt");
     setEditOpen(true);
   };
 
@@ -119,7 +125,9 @@ export default function Workers() {
       status,
       shiftStart,
       shiftEnd,
-    });
+      role: workerRole,
+      preferredWebhookType: preferredWebhookType || undefined,
+    } as any);
   };
 
   const handleDelete = (worker: any) => {
@@ -257,6 +265,33 @@ export default function Workers() {
                           />
                         </div>
                       </div>
+                      <div className="grid gap-2">
+                        <Label className="text-slate-300">Role</Label>
+                        <Select value={workerRole} onValueChange={(v: any) => setWorkerRole(v)}>
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            <SelectItem value="field_manager">Field Manager</SelectItem>
+                            <SelectItem value="supervisor">Supervisor</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {workerRole === 'supervisor' && (
+                        <div className="grid gap-2">
+                          <Label className="text-slate-300">Billing Type (Webhook Preference)</Label>
+                          <Select value={preferredWebhookType || 'payt'} onValueChange={(v: any) => setPreferredWebhookType(v)}>
+                            <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-slate-700 border-slate-600">
+                              <SelectItem value="payt">PAYT (Pay As You Throw)</SelectItem>
+                              <SelectItem value="monthly">Monthly Billing</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-slate-500">Only admins can change this after it is set.</p>
+                        </div>
+                      )}
                     </div>
                     <DialogFooter>
                       <Button
@@ -301,9 +336,18 @@ export default function Workers() {
                         </div>
                         <div>
                           <h3 className="font-medium text-white">{worker.name}</h3>
-                          <span className={`text-xs px-2 py-1 rounded ${getStatusColor(worker.status)}`}>
-                            {worker.status}
-                          </span>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className={`text-xs px-2 py-1 rounded ${getStatusColor(worker.status)}`}>
+                              {worker.status}
+                            </span>
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              (worker as any).role === 'supervisor'
+                                ? 'bg-purple-600/20 text-purple-400'
+                                : 'bg-blue-600/20 text-blue-400'
+                            }`}>
+                              {(worker as any).role === 'supervisor' ? 'Supervisor' : 'Field Manager'}
+                            </span>
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -463,6 +507,31 @@ export default function Workers() {
                       className="bg-slate-700 border-slate-600 text-white"
                     />
                   </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-slate-300">Role</Label>
+                  <Select value={workerRole} onValueChange={(v: any) => setWorkerRole(v)}>
+                    <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-700 border-slate-600">
+                      <SelectItem value="field_manager">Field Manager</SelectItem>
+                      <SelectItem value="supervisor">Supervisor</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-slate-300">Billing Type (Webhook Preference)</Label>
+                  <Select value={preferredWebhookType || 'payt'} onValueChange={(v: any) => setPreferredWebhookType(v)}>
+                    <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-700 border-slate-600">
+                      <SelectItem value="payt">PAYT (Pay As You Throw)</SelectItem>
+                      <SelectItem value="monthly">Monthly Billing</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500">Admin-only field. Supervisor's billing type preference.</p>
                 </div>
               </div>
               <DialogFooter>

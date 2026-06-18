@@ -11,6 +11,7 @@ import pdfRouter from "../routes/pdf";
 import zohoAuthRouter from "../routes/zoho-auth";
 import zohoWebhookRouter from "../routes/zoho-webhook";
 import { initializeScheduler, shutdownScheduler } from "../services/zohoScheduler";
+import { runSupervisorRoleMigration } from "../migrations/supervisorRole";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -71,6 +72,8 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
   });
 
+  // Run startup migrations (idempotent)
+  await runSupervisorRoleMigration();
   // Initialize Zoho scheduler
   await initializeScheduler();
 

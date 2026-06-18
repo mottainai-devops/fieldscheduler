@@ -30,6 +30,8 @@ export const workerAuthRouter = router({
             id: worker.id,
             name: worker.name,
             email: worker.email,
+            role: (worker as any).role ?? "field_manager",
+            preferredWebhookType: (worker as any).preferredWebhookType ?? null,
           },
         };
       } catch (error) {
@@ -216,6 +218,82 @@ export const workerAuthRouter = router({
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
       return await complianceDb.getAbatementNoticesByCustomer(input.customerId);
+    }),
+
+  // ===== SUPERVISOR PICKUP PROCEDURES =====
+
+  // Set the supervisor's preferred webhook type (payt or monthly)
+  // Once set, only admin can change it via the Workers management page
+  setWebhookPreference: publicProcedure
+    .input(z.object({
+      workerId: z.number(),
+      webhookType: z.enum(["payt", "monthly"]),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("../db");
+      const { workers } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+      await db.update(workers)
+        .set({ preferredWebhookType: input.webhookType } as any)
+        .where(eq(workers.id, input.workerId));
+      return { success: true, preferredWebhookType: input.webhookType };
+    }),
+
+  // Mark a customer as picked up (supervisor action)
+  markCustomerPicked: publicProcedure
+    .input(z.object({ routeId: z.number(), customerId: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("../db");
+      const { routeCustomers } = await import("../../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+      await db.update(routeCustomers)
+        .set({ pickedAt: new Date() } as any)
+        .where(and(
+          eq(routeCustomers.routeId, input.routeId),
+          eq(routeCustomers.customerId, input.customerId)
+        ));
+      return { success: true };
+    }),
+
+  // Get the webhook URL for a customer's MAF code from the admin dashboard
+  getWebhookForCustomer: publicProcedure
+    .input(z.object({
+      customermaf: z.string(),
+      webhookType: z.enum(["payt", "monthly"]),
+    }))
+    .query(async ({ input }) => {
+      try {
+        // Extract lot number from MAF code (e.g. "DIC-410" -> "410", "AFT-099" -> "099")
+        const lotMatch = input.customermaf.match(/-?(\d+)$/);
+        if (!lotMatch) return { webhookUrl: null };
+        const lotNumber = lotMatch[1];
+
+        // Query admin dashboard lots API
+        const ADMIN_API = process.env.ADMIN_DASHBOARD_URL || "https://admin.kowope.xyz";
+        const res = await fetch(
+          `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { search: lotNumber, page: 1, limit: 5 } } }))}`
+        );
+        if (!res.ok) return { webhookUrl: null };
+        const data = await res.json() as any;
+        const lots = data?.[0]?.result?.data?.json?.lots ?? [];
+        const lot = lots.find((l: any) =>
+          l.lotCode === lotNumber ||
+          l.lotCode === lotNumber.replace(/^0+/, "") ||
+          String(l.lotNumber) === String(parseInt(lotNumber, 10))
+        );
+        if (!lot) return { webhookUrl: null };
+
+        const webhookUrl = input.webhookType === "payt"
+          ? lot.paytWebhook
+          : lot.monthlyWebhook;
+        return { webhookUrl: webhookUrl || null };
+      } catch {
+        return { webhookUrl: null };
+      }
     }),
 
   // Mark a customer stop as completed

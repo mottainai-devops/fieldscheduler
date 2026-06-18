@@ -93,6 +93,12 @@ export default function WorkerMobile() {
     if (!worker.pin || worker.pin === pin) {
       setIsAuthenticated(true);
       
+      // Always persist role and webhook preference for the session
+      localStorage.setItem('workerRole', (worker as any).role ?? 'field_manager');
+      localStorage.setItem('workerPreferredWebhookType', (worker as any).preferredWebhookType ?? '');
+      localStorage.setItem('workerName', worker.name ?? '');
+      localStorage.setItem('workerId', selectedWorkerId!.toString());
+
       if (rememberMe) {
         // Set auth with 30-day expiration
         const expiryDate = new Date();
@@ -117,6 +123,10 @@ export default function WorkerMobile() {
     localStorage.removeItem('selectedWorkerId');
     localStorage.removeItem('workerAuthenticated');
     localStorage.removeItem('workerAuthExpiry');
+    localStorage.removeItem('workerRole');
+    localStorage.removeItem('workerPreferredWebhookType');
+    localStorage.removeItem('workerName');
+    localStorage.removeItem('workerId');
     setLocation('/worker-mobile');
   };
 

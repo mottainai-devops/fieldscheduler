@@ -52,6 +52,8 @@ export const workers = mysqlTable("workers", {
   phone: varchar("phone", { length: 50 }),
   pin: varchar("pin", { length: 255 }),
   skills: text("skills"),
+  role: mysqlEnum("role", ["field_manager", "supervisor"]).default("field_manager").notNull(),
+  preferredWebhookType: mysqlEnum("preferredWebhookType", ["payt", "monthly"]),
   status: mysqlEnum("status", ["active", "inactive", "on_leave"]).default("active").notNull(),
   shiftStart: varchar("shiftStart", { length: 10 }).default("08:00"),
   shiftEnd: varchar("shiftEnd", { length: 10 }).default("17:00"),
@@ -154,6 +156,7 @@ export const routeCustomers = mysqlTable("routeCustomers", {
   sequenceNumber: int("sequenceNumber").notNull(),
   estimatedServiceTime: int("estimatedServiceTime").default(30),
   completedAt: timestamp("completedAt"),
+  pickedAt: timestamp("pickedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
