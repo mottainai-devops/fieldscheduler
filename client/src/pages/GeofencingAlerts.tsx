@@ -56,7 +56,7 @@ export default function GeofencingAlerts() {
         id: "gf-2",
         customerId: "cust-002",
         customerName: "XYZ Industries",
-        buildingId: "CUM-099",
+        buildingId: "AFT-099",
         latitude: 6.5255,
         longitude: 3.3805,
         radiusMeters: 150,

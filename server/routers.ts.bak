@@ -1,0 +1,1007 @@
+import { COOKIE_NAME } from "@shared/const";
+import { getSessionCookieOptions } from "./_core/cookies";
+import { systemRouter } from "./_core/systemRouter";
+import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
+import { z } from "zod";
+import * as arcgis from "./services/arcgis";
+import * as zoho from "./services/zoho";
+
+export const appRouter = router({
+  system: systemRouter,
+
+  auth: router({
+    me: publicProcedure.query(opts => opts.ctx.user),
+    logout: publicProcedure.mutation(({ ctx }) => {
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      return {
+        success: true,
+      } as const;
+    }),
+  }),
+
+  adminAuth: router({
+    // Register new admin
+    register: publicProcedure
+      .input(z.object({
+        email: z.string().email(),
+        password: z.string().min(8),
+        name: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const { createAdminUser } = await import("./adminAuthDb");
+        try {
+          await createAdminUser(input.email, input.password, input.name);
+          return { success: true, message: "Admin user created successfully" };
+        } catch (error: any) {
+          if (error.message?.includes("Duplicate entry")) {
+            throw new Error("Email already exists");
+          }
+          throw error;
+        }
+      }),
+
+    // Login
+    login: publicProcedure
+      .input(z.object({
+        email: z.string().email(),
+        password: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { verifyAdminLogin } = await import("./adminAuthDb");
+        const admin = await verifyAdminLogin(input.email, input.password);
+        
+        if (!admin) {
+          throw new Error("Invalid email or password");
+        }
+        
+        // Set session cookie
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie("admin_session", JSON.stringify(admin), {
+          ...cookieOptions,
+          maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        });
+        
+        return { success: true, admin };
+      }),
+
+    // Get current admin from session
+    me: publicProcedure.query(({ ctx }) => {
+      const adminSession = ctx.req.cookies?.admin_session;
+      if (!adminSession) return null;
+      
+      try {
+        return JSON.parse(adminSession);
+      } catch {
+        return null;
+      }
+    }),
+
+    // Logout
+    logout: publicProcedure.mutation(({ ctx }) => {
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.clearCookie("admin_session", { ...cookieOptions, maxAge: -1 });
+      return { success: true };
+    }),
+
+    // Request password reset
+    requestReset: publicProcedure
+      .input(z.object({
+        email: z.string().email(),
+      }))
+      .mutation(async ({ input }) => {
+        const { generateResetToken } = await import("./adminAuthDb");
+        const result = await generateResetToken(input.email);
+        
+        if (!result) {
+          // Don't reveal if email exists or not
+          return { success: true, message: "If the email exists, a reset link has been sent" };
+        }
+        
+        // TODO: Send email with reset token
+        // For now, just return the token (in production, send via email)
+        return { 
+          success: true, 
+          message: "Reset token generated",
+          resetToken: result.resetToken, // Remove this in production
+        };
+      }),
+
+    // Reset password with token
+    resetPassword: publicProcedure
+      .input(z.object({
+        token: z.string(),
+        newPassword: z.string().min(8),
+      }))
+      .mutation(async ({ input }) => {
+        const { resetPassword } = await import("./adminAuthDb");
+        const result = await resetPassword(input.token, input.newPassword);
+        
+        if (!result.success) {
+          throw new Error(result.message);
+        }
+        
+        return result;
+      }),
+  }),
+
+  // Field Worker Scheduler routers
+  fieldWorker: router({
+    
+    // Workers
+    getWorkers: publicProcedure.query(async () => {
+      const { getAllWorkers } = await import("./fieldWorkerDb");
+      return await getAllWorkers();
+    }),
+    
+    createWorker: publicProcedure
+      .input(z.object({
+        name: z.string(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        pin: z.string().optional(),
+        skills: z.string().optional(),
+        status: z.enum(["active", "inactive", "on_leave"]).optional(),
+        shiftStart: z.string().optional(),
+        shiftEnd: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { createWorker } = await import("./fieldWorkerDb");
+        await createWorker(input);
+        return { success: true };
+      }),
+    
+    updateWorker: publicProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        pin: z.string().optional(),
+        skills: z.string().optional(),
+        status: z.enum(["active", "inactive", "on_leave"]).optional(),
+        shiftStart: z.string().optional(),
+        shiftEnd: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        const { updateWorker } = await import("./fieldWorkerDb");
+        await updateWorker(id, data);
+        return { success: true };
+      }),
+    
+    deleteWorker: publicProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { deleteWorker } = await import("./fieldWorkerDb");
+        await deleteWorker(input.id);
+        return { success: true };
+      }),
+    
+    // Vehicles
+    getVehicles: publicProcedure.query(async () => {
+      const { getAllVehicles } = await import("./fieldWorkerDb");
+      return await getAllVehicles();
+    }),
+    
+    // Customers
+    getCustomers: publicProcedure.query(async () => {
+      const { getAllCustomers } = await import("./fieldWorkerDb");
+      return await getAllCustomers();
+    }),
+    
+    // Building ID Linkage System - Worker-initiated, Admin-approved
+    createLinkageRequest: publicProcedure
+      .input(z.object({
+        mainCustomerId: z.number(),
+        annexCustomerId: z.number(),
+        requestedBy: z.number(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { createLinkageRequest } = await import("./buildingIdLinkageDb");
+        return await createLinkageRequest(input);
+      }),
+    
+    getPendingLinkageRequests: publicProcedure.query(async () => {
+      const { getPendingLinkageRequests } = await import("./buildingIdLinkageDb");
+      return await getPendingLinkageRequests();
+    }),
+    
+    approveLinkageRequest: publicProcedure
+      .input(z.object({
+        requestId: z.number(),
+        userId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { approveLinkageRequest } = await import("./buildingIdLinkageDb");
+        return await approveLinkageRequest(input.requestId, input.userId);
+      }),
+    
+    rejectLinkageRequest: publicProcedure
+      .input(z.object({
+        requestId: z.number(),
+        userId: z.number(),
+        rejectionReason: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { rejectLinkageRequest } = await import("./buildingIdLinkageDb");
+        return await rejectLinkageRequest(input.requestId, input.userId, input.rejectionReason);
+      }),
+    
+    getCustomerLinkageStatus: publicProcedure
+      .input(z.object({ customerId: z.number() }))
+      .query(async ({ input }) => {
+        const { getCustomerLinkageStatus } = await import("./buildingIdLinkageDb");
+        return await getCustomerLinkageStatus(input.customerId);
+      }),
+    
+    getAllLinkageRelationships: publicProcedure.query(async () => {
+      const { getAllLinkageRelationships } = await import("./buildingIdLinkageDb");
+      return await getAllLinkageRelationships();
+    }),
+    
+    removeLinkageRelationship: publicProcedure
+      .input(z.object({ relationId: z.number() }))
+      .mutation(async ({ input }) => {
+        const { removeLinkageRelationship } = await import("./buildingIdLinkageDb");
+        return await removeLinkageRelationship(input.relationId);
+      }),
+    
+    // Routes
+    getRoutes: publicProcedure.query(async () => {
+      const { getAllRoutes, getWorkerById } = await import("./fieldWorkerDb");
+      const routes = await getAllRoutes();
+      
+      // Enrich routes with worker info and customer count
+      const enrichedRoutes = await Promise.all(
+        routes.map(async (route) => {
+          const worker = route.workerId ? await getWorkerById(route.workerId) : null;
+          const { getRouteCustomers } = await import("./fieldWorkerDb");
+          const customers = await getRouteCustomers(route.id);
+          
+          return {
+            ...route,
+            worker,
+            customerCount: customers.length,
+          };
+        })
+      );
+      
+      return enrichedRoutes;
+    }),
+    
+    getRouteById: publicProcedure
+      .input(z.object({ routeId: z.number() }))
+      .query(async ({ input }) => {
+        const { getRouteById, getRouteCustomers, getWorkerById } = await import("./fieldWorkerDb");
+        const route = await getRouteById(input.routeId);
+        if (!route) return null;
+        
+        const customers = await getRouteCustomers(input.routeId);
+        const worker = route.workerId ? await getWorkerById(route.workerId) : null;
+        
+        return {
+          ...route,
+          customers,
+          worker,
+        };
+      }),
+    
+    getRouteDetails: publicProcedure
+      .input((val: unknown) => {
+        if (typeof val === "object" && val !== null && "id" in val && typeof val.id === "number") {
+          return val as { id: number };
+        }
+        throw new Error("Invalid input: expected object with numeric id");
+      })
+      .query(async ({ input }) => {
+        const { getRouteById, getRouteCustomers, getWorkerById } = await import("./fieldWorkerDb");
+        const route = await getRouteById(input.id);
+        if (!route) return null;
+        
+        const customers = await getRouteCustomers(input.id);
+        const worker = route.workerId ? await getWorkerById(route.workerId) : null;
+        
+        return {
+          ...route,
+          worker,
+          customers: customers.map(rc => ({
+            id: rc.customer?.id,
+            name: rc.customer?.name,
+            address: rc.customer?.address,
+            latitude: rc.customer?.latitude,
+            longitude: rc.customer?.longitude,
+            serviceType: rc.customer?.serviceType,
+            priority: rc.customer?.priority,
+            sequenceNumber: rc.sequenceNumber,
+            estimatedServiceTime: rc.estimatedServiceTime,
+            completedAt: rc.completedAt,
+          })),
+        };
+      }),
+    
+    deleteRoute: publicProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const { deleteRoute } = await import("./fieldWorkerDb");
+        await deleteRoute(input.id);
+        return { success: true };
+      }),
+    
+    // Worker locations
+    getAllWorkerLocations: publicProcedure.query(async () => {
+      const { getAllWorkerLocations } = await import("./fieldWorkerDb");
+      return await getAllWorkerLocations();
+    }),
+    
+    // Create route with customers
+    getCustomerClusters: publicProcedure
+      .input(z.object({ maxDistance: z.number().optional() }))
+      .query(async ({ input }) => {
+        try {
+          const { getAllCustomers } = await import("./fieldWorkerDb");
+          const { clusterCustomers } = await import("./utils/clustering");
+          
+          const customers = await getAllCustomers();
+          if (!customers || customers.length === 0) {
+            return [];
+          }
+          
+          const clusters = clusterCustomers(customers, input.maxDistance || 5);
+          return clusters || [];
+        } catch (error) {
+          console.error("Error in getCustomerClusters:", error);
+          return [];
+        }
+      }),
+
+    getCustomerClustersByCount: publicProcedure
+      .input(z.object({ customersPerCluster: z.number().optional() }))
+      .query(async ({ input }) => {
+        try {
+          const { getAllCustomers } = await import("./fieldWorkerDb");
+          const { clusterCustomersByCount } = await import("./utils/clusteringByCount");
+          
+          const customers = await getAllCustomers();
+          if (!customers || customers.length === 0) {
+            return [];
+          }
+          
+          const clusters = clusterCustomersByCount(customers, input.customersPerCluster || 10);
+          return clusters || [];
+        } catch (error) {
+          console.error("Error in getCustomerClustersByCount:", error);
+          return [];
+        }
+      }),
+    
+    selectClusterCustomers: publicProcedure
+      .input(z.object({ clusterId: z.number() }))
+      .query(async ({ input }) => {
+        const { getAllCustomers } = await import("./fieldWorkerDb");
+        const { clusterCustomers } = await import("./utils/clustering");
+        
+        const customers = await getAllCustomers();
+        const clusters = clusterCustomers(customers);
+        const cluster = clusters.find(c => c.id === input.clusterId);
+        
+        return cluster ? cluster.customers : [];
+      }),
+    
+    createRoute: publicProcedure
+      .input(z.object({
+        workerId: z.number().optional(),
+        vehicleId: z.number().optional(),
+        totalDistance: z.string().optional(),
+        estimatedDuration: z.string().optional(),
+        efficiencyScore: z.number().optional(),
+        scheduledDate: z.string().optional(),
+        customerIds: z.array(z.number()),
+      }))
+      .mutation(async ({ input }) => {
+        const { createRoute, addCustomersToRoute } = await import("./fieldWorkerDb");
+        
+        // Create the route
+        const result = await createRoute({
+          workerId: input.workerId,
+          vehicleId: input.vehicleId,
+          totalDistance: input.totalDistance,
+          estimatedDuration: input.estimatedDuration,
+          efficiencyScore: input.efficiencyScore,
+          scheduledDate: input.scheduledDate,
+          status: "assigned",
+        });
+        
+        const routeId = result[0].insertId;
+        
+        // Add customers to the route
+        if (input.customerIds.length > 0) {
+          await addCustomersToRoute(routeId, input.customerIds);
+        }
+        
+        // Create notification for worker if assigned
+        if (input.workerId) {
+          const { getDb } = await import("./db");
+          const { workerNotifications } = await import("../drizzle/schema");
+          const { getWorkerById } = await import("./fieldWorkerDb");
+          
+          const db = await getDb();
+          if (db) {
+            const worker = await getWorkerById(input.workerId);
+            
+            await db.insert(workerNotifications).values({
+              workerId: input.workerId,
+              type: 'route_assigned',
+              title: 'New Route Assigned',
+              message: `You have been assigned a new route with ${input.customerIds.length} customer${input.customerIds.length > 1 ? 's' : ''}.`,
+              relatedId: routeId,
+              isRead: 0,
+            });
+          }
+        }
+        
+        return {
+          success: true,
+          routeId,
+        };
+      }),
+    
+    updateWorkerLocation: publicProcedure
+      .input(z.object({
+        workerId: z.number(),
+        routeId: z.number().optional(),
+        latitude: z.string(),
+        longitude: z.string(),
+        accuracy: z.number().optional(),
+        speed: z.string().nullable().optional(),
+        heading: z.string().nullable().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { updateWorkerLocation } = await import("./fieldWorkerDb");
+        await updateWorkerLocation(input);
+        return { success: true };
+      }),
+    
+    getWorkerLocations: publicProcedure
+      .input(z.object({
+        workerId: z.number().optional(),
+        routeId: z.number().optional(),
+        since: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { getWorkerLocations } = await import("./fieldWorkerDb");
+        return await getWorkerLocations(input);
+      }),
+  }),
+
+  // API Integration routes
+  integrations: router({
+    // ArcGIS routes
+    geocodeAddress: protectedProcedure
+      .input(z.object({ address: z.string() }))
+      .mutation(async ({ input }) => {
+        return await arcgis.geocodeAddress(input.address);
+      }),
+    
+    calculateRoute: protectedProcedure
+      .input(z.object({
+        stops: z.array(z.object({
+          latitude: z.number(),
+          longitude: z.number(),
+          name: z.string().optional(),
+        })),
+      }))
+      .mutation(async ({ input }) => {
+        return await arcgis.calculateOptimizedRoute(input.stops);
+      }),
+    
+    // Zoho Books routes
+    getZohoAuthUrl: publicProcedure
+      .input(z.object({ redirectUri: z.string() }))
+      .query(({ input }) => {
+        return { url: zoho.getZohoAuthUrl(input.redirectUri) };
+      }),
+    
+    exchangeZohoCode: publicProcedure
+      .input(z.object({ code: z.string(), redirectUri: z.string() }))
+      .mutation(async ({ input }) => {
+        return await zoho.exchangeCodeForTokens(input.code, input.redirectUri);
+      }),
+    
+    getZohoStatus: publicProcedure
+      .query(() => {
+        return zoho.getOAuthStatus();
+      }),
+    
+    syncZohoContacts: publicProcedure
+      .mutation(async () => {
+        return await zoho.syncZohoContacts();
+      }),
+    
+    getCustomerStatement: publicProcedure
+      .input(z.object({ zohoContactId: z.string() }))
+      .query(async ({ input }) => {
+        return await zoho.getCustomerStatement(input.zohoContactId);
+      }),
+    
+    getCustomerInvoices: publicProcedure
+      .input(z.object({ zohoContactId: z.string() }))
+      .query(async ({ input }) => {
+        return await zoho.getCustomerInvoices(input.zohoContactId);
+      }),
+    
+    getCustomerPayments: publicProcedure
+      .input(z.object({ zohoContactId: z.string() }))
+      .query(async ({ input }) => {
+        return await zoho.getCustomerPayments(input.zohoContactId);
+      }),
+    
+    fetchZohoContacts: publicProcedure
+      .query(async () => {
+        return await zoho.fetchZohoContacts();
+      }),
+  }),
+  
+  // Compliance Management routes
+  compliance: router({
+    // Violation Types
+    getViolationTypes: publicProcedure.query(async () => {
+      const { getAllViolationTypes } = await import("./complianceDb");
+      return await getAllViolationTypes();
+    }),
+    
+    createViolationType: publicProcedure
+      .input(z.object({
+        name: z.string(),
+        description: z.string().optional(),
+        severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { createViolationType } = await import("./complianceDb");
+        return await createViolationType(input);
+      }),
+    
+    seedDefaultViolations: publicProcedure.mutation(async () => {
+      const { seedDefaultViolationTypes } = await import("./complianceDb");
+      await seedDefaultViolationTypes();
+      return { success: true };
+    }),
+    
+    // Violations
+    getAllViolations: publicProcedure.query(async () => {
+      const { getAllViolations } = await import("./complianceDb");
+      return await getAllViolations();
+    }),
+    
+    getViolationsByCustomer: publicProcedure
+      .input(z.object({ customerId: z.number() }))
+      .query(async ({ input }) => {
+        const { getViolationsByCustomer } = await import("./complianceDb");
+        return await getViolationsByCustomer(input.customerId);
+      }),
+    
+    createViolation: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+        violationTypeId: z.number(),
+        reportedBy: z.number().optional(),
+        notes: z.string().optional(),
+        evidenceUrls: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { createViolation } = await import("./complianceDb");
+        return await createViolation(input);
+      }),
+    
+    // Abatement Notices
+    getAllAbatementNotices: publicProcedure.query(async () => {
+      const { getAllAbatementNotices } = await import("./complianceDb");
+      return await getAllAbatementNotices();
+    }),
+    
+    createAbatementNotice: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+        violationId: z.number().optional(),
+        noticeNumber: z.string().optional(),
+        dueDate: z.string().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { createAbatementNotice } = await import("./complianceDb");
+        return await createAbatementNotice({
+          ...input,
+          dueDate: input.dueDate ? new Date(input.dueDate) : undefined,
+        });
+      }),
+    
+    // Payment Evidence
+    getPaymentEvidence: publicProcedure
+      .input(z.object({ customerId: z.number() }))
+      .query(async ({ input }) => {
+        const { getPaymentEvidenceByCustomer } = await import("./complianceDb");
+        return await getPaymentEvidenceByCustomer(input.customerId);
+      }),
+    
+    uploadPaymentEvidence: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+        paymentDate: z.string().optional(),
+        amount: z.string().optional(),
+        paymentMethod: z.string().optional(),
+        evidenceType: z.enum(["receipt", "bank_statement", "invoice", "other"]).optional(),
+        fileUrl: z.string(),
+        fileName: z.string(),
+        uploadedBy: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { uploadPaymentEvidence } = await import("./complianceDb");
+        return await uploadPaymentEvidence({
+          ...input,
+          paymentDate: input.paymentDate ? new Date(input.paymentDate) : undefined,
+        });
+      }),
+    
+    // Payment Status
+    getPaymentStatus: publicProcedure
+      .input(z.object({ customerId: z.number() }))
+      .query(async ({ input }) => {
+        const { getCustomerPaymentStatus } = await import("./complianceDb");
+        return await getCustomerPaymentStatus(input.customerId);
+      }),
+    
+    updatePaymentStatus: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+        status: z.enum(["paid", "pending", "overdue", "partial"]),
+        lastPaymentDate: z.string().optional(),
+        outstandingBalance: z.string().optional(),
+        zohoInvoiceId: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { upsertCustomerPaymentStatus } = await import("./complianceDb");
+        await upsertCustomerPaymentStatus({
+          ...input,
+          lastPaymentDate: input.lastPaymentDate ? new Date(input.lastPaymentDate) : undefined,
+        });
+        return { success: true };
+      }),
+    
+    // PDF Generation
+    generateAbatementNoticePDF: publicProcedure
+      .input(z.object({
+        noticeId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { getAbatementNoticeById } = await import("./complianceDb");
+        const { generateAbatementNoticePDF } = await import("./utils/pdfGenerator");
+        
+        const notice = await getAbatementNoticeById(input.noticeId);
+        if (!notice) {
+          throw new Error("Notice not found");
+        }
+        
+        const pdfBuffer = await generateAbatementNoticePDF({
+          noticeNumber: notice.noticeNumber,
+          customerName: notice.customerName || "Unknown",
+          customerAddress: notice.customerAddress || "Unknown",
+          issueDate: notice.issueDate || new Date(),
+          dueDate: notice.dueDate || new Date(),
+          violations: notice.violations || [],
+          issuedBy: notice.issuedBy || "Environmental Officer",
+          notes: notice.notes || undefined,
+        });
+        
+        return {
+          pdf: pdfBuffer.toString('base64'),
+          filename: `Abatement_Notice_${notice.noticeNumber}.pdf`,
+        };
+      }),
+    
+    generateComplianceReportPDF: publicProcedure
+      .mutation(async () => {
+        const { getAllViolations, getAllViolationTypes } = await import("./complianceDb");
+        const { getAllCustomers } = await import("./fieldWorkerDb");
+        const { generateComplianceReportPDF } = await import("./utils/pdfGenerator");
+        
+        const violations = await getAllViolations();
+        const customers = await getAllCustomers();
+        const violationTypes = await getAllViolationTypes();
+        
+        // Calculate statistics
+        const activeViolations = violations.filter((v: any) => v.status === 'reported' || v.status === 'under_review').length;
+        const resolvedViolations = violations.filter((v: any) => v.status === 'resolved').length;
+        
+        // Group violations by type
+        const violationsByType = violationTypes.map((type: any) => ({
+          type: type.name,
+          count: violations.filter((v: any) => v.violationTypeId === type.id).length,
+        })).filter((v: any) => v.count > 0);
+        
+        // Get recent violations
+        const recentViolations = violations
+          .sort((a: any, b: any) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime())
+          .slice(0, 20)
+          .map((v: any) => {
+            const customer = customers.find((c: any) => c.id === v.customerId);
+            const type = violationTypes.find((t: any) => t.id === v.violationTypeId);
+            return {
+              customerName: customer?.name || 'Unknown',
+              violationType: type?.name || 'Unknown',
+              date: new Date(v.reportedAt),
+              status: v.status || 'reported',
+            };
+          });
+        
+        const pdfBuffer = await generateComplianceReportPDF({
+          reportDate: new Date(),
+          totalCustomers: customers.length,
+          activeViolations,
+          resolvedViolations,
+          violationsByType,
+          recentViolations,
+        });
+        
+        return {
+          pdf: pdfBuffer.toString('base64'),
+          filename: `Compliance_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+        };
+      }),
+  }),
+
+  // Payment Evidence & Notifications
+  payments: router({
+    // Upload payment proof
+    uploadPaymentProof: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+        invoiceId: z.string().optional(),
+        workerId: z.number(),
+        fileData: z.string(), // base64 encoded file
+        fileName: z.string(),
+        fileType: z.string(), // mime type
+        notes: z.string().optional(),
+        amount: z.string().optional(),
+        paymentMethod: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { uploadPaymentProof } = await import("./storageService");
+        const { createPaymentEvidence, createNotification } = await import("./paymentEvidenceDb");
+        const { getCustomerById } = await import("./fieldWorkerDb");
+        const { getWorkerById } = await import("./fieldWorkerDb");
+
+        // Upload file to S3
+        const { fileUrl, fileKey } = await uploadPaymentProof(
+          input.fileData,
+          input.fileName,
+          input.fileType,
+          input.customerId
+        );
+
+        // Save payment evidence to database
+        const evidenceId = await createPaymentEvidence({
+          customerId: input.customerId,
+          invoiceId: input.invoiceId,
+          workerId: input.workerId,
+          fileUrl,
+          fileName: input.fileName,
+          fileType: input.fileType,
+          notes: input.notes,
+          amount: input.amount,
+          paymentMethod: input.paymentMethod,
+        });
+
+        // Get customer and worker details for notification
+        const customer = await getCustomerById(input.customerId);
+        const worker = await getWorkerById(input.workerId);
+
+        // Create admin notification
+        await createNotification({
+          type: "payment_upload",
+          title: "New Payment Proof Uploaded",
+          message: `${worker?.name || 'Worker'} uploaded payment proof for ${customer?.name || 'customer'}${input.amount ? ` - Amount: ₦${input.amount}` : ''}`,
+          relatedId: evidenceId,
+        });
+
+        return {
+          success: true,
+          evidenceId,
+          fileUrl,
+        };
+      }),
+
+    // Get payment evidence for customer
+    getPaymentEvidence: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+      }))
+      .query(async ({ input }) => {
+        const { getPaymentEvidenceByCustomer } = await import("./paymentEvidenceDb");
+        return await getPaymentEvidenceByCustomer(input.customerId);
+      }),
+
+    // Send payment reminder (email/SMS)
+    sendPaymentReminder: publicProcedure
+      .input(z.object({
+        customerId: z.number(),
+        invoiceId: z.string(),
+        amount: z.string(),
+        dueDate: z.string(),
+        method: z.enum(["email", "sms", "both"]),
+      }))
+      .mutation(async ({ input }) => {
+        const { getCustomerById } = await import("./fieldWorkerDb");
+        const customer = await getCustomerById(input.customerId);
+
+        if (!customer) {
+          throw new Error("Customer not found");
+        }
+
+        // TODO: Implement actual email/SMS sending via Zoho or SMS service
+        // For now, just log the reminder
+        console.log("Payment reminder:", {
+          customer: customer.name,
+          customerId: customer.id,
+          invoice: input.invoiceId,
+          amount: input.amount,
+          dueDate: input.dueDate,
+          method: input.method,
+        });
+
+        return {
+          success: true,
+          message: `Payment reminder sent via ${input.method}`,
+        };
+      }),
+
+    // Get unread notifications
+    getUnreadNotifications: publicProcedure
+      .query(async () => {
+        const { getUnreadNotifications } = await import("./paymentEvidenceDb");
+        return await getUnreadNotifications();
+      }),
+
+    // Get all notifications
+    getAllNotifications: publicProcedure
+      .input(z.object({
+        limit: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { getAllNotifications } = await import("./paymentEvidenceDb");
+        return await getAllNotifications(input.limit);
+      }),
+
+    // Mark notification as read
+    markNotificationAsRead: publicProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { markNotificationAsRead } = await import("./paymentEvidenceDb");
+        await markNotificationAsRead(input.id);
+        return { success: true };
+      }),
+
+    // Mark all notifications as read
+    markAllNotificationsAsRead: publicProcedure
+      .mutation(async () => {
+        const { markAllNotificationsAsRead } = await import("./paymentEvidenceDb");
+        await markAllNotificationsAsRead();
+        return { success: true };
+      }),
+  }),
+
+  // Worker Notifications
+  workerNotifications: router({
+    // Get notifications for a specific worker
+    getWorkerNotifications: publicProcedure
+      .input(z.object({
+        workerId: z.number(),
+        limit: z.number().optional(),
+      }))
+      .query(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { workerNotifications } = await import("../drizzle/schema");
+        const { eq, desc } = await import("drizzle-orm");
+        
+        const db = await getDb();
+        if (!db) return [];
+        
+        const notifications = await db
+          .select()
+          .from(workerNotifications)
+          .where(eq(workerNotifications.workerId, input.workerId))
+          .orderBy(desc(workerNotifications.createdAt))
+          .limit(input.limit || 50);
+        
+        return notifications;
+      }),
+
+    // Get unread count for worker
+    getUnreadCount: publicProcedure
+      .input(z.object({
+        workerId: z.number(),
+      }))
+      .query(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { workerNotifications } = await import("../drizzle/schema");
+        const { eq, and } = await import("drizzle-orm");
+        
+        const db = await getDb();
+        if (!db) return { count: 0 };
+        
+        const unread = await db
+          .select()
+          .from(workerNotifications)
+          .where(
+            and(
+              eq(workerNotifications.workerId, input.workerId),
+              eq(workerNotifications.isRead, 0)
+            )
+          );
+        
+        return { count: unread.length };
+      }),
+
+    // Mark notification as read
+    markAsRead: publicProcedure
+      .input(z.object({
+        id: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { workerNotifications } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        
+        const db = await getDb();
+        if (!db) throw new Error("Database not available");
+        
+        await db
+          .update(workerNotifications)
+          .set({ isRead: 1 })
+          .where(eq(workerNotifications.id, input.id));
+        
+        return { success: true };
+      }),
+
+    // Mark all as read for worker
+    markAllAsRead: publicProcedure
+      .input(z.object({
+        workerId: z.number(),
+      }))
+      .mutation(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { workerNotifications } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        
+        const db = await getDb();
+        if (!db) throw new Error("Database not available");
+        
+        await db
+          .update(workerNotifications)
+          .set({ isRead: 1 })
+          .where(eq(workerNotifications.workerId, input.workerId));
+        
+        return { success: true };
+      }),
+  }),
+  admin: router({
+    updateCustomerZohoId: publicProcedure
+      .input(z.object({ customerId: z.number(), zohoContactId: z.string() }))
+      .mutation(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { sql } = await import("drizzle-orm");
+        const db = await getDb();
+        if (!db) throw new Error("Database not available");
+        await db.execute(sql`UPDATE customers SET zohoContactId = ${input.zohoContactId} WHERE id = ${input.customerId}`);
+        const result = await db.execute(sql`SELECT id, name, zohoContactId FROM customers WHERE id = ${input.customerId}`);
+        return result[0];
+      }),
+  })
+});
+
+export type AppRouter = typeof appRouter;

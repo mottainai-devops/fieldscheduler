@@ -218,7 +218,7 @@ export default function AdvancedFilters() {
           <div className="space-y-2">
             <label className="text-sm font-semibold text-white">Building IDs (CUSTOMERMAF)</label>
             <div className="flex flex-wrap gap-2">
-              {["AFT-200", "AFT-221", "CUM-099", "DIC-087", "MOT-108", "HSY-060"].map((id) => (
+              {["AFT-200", "AFT-221", "AFT-099", "DIC-087", "MOT-108", "HSY-060"].map((id) => (
                 <Button
                   key={id}
                   onClick={() => toggleFilter("customermaf", id)}

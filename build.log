@@ -1,0 +1,64 @@
+
+> field-worker-scheduler-demo@1.0.0 build /home/ubuntu/field-worker-scheduler
+> vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist
+
+NODE_ENV=production is not supported in the .env file. Only NODE_ENV=development is supported to create a development build of your project. If you need to set process.env.NODE_ENV, you can set it in the Vite config instead.
+vite v7.1.9 building for production...
+(!) %VITE_ANALYTICS_ENDPOINT% is not defined in env variables found in /index.html. Is the variable mistyped?
+(!) %VITE_ANALYTICS_WEBSITE_ID% is not defined in env variables found in /index.html. Is the variable mistyped?
+<script src="%VITE_ANALYTICS_ENDPOINT%/umami"> in "/index.html" can't be bundled without type="module" attribute
+transforming...
+✓ 2759 modules transformed.
+rendering chunks...
+computing gzip size...
+../dist/public/assets/spritesheet-DpIxuf5L.svg      5.55 kB │ gzip:   1.67 kB
+../dist/public/index.html                         366.35 kB │ gzip: 105.08 kB
+../dist/public/assets/index-Bk5P6zNQ.css          184.31 kB │ gzip:  35.77 kB
+../dist/public/assets/index-BC8WWdPk.js         1,729.69 kB │ gzip: 424.64 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 18.48s
+▲ [WARNING] Import "getCustomersByIds" will always be undefined because there is no matching export in "server/fieldWorkerDb.ts" [import-is-undefined]
+
+    server/routers/fieldWorker.ts:65:33:
+      65 │       return await fieldWorkerDb.getCustomersByIds(input.ids);
+         ╵                                  ~~~~~~~~~~~~~~~~~
+
+▲ [WARNING] Import "updateCustomer" will always be undefined because there is no matching export in "server/fieldWorkerDb.ts" [import-is-undefined]
+
+    server/routers/fieldWorker.ts:122:33:
+      122 │       return await fieldWorkerDb.updateCustomer(id, data);
+          ╵                                  ~~~~~~~~~~~~~~
+
+▲ [WARNING] Import "deleteCustomer" will always be undefined because there is no matching export in "server/fieldWorkerDb.ts" [import-is-undefined]
+
+    server/routers/fieldWorker.ts:128:33:
+      128 │       return await fieldWorkerDb.deleteCustomer(input.id);
+          ╵                                  ~~~~~~~~~~~~~~
+
+▲ [WARNING] Import "getVehicles" will always be undefined because there is no matching export in "server/fieldWorkerDb.ts" [import-is-undefined]
+
+    server/routers/fieldWorker.ts:133:31:
+      133 │     return await fieldWorkerDb.getVehicles();
+          ╵                                ~~~~~~~~~~~
+
+▲ [WARNING] Import "getVehicleById" will always be undefined because there is no matching export in "server/fieldWorkerDb.ts" [import-is-undefined]
+
+    server/routers/fieldWorker.ts:139:33:
+      139 │       return await fieldWorkerDb.getVehicleById(input.id);
+          ╵                                  ~~~~~~~~~~~~~~
+
+▲ [WARNING] Import "createVehicle" will always be undefined because there is no matching export in "server/fieldWorkerDb.ts" [import-is-undefined]
+
+    server/routers/fieldWorker.ts:153:33:
+      153 │       return await fieldWorkerDb.createVehicle(input);
+          ╵                                  ~~~~~~~~~~~~~
+
+6 of 11 warnings shown (disable the message limit with --log-limit=0)
+
+  dist/index.js  163.4kb
+
+⚡ Done in 62ms

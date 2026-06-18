@@ -1,5 +1,5 @@
 // server/scripts/update_maf_tags.mjs
-// Migration: Update fieldManagerMafTags for lot restructuring
+// Migration: Update fieldManagerTags for lot restructuring
 // - Lot 076: SAY-076 → MOT-076 (Mottainai retains lot 076)
 // - Lot 099: CUM-099 → AFT-099 (AFT Okuleye takes lot 099)
 // - Lot 415: CUM-415 → DAL-415 (Dalco Ventures takes lot 415)
@@ -33,7 +33,7 @@ const connection = await mysql.createConnection({
   user,
   password,
   database,
-  ssl: { rejectUnauthorized: true },
+  ssl: { rejectUnauthorized: false },
 });
 
 console.log('Connected successfully.\n');
@@ -44,7 +44,7 @@ console.log('Connected successfully.\n');
 console.log('=== CURRENT STATE OF AFFECTED TAGS ===');
 const [currentTags] = await connection.execute(
   `SELECT id, fieldManagerId, customermaf, description 
-   FROM fieldManagerMafTags 
+   FROM fieldManagerTags 
    WHERE customermaf IN ('SAY-076', 'CUM-099', 'CUM-415', 'EOA-414', 'MOT-076', 'AFT-099', 'DAL-415', 'DAL-414', 'YUS-074')
    ORDER BY fieldManagerId, customermaf`
 );
@@ -87,7 +87,7 @@ const toDelete = [
 
 for (const tag of toDelete) {
   const [result] = await connection.execute(
-    `DELETE FROM fieldManagerMafTags WHERE fieldManagerId = ? AND customermaf = ?`,
+    `DELETE FROM fieldManagerTags WHERE fieldManagerId = ? AND customermaf = ?`,
     [tag.fieldManagerId, tag.customermaf]
   );
   const affected = result.affectedRows;
@@ -111,7 +111,7 @@ const toInsert = [
 for (const tag of toInsert) {
   try {
     const [result] = await connection.execute(
-      `INSERT INTO fieldManagerMafTags (fieldManagerId, customermaf, description, createdAt, updatedAt)
+      `INSERT INTO fieldManagerTags (fieldManagerId, customermaf, description, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE description = VALUES(description), updatedAt = VALUES(updatedAt)`,
       [tag.fieldManagerId, tag.customermaf, tag.description, now, now]
@@ -128,7 +128,7 @@ for (const tag of toInsert) {
 console.log('\n=== FINAL STATE (Halleluyah & Juwon tags) ===');
 const [finalTags] = await connection.execute(
   `SELECT t.id, w.name as fieldManager, t.customermaf, t.description
-   FROM fieldManagerMafTags t
+   FROM fieldManagerTags t
    JOIN workers w ON w.id = t.fieldManagerId
    WHERE t.fieldManagerId IN (?, ?)
    ORDER BY w.name, t.customermaf`,

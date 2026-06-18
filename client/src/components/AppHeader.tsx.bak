@@ -1,0 +1,194 @@
+import { Button } from "@/components/ui/button";
+import { MapPin, ArrowLeft, ChevronRight } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import FieldManagerQuickStats from "@/components/FieldManagerQuickStats";
+import ExportAnalytics from "@/components/ExportAnalytics";
+import NotificationsPanel from "@/components/NotificationsPanel";
+import ThemeToggle from "@/components/ThemeToggle";
+import AdvancedFilters from "@/components/AdvancedFilters";
+
+interface BreadcrumbItem {
+  label: string;
+  href: string;
+}
+
+interface AppHeaderProps {
+  title?: string;
+  subtitle?: string;
+  showBackButton?: boolean;
+  backTo?: string;
+  backLabel?: string;
+  breadcrumbs?: BreadcrumbItem[];
+}
+
+export default function AppHeader({ 
+  title = "Dashboard", 
+  subtitle = "Field Worker Scheduler",
+  showBackButton = false,
+  backTo,
+  backLabel = "Back",
+  breadcrumbs
+}: AppHeaderProps) {
+  const [location] = useLocation();
+
+  const isActive = (path: string) => {
+    return location === path;
+  };
+
+  const getButtonClass = (path: string) => {
+    return isActive(path)
+      ? "bg-blue-600 text-white hover:bg-blue-700"
+      : "text-slate-300 hover:text-white hover:bg-slate-800";
+  };
+
+  return (
+    <>
+      <header className="border-b border-slate-700 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-50">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link href="/dashboard">
+                <div className="p-2 bg-blue-600 rounded-lg cursor-pointer hover:bg-blue-700 transition-colors">
+                  <MapPin className="w-6 h-6 text-white" />
+                </div>
+              </Link>
+              <div>
+                <div className="flex items-center gap-2">
+                  {showBackButton && backTo && (
+                    <Link href={backTo}>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-slate-400 hover:text-white hover:bg-slate-800 px-2"
+                      >
+                        <ArrowLeft className="w-4 h-4 mr-1" />
+                        {backLabel}
+                      </Button>
+                    </Link>
+                  )}
+                  <h1 className="text-2xl font-bold text-white">{title}</h1>
+                </div>
+                
+                {/* Breadcrumbs */}
+                {breadcrumbs && breadcrumbs.length > 0 && (
+                  <div className="flex items-center gap-1 text-sm text-slate-400 mt-1">
+                    {breadcrumbs.map((crumb, index) => (
+                      <div key={index} className="flex items-center gap-1">
+                        {index > 0 && <ChevronRight className="w-3 h-3" />}
+                        {index === breadcrumbs.length - 1 ? (
+                          <span className="text-slate-300">{crumb.label}</span>
+                        ) : (
+                          <Link href={crumb.href}>
+                            <span className="hover:text-white cursor-pointer transition-colors">
+                              {crumb.label}
+                            </span>
+                          </Link>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {!breadcrumbs && (
+                  <p className="text-sm text-slate-400">{subtitle}</p>
+                )}
+              </div>
+            </div>
+            
+            <nav className="flex items-center gap-2">
+              <Link href="/dashboard">
+                <Button variant="ghost" className={getButtonClass("/dashboard")}>
+                  Dashboard
+                </Button>
+              </Link>
+              <Link href="/customers">
+                <Button variant="ghost" className={getButtonClass("/customers")}>
+                  Customers
+                </Button>
+              </Link>
+              <Link href="/routes">
+                <Button variant="ghost" className={getButtonClass("/routes")}>
+                  Routes
+                </Button>
+              </Link>
+              <Link href="/workers">
+                <Button variant="ghost" className={getButtonClass("/workers")}>
+                  Workers
+                </Button>
+              </Link>
+              <Link href="/building-groups">
+                <Button variant="ghost" className={getButtonClass("/building-groups")}>
+                  Building Groups
+                </Button>
+              </Link>
+              <Link href="/compliance">
+                <Button variant="ghost" className={getButtonClass("/compliance")}>
+                  Compliance
+                </Button>
+              </Link>
+              <Link href="/tracking">
+                <Button variant="ghost" className={getButtonClass("/tracking")}>
+                  Tracking
+                </Button>
+              </Link>
+              <Link href="/analytics">
+                <Button variant="ghost" className={getButtonClass("/analytics")}>
+                  Analytics
+                </Button>
+              </Link>
+              <Link href="/zoho">
+                <Button variant="ghost" className={getButtonClass("/zoho")}>
+                  Zoho
+                </Button>
+              </Link>
+              <Link href="/cluster-management">
+                <Button variant="ghost" className={getButtonClass("/cluster-management")}>
+                  Clusters
+                </Button>
+              </Link>
+              
+              {/* Field Manager Tagging System */}
+              <div className="border-l border-slate-700 pl-2 ml-2 flex items-center gap-1">
+                <Link href="/field-manager-admin">
+                  <Button variant="ghost" className={getButtonClass("/field-manager-admin") + " font-semibold"}>
+                    Manager
+                  </Button>
+                </Link>
+                <Link href="/field-manager-tagging">
+                  <Button variant="ghost" className={getButtonClass("/field-manager-tagging")}>
+                    Tags
+                  </Button>
+                </Link>
+                <Link href="/dynamic-customer-filtering">
+                  <Button variant="ghost" className={getButtonClass("/dynamic-customer-filtering")}>
+                    Filter
+                  </Button>
+                </Link>
+                <Link href="/tag-based-route-creation">
+                  <Button variant="ghost" className={getButtonClass("/tag-based-route-creation")}>
+                    Routes
+                  </Button>
+                </Link>
+              </div>
+              
+              <Link href="/create-route">
+                <Button className="bg-green-600 hover:bg-green-700 text-white">
+                  Create Route
+                </Button>
+              </Link>
+              
+              {/* Right side utilities */}
+              <div className="border-l border-slate-700 pl-2 ml-2 flex items-center gap-1">
+                <AdvancedFilters />
+                <ExportAnalytics />
+                <NotificationsPanel />
+                <ThemeToggle />
+              </div>
+            </nav>
+          </div>
+        </div>
+      </header>
+      <FieldManagerQuickStats />
+    </>
+  );
+}

@@ -1,0 +1,50 @@
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+🔌 Connecting to database...
+   Host: gateway02.us-east-1.prod.aws.tidbcloud.com:4000
+   Database: WLXvxD3KZrDSqjCVfXw3HU
+
+🔴 STARTING FORCED PURGE (disabling foreign key constraints)...
+
+⚙️  Disabling foreign key constraints...
+✓ Foreign key checks disabled
+
+📊 Purging all tables:
+  • route_customers: (table not found)
+  • routes: (empty)
+  • workerLocations: (empty)
+  • workers: (empty)
+  • customers: (empty)
+  • vehicles: (empty)
+  • complianceViolations: (empty)
+  • abatementNotices: (empty)
+  • paymentEvidence: (empty)
+  • customerPaymentStatus: (empty)
+  • violationTypes: (empty)
+  • buildingIdLinkageRequests: (empty)
+  • customerBuildingIdRelations: (empty)
+  • workerNotifications: (empty)
+  • zohoTokens: (empty)
+
+📈 Total records deleted: 0
+
+⚙️  Re-enabling foreign key constraints...
+✓ Foreign key checks re-enabled
+
+✅ VERIFICATION - All tables now empty:
+  ✓ routes: 0 records
+  ✓ workerLocations: 0 records
+  ✓ workers: 0 records
+  ✓ customers: 0 records
+  ✓ vehicles: 0 records
+  ✓ complianceViolations: 0 records
+  ✓ abatementNotices: 0 records
+  ✓ paymentEvidence: 0 records
+  ✓ customerPaymentStatus: 0 records
+  ✓ violationTypes: 0 records
+  ✓ buildingIdLinkageRequests: 0 records
+  ✓ customerBuildingIdRelations: 0 records
+  ✓ workerNotifications: 0 records
+  ✓ zohoTokens: 0 records
+
+🎉 PURGE COMPLETE - ALL DATA DELETED - System is now empty
+

@@ -84,7 +84,7 @@ export default function RouteOptimization() {
         {
           id: "cust-4",
           name: "XYZ Industries",
-          building: "CUM-099",
+          building: "AFT-099",
           lat: 6.5255,
           lng: 3.3805,
           sequence: 1,
@@ -94,7 +94,7 @@ export default function RouteOptimization() {
         {
           id: "cust-5",
           name: "Finance Corp",
-          building: "CUM-415",
+          building: "DAL-415",
           lat: 6.5265,
           lng: 3.3815,
           sequence: 2,
