@@ -77,12 +77,15 @@ export default function CreateRoute() {
       setSupervisorLotWarning(null);
       return;
     }
-    const sup = supervisors.find((s: any) => s.fieldworkerId === supervisorId);
-    if (!sup?.assignedLots?.length) {
+    // Support both legacy fieldworkerId and new Survey App id field
+    const sup = supervisors.find((s: any) => String(s.id ?? s.fieldworkerId) === String(supervisorId));
+    // Support both new `lots` field and legacy `assignedLots` field
+    const supLots = sup?.lots ?? sup?.assignedLots ?? [];
+    if (!supLots.length) {
       setSupervisorLotWarning(null);
       return;
     }
-    const supLotCodes = new Set<string>(sup.assignedLots.map((l: any) => String(l.lotCode)));
+    const supLotCodes = new Set<string>(supLots.map((l: any) => String(l.lotCode)));
     const selectedCustomerData = asArray(customers).filter(c => customerIds.includes(c.id));
     const unmatched = selectedCustomerData.filter(c => {
       const maf = c.customermaf || "";
@@ -864,11 +867,14 @@ export default function CreateRoute() {
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-600">
                     <SelectItem value="none" className="text-slate-400">No supervisor</SelectItem>
-                    {supervisors.map((sup: any) => (
-                      <SelectItem key={sup.fieldworkerId} value={String(sup.fieldworkerId)} className="text-white">
-                        {sup.fullName} {sup.companyName ? `(${sup.companyName})` : ''}
-                      </SelectItem>
-                    ))}
+                    {supervisors.map((sup: any) => {
+                      const supId = String(sup.id ?? sup.fieldworkerId ?? '');
+                      return (
+                        <SelectItem key={supId} value={supId} className="text-white">
+                          {sup.fullName} {sup.companyName ? `(${sup.companyName})` : ''}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
                 {/* A4: Lot-access warning */}

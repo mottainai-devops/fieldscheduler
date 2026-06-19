@@ -551,6 +551,8 @@ export const routeInstances = mysqlTable("routeInstances", {
   // Optional linked route id if a real route was created for this instance
   routeId: int("routeId").references(() => routes.id),
   notes: text("notes"),
+  // Override the schedule's default start time for this occurrence (HH:MM)
+  startTimeOverride: varchar("startTimeOverride", { length: 10 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
