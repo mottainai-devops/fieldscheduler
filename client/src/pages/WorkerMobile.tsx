@@ -33,7 +33,10 @@ export default function WorkerMobile() {
   );
 
   useEffect(() => {
-    const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+    // 30-min freshness gate: webhook URLs change rarely (admin config, not per-pickup).
+    // Refreshing on every foreground event would add latency for no practical benefit.
+    // Cache staleness is bounded to 30 min; a full re-login always resets the cache.
+    const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes (deliberate — see §3.1 note)
 
     const refreshLots = async () => {
       const token = localStorage.getItem('workerSurveyToken');

@@ -127,7 +127,7 @@ export const workerAuthRouter = router({
       // routeSchedules row for that worker whose dtstart <= scheduledDate, returning its id.
       const { getDb } = await import("../db");
       const { routes, routeSchedules } = await import("../../drizzle/schema");
-      const { eq, and, lte } = await import("drizzle-orm");
+      const { eq, and, lte, desc, or, isNull } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return { scheduleId: null };
 
@@ -141,8 +141,9 @@ export const workerAuthRouter = router({
       const { workerId, scheduledDate } = routeRows[0];
       if (!scheduledDate) return { scheduleId: null };
 
-      // Step 2: find the active routeSchedules row for this worker whose dtstart <= scheduledDate
-      // (most recently started schedule wins — order by dtstart DESC, take first)
+      // Step 2: find the active routeSchedules row for this worker whose dtstart <= scheduledDate.
+      // Most recently started schedule wins — order by dtstart DESC, take first.
+      // Also exclude schedules whose dtend has passed (dtend IS NULL = no end date = still valid).
       const schedRows = await db
         .select({ id: routeSchedules.id })
         .from(routeSchedules)
@@ -150,10 +151,12 @@ export const workerAuthRouter = router({
           and(
             eq(routeSchedules.workerId, workerId),
             eq(routeSchedules.status, "active"),
-            lte(routeSchedules.dtstart, scheduledDate)
+            lte(routeSchedules.dtstart, scheduledDate),
+            // dtend guard: exclude schedules whose window has closed
+            or(isNull(routeSchedules.dtend), lte(scheduledDate, routeSchedules.dtend as any))
           )
         )
-        .orderBy((routeSchedules as any).dtstart)
+        .orderBy(desc(routeSchedules.dtstart))
         .limit(1);
       return { scheduleId: schedRows[0]?.id ?? null };
     }),
@@ -936,13 +939,15 @@ export const workerAuthRouter = router({
       const rawLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
         Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
 
-      // Enrich each lot with paytWebhook + monthlyWebhook from admin dashboard
+      // Enrich each lot with paytWebhook + monthlyWebhook + lotId + lotNumber from admin dashboard
       const assignedLots: Array<{
         lotCode: string;
         lotName: string;
         companyName: string | null;
         paytWebhook: string | null;
         monthlyWebhook: string | null;
+        lotId: number | null;
+        lotNumber: number | null;
       }> = await Promise.all(
         rawLots.map(async (lot) => {
           try {
@@ -950,7 +955,7 @@ export const workerAuthRouter = router({
               `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { search: lot.lotCode, page: 1, limit: 5 } } }))}`,
               { signal: AbortSignal.timeout(5000) }
             );
-            if (!res.ok) return { ...lot, paytWebhook: null, monthlyWebhook: null };
+            if (!res.ok) return { ...lot, paytWebhook: null, monthlyWebhook: null, lotId: null, lotNumber: null };
             const data = await res.json() as any;
             const lots = data?.[0]?.result?.data?.json?.lots ?? [];
             const match = lots.find((l: any) =>
@@ -962,9 +967,12 @@ export const workerAuthRouter = router({
               ...lot,
               paytWebhook: match?.paytWebhook ?? null,
               monthlyWebhook: match?.monthlyWebhook ?? null,
+              // lotId and lotNumber from admin dashboard lot record
+              lotId: match?.id ?? null,
+              lotNumber: match?.lotNumber ?? null,
             };
           } catch {
-            return { ...lot, paytWebhook: null, monthlyWebhook: null };
+            return { ...lot, paytWebhook: null, monthlyWebhook: null, lotId: null, lotNumber: null };
           }
         })
       );
