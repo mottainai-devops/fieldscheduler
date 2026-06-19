@@ -10,7 +10,9 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { routeSchedules, routeInstances, workers } from "../../drizzle/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
-import { RRule, RRuleSet, rrulestr } from "rrule";
+// rrule is a CommonJS module — use default import for ESM compatibility
+import rrulePkg from "rrule";
+const { RRule, RRuleSet, rrulestr } = rrulePkg;
 import { TRPCError } from "@trpc/server";
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
