@@ -237,7 +237,8 @@ export const calendarOverridesRouter = router({
         .where(eq(routeInstanceCustomerOverrides.instanceId, input.instanceId));
       const excludedIds = new Set(overrides.filter(o => o.overrideType === 'excluded').map(o => o.customerId));
       const addedOverrides = overrides.filter(o => o.overrideType === 'added');
-      const stopOrderMap = new Map(overrides.map(o => [o.customerId, o.stopOrder ?? null]));
+      // stopOrder is not in the schema; use insertion order for reordered overrides
+      const stopOrderMap = new Map(overrides.map((o, idx) => [o.customerId, idx]));
 
       // 3. Get base schedule customers (active, not paused)
       const baseRows = await db

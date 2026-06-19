@@ -325,7 +325,7 @@ export const fieldWorkerRouter = router({
     .query(async ({ input }) => {
       try {
         const customers = await fieldWorkerDb.getAllCustomers();
-        const clusters = clusterCustomers(customers, input.clusterDistance, input.minClusterSize, input.maxClusterRadius);
+        const clusters = clusterCustomers(customers, input.clusterDistance, input.minClusterSize);
         return clusters || [];
       } catch (error) {
         console.error("Error clustering customers:", error);

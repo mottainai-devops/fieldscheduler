@@ -546,7 +546,7 @@ function CustomerOverrideDialog({
 }
 
 // ─── Day Detail Dialog ────────────────────────────────────────────────────────
-function DayDetailDialog({{
+function DayDetailDialog({
   open,
   onClose,
   date,

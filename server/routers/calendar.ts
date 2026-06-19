@@ -104,7 +104,7 @@ function expandSchedule(
   const dtstart = new Date(schedule.dtstart + "T00:00:00Z");
   try {
     const rule = rrulestr(`DTSTART:${schedule.dtstart.replace(/-/g, "")}T000000Z\nRRULE:${schedule.rrule}`);
-    rruleSet.rrule(rule as RRule);
+    rruleSet.rrule(rule as any);
   } catch {
     // Malformed RRULE — return empty
     return [];
