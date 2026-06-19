@@ -32,6 +32,8 @@ import WorkerMobileRouteDetail from "./pages/WorkerMobileRouteDetail";
 import WorkerMobileReportViolation from "./pages/WorkerMobileReportViolation";
 import WorkerMobileCustomerDetail from "./pages/WorkerMobileCustomerDetail";
 import WorkerMobileNotifications from "./pages/WorkerMobileNotifications";
+import PendingPickups from "./pages/PendingPickups";
+import RouteSchedules from "./pages/RouteSchedules";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
 import FieldManagerTagging from "./pages/FieldManagerTagging";
@@ -127,6 +129,7 @@ function Router() {
       <LayoutRoute path={"/financial-dashboard"} component={FinancialDashboard} requireAuth />
       <LayoutRoute path={"/report-builder"} component={ReportBuilderPage} requireAuth />
       <LayoutRoute path={"/scheduled-reports"} component={ScheduledReportsPage} requireAuth />
+      <LayoutRoute path={"/route-schedules"} component={RouteSchedules} requireAuth />
 
       <Route path={"/worker-mobile"} component={WorkerMobile} />
       <Route path={"/worker-mobile/routes"} component={WorkerMobile} />
@@ -134,6 +137,7 @@ function Router() {
       <Route path={"/worker-mobile/notifications"} component={WorkerMobileNotifications} />
       <Route path={"/worker-mobile/report-violation/:routeId/:customerId"} component={WorkerMobileReportViolation} />
       <Route path={"/worker-mobile/customer/:routeId/:customerId"} component={WorkerMobileCustomerDetail} />
+      <Route path={"/worker-mobile/pending-pickups"} component={PendingPickups} />
       <Route path={"/manager"} component={() => { window.location.replace("/dashboard"); return null; }} />
       <Route path={"/sync-history-dashboard"} component={() => { window.location.replace("/zoho/sync-history"); return null; }} />
       <Route path={"/tags"} component={() => { window.location.replace("/field-manager-tagging"); return null; }} />

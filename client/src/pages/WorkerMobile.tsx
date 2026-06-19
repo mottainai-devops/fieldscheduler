@@ -9,6 +9,7 @@ import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { PullToRefreshIndicator } from "@/components/PullToRefreshIndicator";
 import { WorkerCardSkeleton, RouteCardSkeleton, LoadingSpinner } from "@/components/LoadingSkeleton";
 import { useOfflineSync, useOfflineRoutes } from "@/hooks/useOfflineSync";
+import { getPickupQueueCount, syncPickupQueue } from "@/lib/pickupQueue";
 
 export default function WorkerMobile() {
   const [, setLocation] = useLocation();
@@ -17,6 +18,9 @@ export default function WorkerMobile() {
   const [pin, setPin] = useState("");
   const [rememberMe, setRememberMe] = useState(true); // Default to true for convenience
   const [routeFilter, setRouteFilter] = useState<'today' | 'all' | 'upcoming'>('today');
+
+  // Pending pickup queue count for badge
+  const [pickupQueueCount, setPickupQueueCount] = useState(0);
 
   // Supervisor Survey App login state
   const [loginMode, setLoginMode] = useState<'select' | 'pin' | 'supervisor'>('select');
@@ -80,6 +84,14 @@ export default function WorkerMobile() {
         localStorage.removeItem('workerAuthExpiry');
       }
     }
+  }, []);
+
+  // Poll pickup queue count every 10 seconds
+  useEffect(() => {
+    const update = () => getPickupQueueCount().then(setPickupQueueCount).catch(() => {});
+    update();
+    const interval = setInterval(update, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const supervisorLoginMutation = trpc.workerAuth.supervisorLogin.useMutation();
@@ -504,6 +516,22 @@ export default function WorkerMobile() {
               </span>
             )}
           </button>
+
+          {/* Pending Pickups Queue Badge — only shown for supervisors */}
+          {localStorage.getItem('workerRole') === 'supervisor' && (
+            <button
+              onClick={() => setLocation('/worker-mobile/pending-pickups')}
+              className="relative p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0"
+              title="Pending Pickups"
+            >
+              <Download className="w-5 h-5 text-white" />
+              {pickupQueueCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                  {pickupQueueCount > 9 ? '9+' : pickupQueueCount}
+                </span>
+              )}
+            </button>
+          )}
           
           {/* Network Status */}
           <div className={`flex items-center gap-2 px-3 py-2 rounded-full flex-shrink-0 ${

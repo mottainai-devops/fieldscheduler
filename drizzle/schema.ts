@@ -505,3 +505,50 @@ export const customerVisitNotes = mysqlTable("customerVisitNotes", {
 });
 export type CustomerVisitNote = typeof customerVisitNotes.$inferSelect;
 export type InsertCustomerVisitNote = typeof customerVisitNotes.$inferInsert;
+
+// ─── Calendar / Recurring Schedule Tables ────────────────────────────────────
+// routeSchedules: master recurring schedule definition per worker
+// routeInstances: materialised exception rows (cancellations, reschedules, etc.)
+// Virtual instances (normal occurrences) are expanded at render time from RRULE.
+
+export const routeSchedules = mysqlTable("routeSchedules", {
+  id: int("id").autoincrement().primaryKey(),
+  workerId: int("workerId").references(() => workers.id).notNull(),
+  supervisorId: int("supervisorId").references(() => workers.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  // RRULE string per RFC 5545, e.g. "FREQ=WEEKLY;BYDAY=MO,WE,FR"
+  rrule: varchar("rrule", { length: 500 }).notNull(),
+  // ISO date string (YYYY-MM-DD) for DTSTART — the first occurrence date
+  dtstart: varchar("dtstart", { length: 20 }).notNull(),
+  // Optional hard end date (UNTIL in RRULE or explicit cutoff)
+  dtend: varchar("dtend", { length: 20 }),
+  // JSON array of ISO date strings to exclude (EXDATE)
+  exdates: text("exdates").default("[]"),
+  // JSON array of ISO date strings to add as ad-hoc occurrences (RDATE)
+  rdates: text("rdates").default("[]"),
+  // Default lot codes for this schedule (JSON array)
+  lotCodes: text("lotCodes").default("[]"),
+  status: mysqlEnum("status", ["active", "paused", "ended"]).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type RouteSchedule = typeof routeSchedules.$inferSelect;
+export type InsertRouteSchedule = typeof routeSchedules.$inferInsert;
+
+export const routeInstances = mysqlTable("routeInstances", {
+  id: int("id").autoincrement().primaryKey(),
+  scheduleId: int("scheduleId").references(() => routeSchedules.id).notNull(),
+  // The original occurrence date this instance overrides (ISO YYYY-MM-DD)
+  originalDate: varchar("originalDate", { length: 20 }).notNull(),
+  // The new date if rescheduled, null if cancelled
+  newDate: varchar("newDate", { length: 20 }),
+  instanceType: mysqlEnum("instanceType", ["cancelled", "rescheduled", "override"]).notNull(),
+  // Optional linked route id if a real route was created for this instance
+  routeId: int("routeId").references(() => routes.id),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type RouteInstance = typeof routeInstances.$inferSelect;
+export type InsertRouteInstance = typeof routeInstances.$inferInsert;

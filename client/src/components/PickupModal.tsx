@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Camera, CheckCircle, Loader2, Package, AlertTriangle } from "lucide-react";
+import { Camera, CheckCircle, Loader2, Package, AlertTriangle, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { enqueuePickup, resizePhoto } from "@/lib/pickupQueue";
 
 interface PickupModalProps {
   open: boolean;
@@ -106,6 +107,51 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
 
     setSubmitting(true);
     try {
+      // Resize photos before submission to reduce payload size
+      const [resizedBefore, resizedAfter] = await Promise.all([
+        resizePhoto(beforePhoto, beforePhoto.name),
+        resizePhoto(afterPhoto, afterPhoto.name),
+      ]);
+
+      // If offline, enqueue for later and mark optimistically
+      if (!navigator.onLine) {
+        await enqueuePickup({
+          routeId,
+          customerId: customer.id,
+          customerName: customer.name || "",
+          webhookUrl,
+          supervisorId: workerName,
+          binType,
+          binQuantity: binQty,
+          incidentReport,
+          customerPhone: customer.phone || "",
+          customerEmail: customer.email || "",
+          customerAddress: customer.address || "",
+          unitCode: customer.unitCode || "",
+          arcgisBuildingId: customer.arcgisBuildingId || "",
+          mafCode: customer.customermaf || "",
+          latitude: String(customer.latitude || ""),
+          longitude: String(customer.longitude || ""),
+          lotCode,
+          companyId,
+          companyName,
+          webhookType,
+          pickUpDate: new Date().toISOString(),
+          submittedFrom: "FieldWorker",
+          source: "field_worker",
+          surveyToken,
+          surveyAppUserId,
+          beforePhotoBlob: resizedBefore.blob,
+          beforePhotoName: resizedBefore.name,
+          afterPhotoBlob: resizedAfter.blob,
+          afterPhotoName: resizedAfter.name,
+        });
+        toast.warning("You are offline. Pickup queued — it will be submitted automatically when you reconnect.", { duration: 5000 });
+        onSuccess();
+        onClose();
+        return;
+      }
+
       const formData = new FormData();
       // ── Core fields ──────────────────────────────────────────────────────────
       formData.append("formId", webhookUrl);
@@ -113,8 +159,8 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
       formData.append("binType", binType);
       formData.append("binQuantity", binQty);
       formData.append("incidentReport", incidentReport);
-      formData.append("beforePhoto", beforePhoto, beforePhoto.name);
-      formData.append("afterPhoto", afterPhoto, afterPhoto.name);
+      formData.append("beforePhoto", resizedBefore.blob, resizedBefore.name);
+      formData.append("afterPhoto", resizedAfter.blob, resizedAfter.name);
       // ── Customer identity fields ─────────────────────────────────────────────
       formData.append("customerName", customer.name || "");
       formData.append("customerPhone", customer.phone || "");

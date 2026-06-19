@@ -17,6 +17,7 @@ import { workerNotificationsRouter } from "./routers/workerNotificationsRouter";
 import { adminNotificationsRouter } from "./routers/adminNotificationsRouter";
 import { COOKIE_NAME } from "@shared/const";
 import { customerRouter } from './routers/customerRouter';
+import { calendarRouter } from './routers/calendar';
 import * as fieldWorkerDb from "./fieldWorkerDb";
 
 // ---- ArcGIS ROUTER with Mottainai Integration ----
@@ -129,6 +130,7 @@ export const appRouter = router({
   workerNotifications: workerNotificationsRouter,
   adminNotifications: adminNotificationsRouter,
   customer: customerRouter,
+  calendar: calendarRouter,
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
