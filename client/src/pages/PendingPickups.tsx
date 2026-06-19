@@ -19,6 +19,7 @@ import {
   getAllQueuedPickups,
   removeQueuedPickup,
   syncPickupQueue,
+  resetPickupRetries,
   type QueuedPickup,
 } from "@/lib/pickupQueue";
 import { trpc } from "@/lib/trpc";
@@ -257,7 +258,12 @@ export default function PendingPickups() {
                   size="sm"
                   className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
                   disabled={syncing || !isOnline}
-                  onClick={handleSyncAll}
+                  onClick={async () => {
+                    // E5/E6: Reset retries to 0 before syncing so failed items can be retried
+                    if (pickup.id != null) await resetPickupRetries(pickup.id);
+                    await loadPickups();
+                    handleSyncAll();
+                  }}
                 >
                   <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
                   Retry

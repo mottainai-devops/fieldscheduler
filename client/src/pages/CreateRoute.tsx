@@ -77,8 +77,8 @@ export default function CreateRoute() {
       setSupervisorLotWarning(null);
       return;
     }
-    // Support both legacy fieldworkerId and new Survey App id field
-    const sup = supervisors.find((s: any) => String(s.id ?? s.fieldworkerId) === String(supervisorId));
+    // B4: supervisorId is now always fieldworkerId (workers.id), look up by that
+    const sup = supervisors.find((s: any) => s.fieldworkerId != null && String(s.fieldworkerId) === String(supervisorId));
     // Support both new `lots` field and legacy `assignedLots` field
     const supLots = sup?.lots ?? sup?.assignedLots ?? [];
     if (!supLots.length) {
@@ -279,6 +279,14 @@ export default function CreateRoute() {
   const handleCreateRoute = async () => {
     if (!selectedWorker || !optimizedRoute) {
       toast.error("Please complete all steps before creating the route");
+      return;
+    }
+    // A4: Hard block — supervisor must have lot access for all selected customers
+    if (supervisorLotWarning) {
+      toast.error(
+        "Cannot create route: " + supervisorLotWarning + " Please choose a supervisor with access to all selected lots, or remove the out-of-lot customers.",
+        { duration: 8000 }
+      );
       return;
     }
     
@@ -868,7 +876,11 @@ export default function CreateRoute() {
                   <SelectContent className="bg-slate-800 border-slate-600">
                     <SelectItem value="none" className="text-slate-400">No supervisor</SelectItem>
                     {supervisors.map((sup: any) => {
-                      const supId = String(sup.id ?? sup.fieldworkerId ?? '');
+                      // B4: Use fieldworkerId (workers.id) as the value so routes.supervisorId
+                      // stores the workers table PK, not the Survey App MongoDB _id
+                      const fieldworkerId = sup.fieldworkerId ?? null;
+                      if (!fieldworkerId) return null; // skip supervisors not yet provisioned
+                      const supId = String(fieldworkerId);
                       return (
                         <SelectItem key={supId} value={supId} className="text-white">
                           {sup.fullName} {sup.companyName ? `(${sup.companyName})` : ''}
@@ -877,10 +889,10 @@ export default function CreateRoute() {
                     })}
                   </SelectContent>
                 </Select>
-                {/* A4: Lot-access warning */}
+                {/* A4: Lot-access hard block — route cannot be created until resolved */}
                 {supervisorLotWarning && (
-                  <div className="mt-2 p-3 bg-yellow-900/30 border border-yellow-600/50 rounded text-yellow-400 text-xs">
-                    ⚠️ {supervisorLotWarning}
+                  <div className="mt-2 p-3 bg-red-900/30 border border-red-600/50 rounded text-red-400 text-xs">
+                    🚫 <strong>Route blocked:</strong> {supervisorLotWarning} Choose a supervisor with access to all selected lots, or remove the out-of-lot customers.
                   </div>
                 )}
               </div>

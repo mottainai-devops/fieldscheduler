@@ -8,8 +8,41 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { routeSchedules, routeInstances, workers } from "../../drizzle/schema";
+import { routeSchedules, routeInstances, workers, calendarAuditLog } from "../../drizzle/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
+
+// J1: Audit helper for calendar mutations
+async function writeCalendarAudit(
+  db: Awaited<ReturnType<typeof getDb>>,
+  params: {
+    entityType: "schedule" | "instance";
+    entityId: number;
+    action: "created" | "updated" | "cancelled" | "rescheduled";
+    previousState?: object | null;
+    newState?: object | null;
+    actorType?: "worker" | "admin" | "system";
+    actorId?: number | null;
+    reason?: string | null;
+  }
+) {
+  if (!db) return;
+  try {
+    await db.insert(calendarAuditLog).values({
+      entityType: params.entityType,
+      entityId: params.entityId,
+      action: params.action,
+      previousState: params.previousState ? JSON.stringify(params.previousState) : null,
+      newState: params.newState ? JSON.stringify(params.newState) : null,
+      actorType: params.actorType ?? "admin",
+      actorId: params.actorId ?? null,
+      actorName: null,
+      reason: params.reason ?? null,
+    });
+  } catch (auditErr) {
+    // Audit failures must never break the main operation
+    console.error("[J1] Audit write failed:", auditErr);
+  }
+}
 // rrule is a CommonJS module — use default import for ESM compatibility
 import rrulePkg from "rrule";
 const { RRule, RRuleSet, rrulestr } = rrulePkg;
@@ -195,7 +228,10 @@ export const calendarRouter = router({
         lotCodes: JSON.stringify(input.lotCodes),
         status: input.status,
       });
-      return { id: (result as any).insertId };
+      const newId = (result as any).insertId;
+      // J1: Audit
+      await writeCalendarAudit(db, { entityType: "schedule", entityId: newId, action: "created", newState: input });
+      return { id: newId };
     }),
 
   /** Update an existing schedule */
@@ -205,6 +241,9 @@ export const calendarRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       const { id, ...rest } = input;
+      // J1: Capture previous state for audit
+      const prevRows = await db.select().from(routeSchedules).where(eq(routeSchedules.id, id)).limit(1);
+      const prevState = prevRows[0] ?? null;
       await db
         .update(routeSchedules)
         .set({
@@ -217,6 +256,8 @@ export const calendarRouter = router({
           lotCodes: JSON.stringify(rest.lotCodes),
         })
         .where(eq(routeSchedules.id, id));
+      // J1: Audit
+      await writeCalendarAudit(db, { entityType: "schedule", entityId: id, action: "updated", previousState: prevState, newState: rest });
       return { success: true };
     }),
 
@@ -226,8 +267,12 @@ export const calendarRouter = router({
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      // J1: Capture previous state for audit before deletion
+      const prevSched = await db.select().from(routeSchedules).where(eq(routeSchedules.id, input.id)).limit(1);
       await db.delete(routeInstances).where(eq(routeInstances.scheduleId, input.id));
       await db.delete(routeSchedules).where(eq(routeSchedules.id, input.id));
+      // J1: Audit
+      await writeCalendarAudit(db, { entityType: "schedule", entityId: input.id, action: "cancelled", previousState: prevSched[0] ?? null });
       return { success: true };
     }),
 
@@ -309,6 +354,8 @@ export const calendarRouter = router({
           .update(routeInstances)
           .set({ instanceType: "cancelled", notes: input.notes ?? null })
           .where(eq(routeInstances.id, existing[0].id));
+        // J1: Audit
+        await writeCalendarAudit(db, { entityType: "instance", entityId: existing[0].id, action: "cancelled", previousState: existing[0], newState: { instanceType: "cancelled" }, reason: input.notes });
         return { id: existing[0].id };
       }
 
@@ -319,7 +366,10 @@ export const calendarRouter = router({
         instanceType: "cancelled",
         notes: input.notes ?? null,
       });
-      return { id: (result as any).insertId };
+      const cancelId = (result as any).insertId;
+      // J1: Audit
+      await writeCalendarAudit(db, { entityType: "instance", entityId: cancelId, action: "cancelled", newState: { scheduleId: input.scheduleId, originalDate: input.originalDate }, reason: input.notes });
+      return { id: cancelId };
     }),
 
   /** Reschedule a specific occurrence to a new date */
@@ -351,6 +401,8 @@ export const calendarRouter = router({
           .update(routeInstances)
           .set({ instanceType: "rescheduled", newDate: input.newDate, notes: input.notes ?? null })
           .where(eq(routeInstances.id, existing[0].id));
+        // J1: Audit
+        await writeCalendarAudit(db, { entityType: "instance", entityId: existing[0].id, action: "rescheduled", previousState: existing[0], newState: { instanceType: "rescheduled", newDate: input.newDate }, reason: input.notes });
         return { id: existing[0].id };
       }
 
@@ -361,6 +413,9 @@ export const calendarRouter = router({
         instanceType: "rescheduled",
         notes: input.notes ?? null,
       });
-      return { id: (result as any).insertId };
+      const reschedId = (result as any).insertId;
+      // J1: Audit
+      await writeCalendarAudit(db, { entityType: "instance", entityId: reschedId, action: "rescheduled", newState: { scheduleId: input.scheduleId, originalDate: input.originalDate, newDate: input.newDate }, reason: input.notes });
+      return { id: reschedId };
     }),
 });

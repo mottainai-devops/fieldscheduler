@@ -44,6 +44,21 @@ export default function WorkerMobileRouteDetail() {
     { enabled: !!routeId }
   );
 
+  // G3: Resolve scheduleId for this route via routeInstances and write to localStorage
+  const { data: scheduleIdData } = trpc.workerAuth.getScheduleIdForRoute.useQuery(
+    { routeId: routeId! },
+    { enabled: !!routeId }
+  );
+  const currentScheduleId = scheduleIdData?.scheduleId ?? null;
+  // Write to localStorage so skipCustomer and PickupModal can read it
+  useEffect(() => {
+    if (currentScheduleId != null) {
+      localStorage.setItem('currentScheduleId', String(currentScheduleId));
+    } else {
+      localStorage.removeItem('currentScheduleId');
+    }
+  }, [currentScheduleId]);
+
   // Enable GPS tracking
   const { position, permissionStatus } = useGPSTracking({
     workerId,
@@ -386,6 +401,7 @@ export default function WorkerMobileRouteDetail() {
           onClose={() => setPickupCustomer(null)}
           onSuccess={handlePickupSuccess}
           routeId={routeId}
+          scheduleId={currentScheduleId ?? undefined}
           customer={pickupCustomer}
         />
       )}

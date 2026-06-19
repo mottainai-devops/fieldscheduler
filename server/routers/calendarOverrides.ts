@@ -201,11 +201,96 @@ export const calendarOverridesRouter = router({
     .query(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
-
       return db
         .select()
         .from(routeInstanceCustomerOverrides)
         .where(eq(routeInstanceCustomerOverrides.instanceId, input.instanceId));
+    }),
+
+  // ─── H4: Resolved customer list for an instance ───────────────────────────
+  /**
+   * Returns the effective customer list for a given routeInstance:
+   *   base = routeScheduleCustomers WHERE scheduleId = instance.scheduleId AND status != 'paused'
+   *   minus excluded overrides for this instance
+   *   plus added overrides for this instance
+   * Ordered by: override.stopOrder ASC NULLS LAST, then natural schedule order.
+   */
+  getResolvedCustomersForInstance: protectedProcedure
+    .input(z.object({ instanceId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+
+      // 1. Get the instance to find scheduleId
+      const instanceRows = await db
+        .select({ scheduleId: routeInstances.scheduleId })
+        .from(routeInstances)
+        .where(eq(routeInstances.id, input.instanceId))
+        .limit(1);
+      if (!instanceRows.length) throw new TRPCError({ code: "NOT_FOUND", message: "Instance not found" });
+      const { scheduleId } = instanceRows[0];
+
+      // 2. Get overrides for this instance
+      const overrides = await db
+        .select()
+        .from(routeInstanceCustomerOverrides)
+        .where(eq(routeInstanceCustomerOverrides.instanceId, input.instanceId));
+      const excludedIds = new Set(overrides.filter(o => o.overrideType === 'excluded').map(o => o.customerId));
+      const addedOverrides = overrides.filter(o => o.overrideType === 'added');
+      const stopOrderMap = new Map(overrides.map(o => [o.customerId, o.stopOrder ?? null]));
+
+      // 3. Get base schedule customers (active, not paused)
+      const baseRows = await db
+        .select({
+          customerId: routeScheduleCustomers.customerId,
+          status: (routeScheduleCustomers as any).status,
+          customer: customers,
+        })
+        .from(routeScheduleCustomers)
+        .leftJoin(customers, eq(routeScheduleCustomers.customerId, customers.id))
+        .where(eq(routeScheduleCustomers.scheduleId, scheduleId));
+
+      // 4. Apply exclusions
+      const baseFiltered = baseRows.filter(r => !excludedIds.has(r.customerId));
+
+      // 5. Fetch added customer details
+      const addedCustomerIds = addedOverrides.map(o => o.customerId);
+      let addedCustomers: any[] = [];
+      if (addedCustomerIds.length > 0) {
+        const { inArray } = await import("drizzle-orm");
+        addedCustomers = await db
+          .select()
+          .from(customers)
+          .where(inArray(customers.id, addedCustomerIds));
+      }
+
+      // 6. Build result list
+      const result = [
+        ...baseFiltered.map(r => ({
+          customerId: r.customerId,
+          customer: r.customer,
+          overrideType: null as string | null,
+          stopOrder: stopOrderMap.get(r.customerId) ?? null,
+          source: 'schedule' as const,
+        })),
+        ...addedCustomers.map(c => ({
+          customerId: c.id,
+          customer: c,
+          overrideType: 'added' as string | null,
+          stopOrder: stopOrderMap.get(c.id) ?? null,
+          source: 'override' as const,
+        })),
+      ];
+
+      // 7. Sort: stopOrder ASC (nulls last)
+      result.sort((a, b) => {
+        if (a.stopOrder === null && b.stopOrder === null) return 0;
+        if (a.stopOrder === null) return 1;
+        if (b.stopOrder === null) return -1;
+        return a.stopOrder - b.stopOrder;
+      });
+
+      return result;
     }),
 
   // ─── H5: Permanent customer move ──────────────────────────────────────────

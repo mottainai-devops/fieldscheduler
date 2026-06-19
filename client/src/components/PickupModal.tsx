@@ -16,6 +16,8 @@ interface PickupModalProps {
   onClose: () => void;
   onSuccess: () => void;
   routeId: number;
+  // G3: scheduleId for reset-on-pickup (consecutiveSkips reset)
+  scheduleId?: number;
   customer: {
     id: number;
     name?: string;
@@ -27,6 +29,9 @@ interface PickupModalProps {
     arcgisBuildingId?: string;
     latitude?: string | number;
     longitude?: string | number;
+    // D3: Customer billing type for correct customerType derivation
+    customerType?: string | null;
+    monthlyBilling?: boolean | null;
   };
   // E6: Prefill from a queued pickup (Edit flow)
   prefill?: {
@@ -43,9 +48,12 @@ interface PickupModalProps {
   onDiscardQueued?: () => Promise<void>;
 }
 
-const BIN_TYPES = ["240L", "120L", "1100L", "Skip", "Bag"];
+// D3: Expanded to match Survey App pickupRequest model enum (7 values)
+const BIN_TYPES = ["120L", "240L", "660L", "1100L", "MAMMOTH (1100 LITRE)", "7-11 TONNE COMPACTOR", "other"];
+// D3: Wheelie bin types for the wheelieBinType field
+const WHEELIE_BIN_TYPES = ["120L", "240L", "660L", "1100L"];
 
-export default function PickupModal({ open, onClose, onSuccess, routeId, customer, prefill, onDiscardQueued }: PickupModalProps) {
+export default function PickupModal({ open, onClose, onSuccess, routeId, scheduleId, customer, prefill, onDiscardQueued }: PickupModalProps) {
   const workerId = parseInt(localStorage.getItem("workerId") || "0");
   const workerName = localStorage.getItem("workerName") || "";
   const storedWebhookType = localStorage.getItem("workerPreferredWebhookType") as "payt" | "monthly" | "" | null;
@@ -128,11 +136,35 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
 
   const setWebhookPref = trpc.workerAuth.setWebhookPreference.useMutation();
   const markPicked = trpc.workerAuth.markCustomerPicked.useMutation();
-
-  const { data: webhookData } = trpc.workerAuth.getWebhookForCustomer.useQuery(
+  // C1/C2/C3/D5: Resolve webhook URL from the lots cache (written at login time)
+  // instead of calling the admin dashboard live. Falls back to getWebhookForCustomer
+  // only when the cache is absent (e.g. first login before cache is warm).
+  const webhookData = (() => {
+    try {
+      const raw = localStorage.getItem("lots.cache");
+      if (!raw) return undefined;
+      const lots: Array<{ lotCode: string; paytWebhook?: string | null; monthlyWebhook?: string | null }> = JSON.parse(raw);
+      const lotMatch = (customer.customermaf || "").match(/-?(\d+)$/);
+      const lotCode = lotMatch ? lotMatch[1] : null;
+      if (!lotCode) return undefined;
+      const lot = lots.find((l) =>
+        l.lotCode === lotCode ||
+        l.lotCode === lotCode.replace(/^0+/, "") ||
+        l.lotCode === lotCode.padStart(3, "0")
+      );
+      if (!lot) return undefined;
+      const webhookUrl = webhookType === "payt" ? lot.paytWebhook : lot.monthlyWebhook;
+      return webhookUrl ? { webhookUrl } : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  // Fallback: live admin dashboard call when cache is absent or lot not found
+  const { data: webhookDataFallback } = trpc.workerAuth.getWebhookForCustomer.useQuery(
     { customermaf: customer.customermaf || "", webhookType },
-    { enabled: !!customer.customermaf && step === "form" }
+    { enabled: !!customer.customermaf && step === "form" && !webhookData }
   );
+  const resolvedWebhookData = webhookData ?? webhookDataFallback;
 
   const handlePhotoCapture = useCallback((type: "before" | "after", file: File) => {
     const url = URL.createObjectURL(file);
@@ -163,7 +195,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
     if (!beforePhoto) { toast.error("Before photo is required"); return; }
     if (!afterPhoto) { toast.error("After photo is required"); return; }
 
-    const webhookUrl = webhookData?.webhookUrl;
+    const webhookUrl = resolvedWebhookData?.webhookUrl;
     if (!webhookUrl) {
       toast.error("Could not resolve webhook URL for this customer's lot. Please contact admin.");
       return;
@@ -214,6 +246,16 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
           setSubmitting(false);
           return;
         }
+        // D3: Compute composite customerId and derived values for the queue payload
+        const offlineCompositeId = (customer.arcgisBuildingId && customer.unitCode)
+          ? `${customer.arcgisBuildingId} ${customer.unitCode}`
+          : undefined;
+        const offlineCustomerType = (() => {
+          if (customer.monthlyBilling) return "Monthly Billing - Residential";
+          if (customer.customerType === "business") return "PAYT - Commercial";
+          return webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential";
+        })();
+        const offlineWheelieType = ["120L", "240L", "660L", "1100L"].includes(binType) ? binType : undefined;
         const result = await enqueuePickup({
           routeId,
           customerId: customer.id,
@@ -221,6 +263,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
           webhookUrl,
           supervisorId: workerName,
           binType,
+          wheelieBinType: offlineWheelieType,
           binQuantity: binQty,
           incidentReport,
           customerPhone: customer.phone || "",
@@ -228,6 +271,8 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
           customerAddress: customer.address || "",
           unitCode: customer.unitCode || "",
           arcgisBuildingId: customer.arcgisBuildingId || "",
+          compositeCustomerId: offlineCompositeId,
+          customerType: offlineCustomerType,
           mafCode: customer.customermaf || "",
           latitude: String(customer.latitude || ""),
           longitude: String(customer.longitude || ""),
@@ -268,15 +313,28 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
         }
       };
 
+      // D3: Derive composite customerId from arcgisBuildingId + unitCode
+      const compositeCustomerId = (customer.arcgisBuildingId && customer.unitCode)
+        ? `${customer.arcgisBuildingId} ${customer.unitCode}`
+        : String(customer.id);
+      // D3: Derive customerType from customer record, not supervisor preference
+      const derivedCustomerType = (() => {
+        if (customer.monthlyBilling) return "Monthly Billing - Residential";
+        if (customer.customerType === "business") return "PAYT - Commercial";
+        return webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential";
+      })();
+      // D3: wheelieBinType — set when binType is a standard wheelie bin size
+      const isWheelieSize = WHEELIE_BIN_TYPES.includes(binType);
       const formData = new FormData();
       // ── Required fields — always present ────────────────────────────────────
       formData.append("formId", webhookUrl);
       formData.append("supervisorId", workerName);
       formData.append("binType", binType);
       formData.append("binQuantity", binQty);
-      formData.append("customerId", String(customer.id));
+      formData.append("customerId", compositeCustomerId);
       formData.append("isMonthly", String(webhookType === "monthly"));
-      formData.append("customerType", webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential");
+      formData.append("customerType", derivedCustomerType);
+      if (isWheelieSize) formData.append("wheelieBinType", binType);
       formData.append("pickUpDate", new Date().toISOString());
       formData.append("pickupDate", new Date().toISOString());
       formData.append("submittedFrom", "FieldWorker");
@@ -317,8 +375,8 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
         throw new Error(errText || "Submission failed");
       }
 
-      // Mark as picked in DB
-      await markPicked.mutateAsync({ routeId, customerId: customer.id });
+      // Mark as picked in DB (G3: pass scheduleId for reset-on-pickup)
+      await markPicked.mutateAsync({ routeId, customerId: customer.id, scheduleId });
 
       // E7: Clear draft after successful submission
       await deleteDraft(routeId, customer.id).catch(() => {});
@@ -407,7 +465,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
                   {webhookType === "payt" ? "PAYT" : "Monthly"}
                 </span>
               </p>
-              {!webhookData?.webhookUrl && customer.customermaf && (
+              {!resolvedWebhookData?.webhookUrl && customer.customermaf && (
                 <p className="text-amber-400 text-xs flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3" /> Webhook URL not found for this lot
                 </p>

@@ -28,6 +28,8 @@ export interface QueuedPickup {
   webhookUrl: string;
   supervisorId: string;
   binType: string;
+  // D3: wheelieBinType for standard wheelie bin sizes
+  wheelieBinType?: string;
   binQuantity: string;
   incidentReport: string;
   customerPhone: string;
@@ -35,6 +37,10 @@ export interface QueuedPickup {
   customerAddress: string;
   unitCode: string;
   arcgisBuildingId: string;
+  // D3: composite customerId (arcgisBuildingId + unitCode) for Survey App payload
+  compositeCustomerId?: string;
+  // D3: customerType derived from customer record
+  customerType?: string;
   mafCode: string;
   latitude: string;
   longitude: string;
@@ -222,6 +228,26 @@ export async function updatePickupStatus(
   });
 }
 
+// E5/E6: Reset retries to 0 so a manually-triggered Retry can re-attempt a 'failed' item
+export async function resetPickupRetries(id: number): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PICKUP_QUEUE_STORE, "readwrite");
+    const store = tx.objectStore(PICKUP_QUEUE_STORE);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const record = getReq.result as QueuedPickup;
+      if (!record) { resolve(); return; }
+      record.retries = 0;
+      record.status = "pending";
+      record.lastError = "";
+      const putReq = store.put(record);
+      putReq.onsuccess = () => resolve();
+      putReq.onerror = () => reject(putReq.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+}
 export async function removeQueuedPickup(id: number): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -285,7 +311,7 @@ export async function resizePhoto(file: File | Blob, fileName: string): Promise<
 
 // ─── Sync engine ──────────────────────────────────────────────────────────────
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5; // E5: increased from 3 to 5
 let syncListeners: Array<() => void> = [];
 
 export function onPickupSyncComplete(cb: () => void) {
@@ -306,9 +332,13 @@ async function submitQueuedPickup(pickup: QueuedPickup): Promise<void> {
   formData.append("supervisorId", pickup.supervisorId);
   formData.append("binType", pickup.binType);
   formData.append("binQuantity", pickup.binQuantity);
-  formData.append("customerId", String(pickup.customerId));
+  // D3: Use composite customerId if available, fall back to numeric DB id
+  formData.append("customerId", pickup.compositeCustomerId || String(pickup.customerId));
   formData.append("isMonthly", String(pickup.webhookType === "monthly"));
-  formData.append("customerType", pickup.webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential");
+  // D3: Use customerType from customer record if available
+  formData.append("customerType", pickup.customerType || (pickup.webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential"));
+  // D3: wheelieBinType for standard wheelie bin sizes
+  if (pickup.wheelieBinType) formData.append("wheelieBinType", pickup.wheelieBinType);
   formData.append("pickUpDate", pickup.pickUpDate);
   formData.append("pickupDate", pickup.pickUpDate);
   formData.append("submittedFrom", "FieldWorker");

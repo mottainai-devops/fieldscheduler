@@ -567,10 +567,10 @@ export const routeScheduleCustomers = mysqlTable("routeScheduleCustomers", {
   id: int("id").autoincrement().primaryKey(),
   scheduleId: int("scheduleId").references(() => routeSchedules.id).notNull(),
   customerId: int("customerId").references(() => customers.id).notNull(),
-  // active = normal, skipped = temporary skip, removed = permanent removal from schedule
-  status: mysqlEnum("status", ["active", "skipped", "removed"]).default("active").notNull(),
-  // Structured skip reason (G1)
-  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "safety_concern", "bin_not_out", "other"]),
+  // active = normal, skipped = temporary skip, paused = three-strike auto-pause, removed = permanent removal from schedule
+  status: mysqlEnum("status", ["active", "skipped", "paused", "removed"]).default("active").notNull(),
+  // Structured skip reason (G1) — 8 values
+  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "customer_not_present", "safety_concern", "bin_not_out", "permanent_moved", "permanent_closed", "other"]),
   skipNote: text("skipNote"),
   // Three-strike counter: increments on each consecutive skip; resets on successful pickup
   consecutiveSkips: int("consecutiveSkips").default(0).notNull(),
@@ -590,12 +590,13 @@ export const routeInstanceCustomerOverrides = mysqlTable("routeInstanceCustomerO
   id: int("id").autoincrement().primaryKey(),
   instanceId: int("instanceId").references(() => routeInstances.id).notNull(),
   customerId: int("customerId").references(() => customers.id).notNull(),
-  overrideType: mysqlEnum("overrideType", ["skip", "reschedule", "handoff", "note"]).notNull(),
+  // H4: excluded = remove from this occurrence, added = add to this occurrence, reordered = change stop order
+  overrideType: mysqlEnum("overrideType", ["excluded", "added", "reordered"]).notNull(),
   // New date for reschedule overrides
   newDate: varchar("newDate", { length: 20 }),
   // Worker to hand off to (for handoff overrides)
   handoffWorkerId: int("handoffWorkerId").references(() => workers.id),
-  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "safety_concern", "bin_not_out", "other"]),
+  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "customer_not_present", "safety_concern", "bin_not_out", "permanent_moved", "permanent_closed", "other"]),
   note: text("note"),
   createdBy: int("createdBy").references(() => workers.id),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

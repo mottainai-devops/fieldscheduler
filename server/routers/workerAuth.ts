@@ -115,6 +115,24 @@ export const workerAuthRouter = router({
       return await fieldWorkerDb.getRouteCustomers(input.routeId);
     }),
 
+  // G3: Look up the scheduleId for a given routeId via routeInstances
+  // Used by WorkerMobileRouteDetail to write currentScheduleId to localStorage
+  getScheduleIdForRoute: publicProcedure
+    .input(z.object({ routeId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("../db");
+      const { routeInstances } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { scheduleId: null };
+      const rows = await db
+        .select({ scheduleId: routeInstances.scheduleId })
+        .from(routeInstances)
+        .where(eq((routeInstances as any).routeId, input.routeId))
+        .limit(1);
+      return { scheduleId: rows[0]?.scheduleId ?? null };
+    }),
+
   // Get all customers (for building linkage selection)
   getCustomers: publicProcedure.query(async () => {
     return await fieldWorkerDb.getAllCustomers();
@@ -260,9 +278,10 @@ export const workerAuthRouter = router({
         throw new Error(err?.message || "Survey App login failed");
       }
 
-      // Step 2: Verify role
-      if (!surveyUser || surveyUser.role !== "supervisor") {
-        throw new Error("This account does not have supervisor access");
+      // Step 2: Verify role — B1: accept all eligible Survey App roles per plan §2.1
+      const ELIGIBLE_SURVEY_ROLES = ["supervisor", "user", "cherry_picker", "field_supervisor"];
+      if (!surveyUser || !ELIGIBLE_SURVEY_ROLES.includes(surveyUser.role)) {
+        throw new Error(`This account (role: ${surveyUser?.role ?? 'unknown'}) does not have supervisor access. Eligible roles: ${ELIGIBLE_SURVEY_ROLES.join(", ")}`);
       }
 
       const surveyAppUserId = String(surveyUser.id);
@@ -284,11 +303,47 @@ export const workerAuthRouter = router({
         if (!worker) throw new Error("Failed to provision supervisor worker record");
       }
 
-      // Step 5: Return worker + Survey App token + lot cache
+       // Step 5: Return worker + Survey App token + lot cache
       // assignedLots comes from buildUserResponse in the Survey App /users/login response.
       // Each lot: { lotCode, lotName, companyName }
-      const assignedLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
+      // C1/C2/C3/D5: Enrich each lot with paytWebhook + monthlyWebhook from admin dashboard
+      // so the client can resolve webhook URLs from the local cache without hitting the admin API at pickup time.
+      const rawLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
         Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
+
+      const ADMIN_API = process.env.ADMIN_DASHBOARD_URL || "https://admin.kowope.xyz";
+      const assignedLots: Array<{
+        lotCode: string;
+        lotName: string;
+        companyName: string | null;
+        paytWebhook: string | null;
+        monthlyWebhook: string | null;
+      }> = await Promise.all(
+        rawLots.map(async (lot) => {
+          try {
+            const res = await fetch(
+              `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { search: lot.lotCode, page: 1, limit: 5 } } }))}`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!res.ok) return { ...lot, paytWebhook: null, monthlyWebhook: null };
+            const data = await res.json() as any;
+            const lots = data?.[0]?.result?.data?.json?.lots ?? [];
+            const match = lots.find((l: any) =>
+              l.lotCode === lot.lotCode ||
+              l.lotCode === lot.lotCode.replace(/^0+/, "") ||
+              String(l.lotNumber) === String(parseInt(lot.lotCode, 10))
+            );
+            return {
+              ...lot,
+              paytWebhook: match?.paytWebhook ?? null,
+              monthlyWebhook: match?.monthlyWebhook ?? null,
+            };
+          } catch {
+            // Admin dashboard unreachable — cache lot without webhook URLs
+            return { ...lot, paytWebhook: null, monthlyWebhook: null };
+          }
+        })
+      );
 
       return {
         success: true,
@@ -305,6 +360,11 @@ export const workerAuthRouter = router({
           companyName: surveyUser.companyName || null,
           defaultLotCode: surveyUser.defaultLotCode || null,
           monthlyBilling: surveyUser.monthlyBilling ?? false,
+          // B2: Session discriminator keys so the client can reliably distinguish
+          // supervisor sessions from field_manager sessions without relying on role string alone
+          sessionType: "supervisor" as const,
+          surveyAppRole: surveyUser.role as string,
+          loginMethod: "survey_app" as const,
         },
       };
     }),
@@ -332,10 +392,15 @@ export const workerAuthRouter = router({
 
   // Mark a customer as picked up (supervisor action)
   markCustomerPicked: publicProcedure
-    .input(z.object({ routeId: z.number(), customerId: z.number() }))
+    .input(z.object({
+      routeId: z.number(),
+      customerId: z.number(),
+      // G3: scheduleId required to reset consecutiveSkips on successful pickup
+      scheduleId: z.number().int().positive().optional(),
+    }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("../db");
-      const { routeCustomers } = await import("../../drizzle/schema");
+      const { routeCustomers, routeScheduleCustomers } = await import("../../drizzle/schema");
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new Error("Database not available");
@@ -345,6 +410,22 @@ export const workerAuthRouter = router({
           eq(routeCustomers.routeId, input.routeId),
           eq(routeCustomers.customerId, input.customerId)
         ));
+      // G3: Reset consecutiveSkips and clear skip state on successful pickup
+      if (input.scheduleId) {
+        await db.update(routeScheduleCustomers)
+          .set({
+            consecutiveSkips: 0,
+            status: 'active',
+            skipReason: null,
+            skipNote: null,
+            autoPausedAt: null,
+            updatedAt: new Date(),
+          } as any)
+          .where(and(
+            eq(routeScheduleCustomers.scheduleId, input.scheduleId),
+            eq(routeScheduleCustomers.customerId, input.customerId)
+          ));
+      }
       return { success: true };
     }),
 
@@ -464,8 +545,8 @@ export const workerAuthRouter = router({
 
       const isPermanent = input.skipReason === 'permanent_moved' || input.skipReason === 'permanent_closed';
 
-      // Map permanent reasons to the enum values stored in DB
-      const dbSkipReason = isPermanent ? 'other' : input.skipReason as any;
+      // G1: Store the actual skipReason directly — no collapsing to 'other'
+      const dbSkipReason = input.skipReason as any;
 
       if (input.scheduleId) {
         // Look up existing routeScheduleCustomers row
@@ -530,7 +611,8 @@ export const workerAuthRouter = router({
             await db
               .update(routeScheduleCustomers)
               .set({
-                status: shouldAutoPause ? 'skipped' : 'active',
+                // G2: auto-pause sets status='paused' (not 'skipped')
+                status: shouldAutoPause ? 'paused' : 'skipped',
                 skipReason: dbSkipReason,
                 skipNote: input.skipNote || null,
                 consecutiveSkips: newSkips,
@@ -547,7 +629,8 @@ export const workerAuthRouter = router({
             await db.insert(routeScheduleCustomers).values({
               scheduleId: input.scheduleId,
               customerId: input.customerId,
-              status: 'active',
+              // G2: auto-pause sets status='paused' (not 'skipped')
+              status: shouldAutoPause ? 'paused' : 'skipped',
               skipReason: dbSkipReason,
               skipNote: input.skipNote || null,
               consecutiveSkips: newSkips,

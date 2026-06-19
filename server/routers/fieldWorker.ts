@@ -72,7 +72,33 @@ export const fieldWorkerRouter = router({
       });
       if (!res.ok) return { supervisors: [], error: `Survey API returned ${res.status}` };
       const data = await res.json() as any;
-      return { supervisors: data.supervisors ?? [], error: null };
+      const rawSupervisors: any[] = data.supervisors ?? [];
+
+      // B4: Enrich each supervisor with their fieldworkerId (workers.id)
+      // so CreateRoute.tsx stores workers.id (not Survey App MongoDB _id) in routes.supervisorId
+      const { getDb } = await import("../db");
+      const { workers } = await import("../../drizzle/schema");
+      const { inArray } = await import("drizzle-orm");
+      const db = await getDb();
+      let workerMap = new Map<string, number>(); // surveyAppUserId -> workers.id
+      if (db && rawSupervisors.length > 0) {
+        const surveyIds = rawSupervisors.map((s: any) => String(s.id));
+        const workerRows = await db
+          .select({ id: workers.id, surveyAppUserId: (workers as any).surveyAppUserId })
+          .from(workers)
+          .where(inArray((workers as any).surveyAppUserId, surveyIds));
+        for (const w of workerRows) {
+          if (w.surveyAppUserId) workerMap.set(w.surveyAppUserId, w.id);
+        }
+      }
+
+      const enriched = rawSupervisors.map((s: any) => ({
+        ...s,
+        // fieldworkerId is the workers.id for this supervisor (null if not yet provisioned)
+        fieldworkerId: workerMap.get(String(s.id)) ?? null,
+      }));
+
+      return { supervisors: enriched, error: null };
     } catch (err: any) {
       return { supervisors: [], error: err?.message || "Failed to fetch supervisors" };
     }

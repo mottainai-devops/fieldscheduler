@@ -178,6 +178,10 @@ export default function WorkerMobile() {
         localStorage.setItem('lots.cachedAt', new Date().toISOString());
         // C1: tokenIssuedAt for session age tracking
         localStorage.setItem('session.tokenIssuedAt', new Date().toISOString());
+        // B2: Session discriminator keys
+        localStorage.setItem('session.sessionType', (w as any).sessionType ?? 'supervisor');
+        localStorage.setItem('session.surveyAppRole', (w as any).surveyAppRole ?? w.role ?? 'supervisor');
+        localStorage.setItem('session.loginMethod', (w as any).loginMethod ?? 'survey_app');
         if (rememberMe) {
           const expiryDate = new Date();
           expiryDate.setDate(expiryDate.getDate() + 30);
@@ -247,6 +251,9 @@ export default function WorkerMobile() {
     localStorage.removeItem('workerId');
     localStorage.removeItem('workerSurveyToken');
     localStorage.removeItem('session.tokenIssuedAt');
+    localStorage.removeItem('session.sessionType');
+    localStorage.removeItem('session.surveyAppRole');
+    localStorage.removeItem('session.loginMethod');
     localStorage.removeItem('workerSurveyAppUserId');
     localStorage.removeItem('workerCompanyId');
     localStorage.removeItem('workerCompanyName');

@@ -41,6 +41,9 @@ import {
   Archive,
   CheckCircle2,
   XCircle,
+  Users,
+  UserMinus,
+  UserPlus,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -436,15 +439,121 @@ function ScheduleFormDialog({
   );
 }
 
-// ─── Day Detail Dialog ────────────────────────────────────────────────────────
+// ─── H4: Customer Override Manager Dialog ───────────────────────────────────
+function CustomerOverrideDialog({
+  open,
+  onClose,
+  instanceId,
+  scheduleId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  instanceId: number;
+  scheduleId: number;
+}) {
+  const utils = trpc.useUtils();
+  const [addCustomerId, setAddCustomerId] = useState("");
+  const { data: resolvedCustomers = [], isLoading } = trpc.calendarOverrides.getResolvedCustomersForInstance.useQuery(
+    { instanceId },
+    { enabled: open }
+  );
+  const { data: allCustomers = [] } = trpc.fieldWorker.getCustomers.useQuery();
+  const setOverrideMutation = trpc.calendarOverrides.setInstanceCustomerOverride.useMutation({
+    onSuccess: () => { utils.calendarOverrides.getResolvedCustomersForInstance.invalidate(); toast.success("Customer override saved."); },
+    onError: (e) => toast.error(e.message),
+  });
+  const removeOverrideMutation = trpc.calendarOverrides.removeInstanceCustomerOverride.useMutation({
+    onSuccess: () => { utils.calendarOverrides.getResolvedCustomersForInstance.invalidate(); toast.success("Override removed."); },
+    onError: (e) => toast.error(e.message),
+  });
 
-function DayDetailDialog({
+  const handleExclude = (customerId: number) => {
+    setOverrideMutation.mutate({ instanceId, customerId, overrideType: "excluded" });
+  };
+  const handleAdd = () => {
+    const id = parseInt(addCustomerId);
+    if (!id) return;
+    setOverrideMutation.mutate({ instanceId, customerId: id, overrideType: "added" });
+    setAddCustomerId("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-purple-400" />
+            Manage Customers — Instance #{instanceId}
+          </DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <p className="text-slate-400 text-sm py-4 text-center">Loading...</p>
+        ) : (
+          <div className="space-y-3 py-2 max-h-96 overflow-y-auto">
+            {resolvedCustomers.length === 0 && (
+              <p className="text-slate-400 text-sm text-center py-4">No customers in this occurrence.</p>
+            )}
+            {resolvedCustomers.map((rc: any) => (
+              <div key={rc.customerId} className="flex items-center justify-between bg-slate-900 rounded-lg px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-white">{rc.customer?.name ?? `Customer #${rc.customerId}`}</p>
+                  {rc.customer?.customermaf && <p className="text-xs text-slate-500">{rc.customer.customermaf}</p>}
+                  {rc.overrideType === 'added' && (
+                    <span className="text-xs text-green-400 flex items-center gap-1"><UserPlus className="w-3 h-3" /> Added for this occurrence</span>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs"
+                  onClick={() => rc.overrideType === 'added'
+                    ? removeOverrideMutation.mutate({ instanceId, customerId: rc.customerId })
+                    : handleExclude(rc.customerId)
+                  }
+                >
+                  <UserMinus className="w-3 h-3 mr-1" />
+                  {rc.overrideType === 'added' ? 'Remove' : 'Exclude'}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Add customer to this occurrence */}
+        <div className="border-t border-slate-700 pt-3">
+          <p className="text-xs text-slate-400 mb-2">Add a customer to this occurrence only:</p>
+          <div className="flex gap-2">
+            <select
+              value={addCustomerId}
+              onChange={e => setAddCustomerId(e.target.value)}
+              className="flex-1 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1"
+            >
+              <option value="">Select customer...</option>
+              {(allCustomers as any[]).filter(c => !resolvedCustomers.some((rc: any) => rc.customerId === c.id)).map((c: any) => (
+                <option key={c.id} value={String(c.id)}>{c.name} {c.customermaf ? `(${c.customermaf})` : ''}</option>
+              ))}
+            </select>
+            <Button size="sm" onClick={handleAdd} disabled={!addCustomerId} className="bg-purple-600 hover:bg-purple-700">
+              <UserPlus className="w-3.5 h-3.5 mr-1" /> Add
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} className="text-slate-400">Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Day Detail Dialog ────────────────────────────────────────────────────────
+function DayDetailDialog({{
   open,
   onClose,
   date,
   events,
   onCancel,
   onReschedule,
+  onManageCustomers,
 }: {
   open: boolean;
   onClose: () => void;
@@ -452,6 +561,8 @@ function DayDetailDialog({
   events: CalendarEvent[];
   onCancel: (scheduleId: number, originalDate: string) => void;
   onReschedule: (scheduleId: number, originalDate: string) => void;
+  // H4: callback to open the customer override manager for a specific instance
+  onManageCustomers: (instanceId: number, scheduleId: number) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -491,25 +602,39 @@ function DayDetailDialog({
                   <p className="text-xs text-slate-500">Lots: {ev.lotCodes.join(", ")}</p>
                 )}
                 {ev.instanceType !== "cancelled" && (
-                  <div className="flex gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
-                      onClick={() => { onCancel(ev.scheduleId, ev.originalDate); onClose(); }}
-                    >
-                      <Ban className="w-3.5 h-3.5 mr-1.5" />
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
-                      onClick={() => { onReschedule(ev.scheduleId, ev.originalDate); onClose(); }}
-                    >
-                      <ArrowRightLeft className="w-3.5 h-3.5 mr-1.5" />
-                      Reschedule
-                    </Button>
+                  <div className="flex flex-col gap-2 pt-1">
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
+                        onClick={() => { onCancel(ev.scheduleId, ev.originalDate); onClose(); }}
+                      >
+                        <Ban className="w-3.5 h-3.5 mr-1.5" />
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+                        onClick={() => { onReschedule(ev.scheduleId, ev.originalDate); onClose(); }}
+                      >
+                        <ArrowRightLeft className="w-3.5 h-3.5 mr-1.5" />
+                        Reschedule
+                      </Button>
+                    </div>
+                    {/* H4: Manage customers for this instance */}
+                    {ev.instanceId && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                        onClick={() => { onManageCustomers(ev.instanceId!, ev.scheduleId); onClose(); }}
+                      >
+                        <Users className="w-3.5 h-3.5 mr-1.5" />
+                        Manage Customers
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -533,6 +658,9 @@ export default function RouteSchedules() {
   const [showForm, setShowForm] = useState(false);
   const [editSchedule, setEditSchedule] = useState<any | null>(null);
   const [dayDialog, setDayDialog] = useState<{ date: string; events: CalendarEvent[] } | null>(null);
+  // H4: Customer override manager state
+  const [customerOverrideDialog, setCustomerOverrideDialog] = useState<{ instanceId: number; scheduleId: number } | null>(null);
+  const [overrideAddCustomerId, setOverrideAddCustomerId] = useState<string>("");
   const [rescheduleDialog, setRescheduleDialog] = useState<{
     scheduleId: number;
     originalDate: string;
@@ -786,6 +914,19 @@ export default function RouteSchedules() {
             setRescheduleDialog({ scheduleId, originalDate });
             setRescheduleNewDate("");
           }}
+          onManageCustomers={(instanceId, scheduleId) =>
+            setCustomerOverrideDialog({ instanceId, scheduleId })
+          }
+        />
+      )}
+
+      {/* H4: Customer Override Manager Dialog */}
+      {customerOverrideDialog && (
+        <CustomerOverrideDialog
+          open={!!customerOverrideDialog}
+          onClose={() => { setCustomerOverrideDialog(null); setOverrideAddCustomerId(""); }}
+          instanceId={customerOverrideDialog.instanceId}
+          scheduleId={customerOverrideDialog.scheduleId}
         />
       )}
 
