@@ -259,7 +259,7 @@ function ScheduleFormDialog({
     }
     const payload = {
       workerId: parseInt(form.workerId),
-      supervisorId: form.supervisorId ? parseInt(form.supervisorId) : undefined,
+      supervisorId: (form.supervisorId && form.supervisorId !== 'none') ? parseInt(form.supervisorId) : undefined,
       title: form.title,
       description: form.description || undefined,
       rrule: effectiveRrule,
@@ -331,7 +331,7 @@ function ScheduleFormDialog({
                   <SelectValue placeholder="None" />
                 </SelectTrigger>
                 <SelectContent className="bg-slate-800 border-slate-700">
-                  <SelectItem value="" className="text-slate-400">None</SelectItem>
+                  <SelectItem value="none" className="text-slate-400">None</SelectItem>
                   {supervisors.map((w) => (
                     <SelectItem key={w.id} value={String(w.id)} className="text-white">
                       {w.name}
