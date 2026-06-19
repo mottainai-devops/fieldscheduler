@@ -28,6 +28,8 @@ export default function WorkerMobileRouteDetail() {
   const [handoffReason, setHandoffReason] = useState('');
   const [handoffLoading, setHandoffLoading] = useState(false);
   const requestHandoff = trpc.calendarOverrides.requestHandoff.useMutation();
+  // G1/G2/G3: Must be declared before early return (Rules of Hooks)
+  const skipCustomerMutation = trpc.workerAuth.skipCustomer.useMutation();
 
   // Worker session from localStorage
   const workerId = parseInt(localStorage.getItem("workerId") || localStorage.getItem("selectedWorkerId") || "0");
@@ -113,8 +115,6 @@ export default function WorkerMobileRouteDetail() {
   const handlePickupSuccess = () => {
     refetchCustomers();
   };
-
-  const skipCustomerMutation = trpc.workerAuth.skipCustomer.useMutation();
 
   const handleSkipSubmit = async () => {
     if (!skipTarget || !skipReason) return;
