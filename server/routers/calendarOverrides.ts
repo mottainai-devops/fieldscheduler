@@ -519,6 +519,10 @@ export const calendarOverridesRouter = router({
       z.object({
         scheduleId: z.number().int().positive().optional(),
         instanceId: z.number().int().positive().optional(),
+        // B3 fix: client may pass routeId when scheduleId is null (non-recurring routes).
+        // Server resolves scheduleId via the same routes→routeSchedules join as
+        // getScheduleIdForRoute, then falls back to null (non-recurring is valid).
+        routeId: z.number().int().positive().optional(),
         supervisorId: z.number().int().positive(),
         reason: z.string().min(1).max(1000),
       })
@@ -527,15 +531,47 @@ export const calendarOverridesRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      if (!input.scheduleId && !input.instanceId) {
+      // B3 fix: resolve scheduleId from routeId when not supplied directly
+      let resolvedScheduleId = input.scheduleId ?? null;
+      if (!resolvedScheduleId && input.routeId) {
+        const { routes, routeSchedules } = await import("../../drizzle/schema");
+        const { eq, and, lte, desc, or, isNull } = await import("drizzle-orm");
+        const routeRows = await db
+          .select({ workerId: routes.workerId, scheduledDate: routes.scheduledDate })
+          .from(routes)
+          .where(eq(routes.id, input.routeId))
+          .limit(1);
+        if (routeRows.length && routeRows[0].workerId && routeRows[0].scheduledDate) {
+          const { workerId, scheduledDate } = routeRows[0];
+          const schedRows = await db
+            .select({ id: routeSchedules.id })
+            .from(routeSchedules)
+            .where(
+              and(
+                eq(routeSchedules.workerId, workerId),
+                eq(routeSchedules.status, "active"),
+                lte(routeSchedules.dtstart, scheduledDate),
+                or(isNull(routeSchedules.dtend), lte(scheduledDate, routeSchedules.dtend as any))
+              )
+            )
+            .orderBy(desc(routeSchedules.dtstart))
+            .limit(1);
+          resolvedScheduleId = schedRows[0]?.id ?? null;
+        }
+      }
+
+      // Relax the null check: non-recurring routes have no scheduleId or instanceId;
+      // the handoff is still valid — it just won't be linked to a schedule row.
+      // Only hard-reject if we have absolutely no context at all.
+      if (!resolvedScheduleId && !input.instanceId && !input.routeId) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Either scheduleId or instanceId must be provided",
+          message: "Either scheduleId, instanceId, or routeId must be provided",
         });
       }
 
       const [result] = await db.insert(handoffRequests).values({
-        scheduleId: input.scheduleId ?? null,
+        scheduleId: resolvedScheduleId,
         instanceId: input.instanceId ?? null,
         supervisorId: input.supervisorId,
         reason: input.reason,
@@ -546,7 +582,7 @@ export const calendarOverridesRouter = router({
       // Audit
       await writeAudit(db, {
         entityType: "schedule",
-        entityId: input.scheduleId ?? input.instanceId ?? 0,
+        entityId: resolvedScheduleId ?? input.instanceId ?? input.routeId ?? 0,
         action: "handoff_requested",
         previousState: null,
         newState: { handoffRequestId: newId, supervisorId: input.supervisorId, reason: input.reason },
