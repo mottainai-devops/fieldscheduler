@@ -80,9 +80,18 @@ export default function PendingPickups() {
     }
     setSyncing(true);
     try {
-      const { synced, failed } = await syncPickupQueue(async (routeId, customerId) => {
-        await markPicked.mutateAsync({ routeId, customerId });
-      });
+      const { synced, failed } = await syncPickupQueue(
+        async (routeId, customerId) => {
+          await markPicked.mutateAsync({ routeId, customerId });
+        },
+        () => {
+          // B6: Token expired — queue preserved, prompt re-login
+          toast.error(
+            "Your session has expired. Please log out and log back in to continue syncing your pending pickups.",
+            { duration: 8000 }
+          );
+        }
+      );
       if (synced > 0) toast.success(`${synced} pickup${synced > 1 ? "s" : ""} submitted successfully.`);
       if (failed > 0) toast.error(`${failed} pickup${failed > 1 ? "s" : ""} failed to submit.`);
       await loadPickups();
