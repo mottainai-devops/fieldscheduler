@@ -266,6 +266,12 @@ export const fieldWorkerRouter = router({
       customerIds: z.array(z.number()).optional(),
       dispatchedAt: z.string().optional(),
       supervisorId: z.number().optional(),
+      // §2.3 v4.5.7: surveyAppSupervisorId is the Survey App MongoDB _id of the selected supervisor.
+      // When provided, ensureSupervisorWorker provisions the shadow row if absent and resolves
+      // the local workers.id, which is then stored as routes.supervisorId.
+      surveyAppSupervisorId: z.string().optional(),
+      surveyAppSupervisorName: z.string().optional(),
+      surveyAppSupervisorEmail: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       console.log('\n========== CREATE ROUTE REQUEST ==========');
@@ -274,10 +280,27 @@ export const fieldWorkerRouter = router({
       console.log('[CREATE ROUTE] Input keys:', Object.keys(input));
       console.log('[CREATE ROUTE] WorkerId:', input.workerId, 'Type:', typeof input.workerId);
       console.log('[CREATE ROUTE] CustomerIds:', input.customerIds, 'Count:', input.customerIds?.length);
+
+      // §2.3 v4.5.7: If a Survey App supervisor was selected (by Survey App user id),
+      // ensure the shadow workers row exists and resolve its local id.
+      let resolvedSupervisorId = input.supervisorId;
+      if (input.surveyAppSupervisorId) {
+        try {
+          resolvedSupervisorId = await fieldWorkerDb.ensureSupervisorWorker({
+            id: input.surveyAppSupervisorId,
+            fullName: input.surveyAppSupervisorName,
+            email: input.surveyAppSupervisorEmail,
+          });
+          console.log('[CREATE ROUTE] ensureSupervisorWorker resolved workers.id:', resolvedSupervisorId);
+        } catch (provErr: any) {
+          console.error('[CREATE ROUTE] ensureSupervisorWorker failed:', provErr.message);
+          throw new Error('Failed to provision supervisor record: ' + provErr.message);
+        }
+      }
       
       try {
         console.log('[CREATE ROUTE] Calling fieldWorkerDb.createRoute...');
-        const result = await fieldWorkerDb.createRoute(input);
+        const result = await fieldWorkerDb.createRoute({ ...input, supervisorId: resolvedSupervisorId });
         console.log('[CREATE ROUTE] ✅ SUCCESS! Result:', JSON.stringify(result, null, 2));
         console.log('========================================\n');
         return result;

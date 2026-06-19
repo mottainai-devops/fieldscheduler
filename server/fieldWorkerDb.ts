@@ -36,6 +36,51 @@ export async function getWorkerBySurveyAppUserId(surveyAppUserId: string) {
   return result[0] || null;
 }
 
+/**
+ * ensureSupervisorWorker — find or provision a shadow workers row for a Survey App user.
+ *
+ * This is the single provisioning helper for both:
+ *   1. Route assignment time (admin selects a supervisor in CreateRoute)
+ *   2. supervisorLogin (Flutter app first login)
+ *
+ * If a workers row already exists for the given surveyAppUserId, it is returned as-is.
+ * If no row exists, one is created with role='supervisor', name/email from the Survey App
+ * user object, pin=NULL, and default shift 08:00–17:00.
+ *
+ * Returns the workers.id (number) for use in routes.supervisorId.
+ * Throws if the DB is unavailable or insert fails.
+ *
+ * Joint API Contract §2.3 v4.5.7 — ensureSupervisorWorker is the canonical provisioning path.
+ */
+export async function ensureSupervisorWorker(surveyAppUser: {
+  id: string;       // Survey App MongoDB _id as string
+  fullName?: string;
+  email?: string;
+}): Promise<number> {
+  // 1. Look up existing row
+  const existing = await getWorkerBySurveyAppUserId(surveyAppUser.id);
+  if (existing) return existing.id;
+
+  // 2. Provision new shadow row
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(workers).values({
+    name: surveyAppUser.fullName || surveyAppUser.email || surveyAppUser.id,
+    email: surveyAppUser.email || null,
+    role: "supervisor",
+    status: "active",
+    shiftStart: "08:00",
+    shiftEnd: "17:00",
+    pin: null,
+    surveyAppUserId: surveyAppUser.id,
+  } as any);
+
+  // 3. Re-fetch to get the auto-assigned id
+  const fresh = await getWorkerBySurveyAppUserId(surveyAppUser.id);
+  if (!fresh) throw new Error("Failed to provision supervisor worker record");
+  return fresh.id;
+}
+
 export async function createWorker(data: {
   name: string;
   email?: string;

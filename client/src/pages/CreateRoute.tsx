@@ -10,6 +10,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import AppHeader from "@/components/AppHeader";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ChevronsUpDown, Check } from "lucide-react";
 
 // ---- safe list guards (injected) ----
 const asArray = <T,>(v: T[] | T | undefined | null | false): T[] => Array.isArray(v) ? v : (v != null && v !== false ? [v as T] : []);
@@ -39,7 +42,12 @@ export default function CreateRoute() {
   const [minClusterSize, setMinClusterSize] = useState(3);
   const [maxClusterRadius, setMaxClusterRadius] = useState(15);
   // A3: Supervisor picker state
+  // selectedSupervisor holds the resolved workers.id (set after ensureSupervisorWorker on submit)
+  // selectedSupervisorObj holds the full Survey App user object for display and lot-access validation
   const [selectedSupervisor, setSelectedSupervisor] = useState<number | null>(null);
+  const [selectedSupervisorObj, setSelectedSupervisorObj] = useState<any>(null);
+  const [supervisorPickerOpen, setSupervisorPickerOpen] = useState(false);
+  const [supervisorSearch, setSupervisorSearch] = useState("");
   const [supervisorLotWarning, setSupervisorLotWarning] = useState<string | null>(null);
 
   const { data: customers = [] } = trpc.fieldWorker.getCustomers.useQuery();
@@ -72,13 +80,14 @@ export default function CreateRoute() {
   // A4: Lot-access validation — check if selected supervisor has access to the lots
   // of the selected customers. Warn admin if any customer's lot is not in the supervisor's
   // assignedLots list. This is a soft warning, not a hard block.
-  const validateSupervisorLotAccess = (supervisorId: number | null, customerIds: number[]) => {
-    if (!supervisorId || customerIds.length === 0) {
+  // §2.3 v4.5.7: validation now uses selectedSupervisorObj (Survey App user) directly,
+  // since the picker no longer gates on fieldworkerId.
+  const validateSupervisorLotAccess = (supObj: any | null, customerIds: number[]) => {
+    if (!supObj || customerIds.length === 0) {
       setSupervisorLotWarning(null);
       return;
     }
-    // B4: supervisorId is now always fieldworkerId (workers.id), look up by that
-    const sup = supervisors.find((s: any) => s.fieldworkerId != null && String(s.fieldworkerId) === String(supervisorId));
+    const sup = supObj;
     // Support both new `lots` field and legacy `assignedLots` field
     const supLots = sup?.lots ?? sup?.assignedLots ?? [];
     if (!supLots.length) {
@@ -293,7 +302,12 @@ export default function CreateRoute() {
     try {
       const routeData = {
         workerId: selectedWorker,
-        supervisorId: selectedSupervisor ?? undefined,
+        // §2.3 v4.5.7: pass Survey App user id + name/email so the server can call
+        // ensureSupervisorWorker and resolve the local workers.id automatically.
+        // supervisorId is left undefined here; the server resolves it from surveyAppSupervisorId.
+        surveyAppSupervisorId: selectedSupervisorObj ? String(selectedSupervisorObj.id) : undefined,
+        surveyAppSupervisorName: selectedSupervisorObj?.fullName ?? undefined,
+        surveyAppSupervisorEmail: selectedSupervisorObj?.email ?? undefined,
         totalDistance: String(optimizedRoute.totalDistance || 0),
         estimatedDuration: String(optimizedRoute.estimatedDuration || 0),
         efficiencyScore: Number(optimizedRoute.efficiencyScore || 50),
@@ -859,36 +873,103 @@ export default function CreateRoute() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {/* A3: Supervisor picker */}
+              {/* A3: Supervisor picker — typeahead combobox (§2.3 v4.5.7) */}
+              {/* All Survey App users with role user/cherry_picker/field_supervisor are eligible. */}
+              {/* Shadow row is provisioned by ensureSupervisorWorker on the server at route-creation time. */}
               <div className="mb-6">
                 <Label className="text-slate-300 text-sm mb-2 block">Assign Supervisor (Optional)</Label>
-                <Select
-                  value={selectedSupervisor ? String(selectedSupervisor) : 'none'}
-                  onValueChange={(val) => {
-                    const id = val === 'none' ? null : Number(val);
-                    setSelectedSupervisor(id);
-                    validateSupervisorLotAccess(id, selectedCustomers);
-                  }}
-                >
-                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                    <SelectValue placeholder="No supervisor" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-slate-600">
-                    <SelectItem value="none" className="text-slate-400">No supervisor</SelectItem>
-                    {supervisors.map((sup: any) => {
-                      // B4: Use fieldworkerId (workers.id) as the value so routes.supervisorId
-                      // stores the workers table PK, not the Survey App MongoDB _id
-                      const fieldworkerId = sup.fieldworkerId ?? null;
-                      if (!fieldworkerId) return null; // skip supervisors not yet provisioned
-                      const supId = String(fieldworkerId);
-                      return (
-                        <SelectItem key={supId} value={supId} className="text-white">
-                          {sup.fullName} {sup.companyName ? `(${sup.companyName})` : ''}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
+                <Popover open={supervisorPickerOpen} onOpenChange={setSupervisorPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={supervisorPickerOpen}
+                      className="w-full justify-between bg-slate-700 border-slate-600 text-white hover:bg-slate-600 hover:text-white"
+                    >
+                      {selectedSupervisorObj
+                        ? `${selectedSupervisorObj.fullName}${selectedSupervisorObj.companyName ? ` (${selectedSupervisorObj.companyName})` : ''}`
+                        : "No supervisor"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[400px] p-0 bg-slate-800 border-slate-600">
+                    <Command className="bg-slate-800">
+                      <CommandInput
+                        placeholder="Search by name, email, or company..."
+                        value={supervisorSearch}
+                        onValueChange={setSupervisorSearch}
+                        className="text-white placeholder:text-slate-400"
+                      />
+                      <CommandList>
+                        <CommandEmpty className="text-slate-400 py-3 text-center text-sm">
+                          {(supervisorsData as any)?.error
+                            ? `Error: ${(supervisorsData as any).error}`
+                            : supervisors.length === 0
+                            ? "Loading supervisors..."
+                            : "No supervisor found."}
+                        </CommandEmpty>
+                        <CommandGroup>
+                          {/* Clear selection */}
+                          <CommandItem
+                            value="__none__"
+                            onSelect={() => {
+                              setSelectedSupervisorObj(null);
+                              setSelectedSupervisor(null);
+                              setSupervisorLotWarning(null);
+                              setSupervisorPickerOpen(false);
+                              setSupervisorSearch("");
+                            }}
+                            className="text-slate-400 cursor-pointer"
+                          >
+                            <Check className={`mr-2 h-4 w-4 ${!selectedSupervisorObj ? 'opacity-100' : 'opacity-0'}`} />
+                            No supervisor
+                          </CommandItem>
+                          {supervisors
+                            .filter((sup: any) => {
+                              if (!supervisorSearch) return true;
+                              const q = supervisorSearch.toLowerCase();
+                              return (
+                                (sup.fullName || "").toLowerCase().includes(q) ||
+                                (sup.email || "").toLowerCase().includes(q) ||
+                                (sup.companyName || "").toLowerCase().includes(q) ||
+                                (sup.defaultLotCode || "").toLowerCase().includes(q)
+                              );
+                            })
+                            .map((sup: any) => (
+                              <CommandItem
+                                key={String(sup.id)}
+                                value={`${sup.fullName} ${sup.email} ${sup.companyName || ''}`}
+                                onSelect={() => {
+                                  setSelectedSupervisorObj(sup);
+                                  // selectedSupervisor is kept null here; server resolves workers.id
+                                  setSelectedSupervisor(null);
+                                  validateSupervisorLotAccess(sup, selectedCustomers);
+                                  setSupervisorPickerOpen(false);
+                                  setSupervisorSearch("");
+                                }}
+                                className="text-white cursor-pointer"
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${
+                                    selectedSupervisorObj && String(selectedSupervisorObj.id) === String(sup.id)
+                                      ? 'opacity-100'
+                                      : 'opacity-0'
+                                  }`}
+                                />
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{sup.fullName}</span>
+                                  <span className="text-xs text-slate-400">
+                                    {sup.email}{sup.companyName ? ` · ${sup.companyName}` : ''}
+                                    {sup.role && sup.role !== 'user' ? ` · ${sup.role}` : ''}
+                                  </span>
+                                </div>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 {/* A4: Lot-access hard block — route cannot be created until resolved */}
                 {supervisorLotWarning && (
                   <div className="mt-2 p-3 bg-red-900/30 border border-red-600/50 rounded text-red-400 text-xs">
