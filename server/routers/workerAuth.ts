@@ -443,13 +443,14 @@ export const workerAuthRouter = router({
       routeId: z.number().int().positive(),
       customerId: z.number().int().positive(),
       skipReason: z.enum([
-        'no_access',        // Gate locked / no access
-        'customer_request', // Customer not present
-        'bin_not_out',      // Bins not out
-        'safety_concern',   // Weather / safety
-        'permanent_moved',  // Permanent — customer moved out
-        'permanent_closed', // Permanent — business closed
-        'other',            // Other (free text required)
+        'no_access',            // Gate locked / no access
+        'customer_not_present', // Customer absent — not there to receive pickup
+        'customer_request',     // Customer opt-out — asked to skip this visit
+        'bin_not_out',          // Bins not out
+        'safety_concern',       // Weather / safety
+        'permanent_moved',      // Permanent — customer moved out
+        'permanent_closed',     // Permanent — business closed
+        'other',                // Other (free text required)
       ]),
       skipNote: z.string().optional(),
       workerId: z.number().int().positive(),

@@ -103,8 +103,9 @@ export const customers = mysqlTable("customers", {
   coordinateSource: varchar("coordinateSource", { length: 50 }).default("manual"),
   isMainBuilding: int("isMainBuilding").default(0),
   mainBuildingCustomerId: int("mainBuildingCustomerId"),
-  // How often this customer is serviced per week (0 = not scheduled, 1-7 = days per week)
-  pickupFrequency: int("pickupFrequency").default(0),
+  // RRULE string describing this customer's pickup recurrence (e.g. FREQ=WEEKLY;BYDAY=MO)
+  // TEXT so it can carry any RRULE pattern; NULL = not scheduled
+  pickupFrequency: text("pickupFrequency").default(null),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

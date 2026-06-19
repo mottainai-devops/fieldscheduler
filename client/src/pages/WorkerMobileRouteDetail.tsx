@@ -409,7 +409,8 @@ export default function WorkerMobileRouteDetail() {
               <label className="text-xs text-slate-400 uppercase tracking-wide">Reason</label>
               {[
                 { value: 'no_access', label: 'Gate locked / no access' },
-                { value: 'customer_request', label: 'Customer not present' },
+                { value: 'customer_not_present', label: 'Customer not present (absent)' },
+                { value: 'customer_request', label: 'Customer opt-out (asked to skip)' },
                 { value: 'bin_not_out', label: 'Bins not out' },
                 { value: 'safety_concern', label: 'Weather / safety' },
                 { value: 'permanent_moved', label: 'Permanent — customer moved out' },
