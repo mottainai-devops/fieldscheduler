@@ -120,17 +120,42 @@ export const workerAuthRouter = router({
   getScheduleIdForRoute: publicProcedure
     .input(z.object({ routeId: z.number().int().positive() }))
     .query(async ({ input }) => {
+      // Item 2 (tranche-0): Resolve scheduleId via routes.workerId + routes.scheduledDate → routeSchedules.
+      // The old path (routeInstances.routeId) always returned null because cancelOccurrence /
+      // rescheduleOccurrence never populate routeInstances.routeId on insert.
+      // New path: look up the route to get workerId + scheduledDate, then find the active
+      // routeSchedules row for that worker whose dtstart <= scheduledDate, returning its id.
       const { getDb } = await import("../db");
-      const { routeInstances } = await import("../../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
+      const { routes, routeSchedules } = await import("../../drizzle/schema");
+      const { eq, and, lte } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return { scheduleId: null };
-      const rows = await db
-        .select({ scheduleId: routeInstances.scheduleId })
-        .from(routeInstances)
-        .where(eq((routeInstances as any).routeId, input.routeId))
+
+      // Step 1: look up the route row to get workerId and scheduledDate
+      const routeRows = await db
+        .select({ workerId: routes.workerId, scheduledDate: routes.scheduledDate })
+        .from(routes)
+        .where(eq(routes.id, input.routeId))
         .limit(1);
-      return { scheduleId: rows[0]?.scheduleId ?? null };
+      if (!routeRows.length || !routeRows[0].workerId) return { scheduleId: null };
+      const { workerId, scheduledDate } = routeRows[0];
+      if (!scheduledDate) return { scheduleId: null };
+
+      // Step 2: find the active routeSchedules row for this worker whose dtstart <= scheduledDate
+      // (most recently started schedule wins — order by dtstart DESC, take first)
+      const schedRows = await db
+        .select({ id: routeSchedules.id })
+        .from(routeSchedules)
+        .where(
+          and(
+            eq(routeSchedules.workerId, workerId),
+            eq(routeSchedules.status, "active"),
+            lte(routeSchedules.dtstart, scheduledDate)
+          )
+        )
+        .orderBy((routeSchedules as any).dtstart)
+        .limit(1);
+      return { scheduleId: schedRows[0]?.id ?? null };
     }),
 
   // Get all customers (for building linkage selection)
@@ -405,7 +430,7 @@ export const workerAuthRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       await db.update(routeCustomers)
-        .set({ pickedAt: new Date() } as any)
+        .set({ pickedAt: new Date(), completionType: 'picked' } as any)
         .where(and(
           eq(routeCustomers.routeId, input.routeId),
           eq(routeCustomers.customerId, input.customerId)
@@ -674,9 +699,10 @@ export const workerAuthRouter = router({
           } as any);
 
           // 2. Mark the routeCustomers stop as completed so it is removed from
-          //    the active list (prevents it showing as unvisited)
+          //    the active list (prevents it showing as unvisited).
+          //    Item 3 (tranche-0): also set completionType='skipped' to distinguish from picked.
           await db.update(routeCustomers)
-            .set({ completedAt: new Date() })
+            .set({ completedAt: new Date(), completionType: 'skipped' } as any)
             .where(
               and(
                 eq(routeCustomers.routeId, input.routeId),
@@ -876,5 +902,73 @@ export const workerAuthRouter = router({
       // Sort by date ascending
       events.sort((a, b) => a.date.localeCompare(b.date));
       return events;
+    }),
+
+  // ===== ITEM 4 (tranche-0): getAssignedLots =====
+  // Returns the supervisor's assigned lots enriched with paytWebhook + monthlyWebhook.
+  // Mirrors the lot-enrichment logic in supervisorLogin so the web foreground refresh
+  // (WorkerMobile visibilitychange handler) can call this instead of /users/me, which
+  // drops the admin-enriched webhook fields.
+  // surveyToken is required to call Survey App /users/me for the fresh lot list.
+  getAssignedLots: publicProcedure
+    .input(z.object({
+      surveyToken: z.string(),
+    }))
+    .query(async ({ input }) => {
+      const SURVEY_API = process.env.SURVEY_API_URL || "https://upwork.kowope.xyz";
+      const ADMIN_API = process.env.ADMIN_DASHBOARD_URL || "https://admin.kowope.xyz";
+
+      // Fetch fresh user data from Survey App using the stored token
+      let surveyUser: any;
+      try {
+        const meRes = await fetch(`${SURVEY_API}/users/me`, {
+          headers: { Authorization: `Bearer ${input.surveyToken}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!meRes.ok) throw new Error(`Survey App /users/me returned ${meRes.status}`);
+        const meData = await meRes.json() as any;
+        // /users/me may return the user directly or wrapped in { user: ... }
+        surveyUser = meData.user ?? meData;
+      } catch (err: any) {
+        throw new Error(err?.message || "Failed to fetch Survey App user");
+      }
+
+      const rawLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
+        Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
+
+      // Enrich each lot with paytWebhook + monthlyWebhook from admin dashboard
+      const assignedLots: Array<{
+        lotCode: string;
+        lotName: string;
+        companyName: string | null;
+        paytWebhook: string | null;
+        monthlyWebhook: string | null;
+      }> = await Promise.all(
+        rawLots.map(async (lot) => {
+          try {
+            const res = await fetch(
+              `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { search: lot.lotCode, page: 1, limit: 5 } } }))}`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (!res.ok) return { ...lot, paytWebhook: null, monthlyWebhook: null };
+            const data = await res.json() as any;
+            const lots = data?.[0]?.result?.data?.json?.lots ?? [];
+            const match = lots.find((l: any) =>
+              l.lotCode === lot.lotCode ||
+              l.lotCode === lot.lotCode.replace(/^0+/, "") ||
+              String(l.lotNumber) === String(parseInt(lot.lotCode, 10))
+            );
+            return {
+              ...lot,
+              paytWebhook: match?.paytWebhook ?? null,
+              monthlyWebhook: match?.monthlyWebhook ?? null,
+            };
+          } catch {
+            return { ...lot, paytWebhook: null, monthlyWebhook: null };
+          }
+        })
+      );
+
+      return { assignedLots };
     }),
 });

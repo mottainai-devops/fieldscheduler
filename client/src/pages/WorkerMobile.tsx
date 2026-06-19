@@ -22,10 +22,17 @@ export default function WorkerMobile() {
   // Pending pickup queue count for badge
   const [pickupQueueCount, setPickupQueueCount] = useState(0);
 
-  // C2: Foreground lot refresh — re-fetch /users/me when the tab becomes visible again
-  // to keep the lot cache fresh without forcing a full re-login.
+  // C2/C9: Foreground lot refresh — when the tab becomes visible again, call
+  // getAssignedLots (tRPC) instead of /users/me directly.
+  // getAssignedLots re-fetches /users/me server-side AND enriches each lot with
+  // paytWebhook + monthlyWebhook from the admin dashboard, so the cache always
+  // contains the full enriched shape that PickupModal expects.
+  const getAssignedLotsMutation = trpc.workerAuth.getAssignedLots.useQuery(
+    { surveyToken: localStorage.getItem('workerSurveyToken') ?? '' },
+    { enabled: false } // manual trigger only
+  );
+
   useEffect(() => {
-    const SURVEY_API = "https://upwork.kowope.xyz";
     const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
 
     const refreshLots = async () => {
@@ -40,21 +47,21 @@ export default function WorkerMobile() {
       }
 
       try {
-        const res = await fetch(`${SURVEY_API}/users/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.status === 401) {
-          // Token expired — clear session but preserve offline queue (B6)
-          localStorage.removeItem('workerSurveyToken');
-          localStorage.removeItem('session.tokenIssuedAt');
-          // Do NOT clear lots.cache — offline queue may still need it
+        // C9 fix: call getAssignedLots via tRPC so webhook URLs are preserved
+        const result = await getAssignedLotsMutation.refetch();
+        if (result.error) {
+          // If 401-equivalent (token expired), clear session but keep cache for offline queue
+          const msg = (result.error as any)?.message ?? '';
+          if (msg.includes('401') || msg.toLowerCase().includes('unauthorized') || msg.toLowerCase().includes('token')) {
+            localStorage.removeItem('workerSurveyToken');
+            localStorage.removeItem('session.tokenIssuedAt');
+          }
           return;
         }
-        if (!res.ok) return;
-        const data = await res.json() as any;
-        const lots = Array.isArray(data?.user?.assignedLots) ? data.user.assignedLots : [];
-        localStorage.setItem('lots.cache', JSON.stringify(lots));
-        localStorage.setItem('lots.cachedAt', new Date().toISOString());
+        if (result.data?.assignedLots) {
+          localStorage.setItem('lots.cache', JSON.stringify(result.data.assignedLots));
+          localStorage.setItem('lots.cachedAt', new Date().toISOString());
+        }
       } catch {
         // Network error — keep existing cache
       }

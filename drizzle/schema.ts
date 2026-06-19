@@ -57,7 +57,7 @@ export const workers = mysqlTable("workers", {
   // Survey App integration: links this worker to a Mottainai Survey App user account.
   // Populated automatically on first supervisor login via Survey App credentials.
   // Null for field managers (PIN-only login).
-  surveyAppUserId: varchar("surveyAppUserId", { length: 100 }),
+  surveyAppUserId: varchar("surveyAppUserId", { length: 100 }).unique(),
   status: mysqlEnum("status", ["active", "inactive", "on_leave"]).default("active").notNull(),
   shiftStart: varchar("shiftStart", { length: 10 }).default("08:00"),
   shiftEnd: varchar("shiftEnd", { length: 10 }).default("17:00"),
@@ -165,6 +165,10 @@ export const routeCustomers = mysqlTable("routeCustomers", {
   estimatedServiceTime: int("estimatedServiceTime").default(30),
   completedAt: timestamp("completedAt"),
   pickedAt: timestamp("pickedAt"),
+  // Item 3 (tranche-0): three-value enum to distinguish picked vs skipped vs not yet visited.
+  // completedAt = timestamp of supervisor action (set for both picked and skipped).
+  // completion_type = how the stop was resolved.
+  completionType: mysqlEnum("completion_type", ["picked", "skipped", "not_attempted"]).notNull().default("not_attempted"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
