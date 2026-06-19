@@ -365,10 +365,14 @@ export const workerAuthRouter = router({
               ...lot,
               paytWebhook: match?.paytWebhook ?? null,
               monthlyWebhook: match?.monthlyWebhook ?? null,
+              // Tranche 1 carry-forward: include lotId + lotNumber so the
+              // login-seeded cache matches the getAssignedLots refresh shape.
+              lotId: match?.id ?? null,
+              lotNumber: match?.lotNumber ?? null,
             };
           } catch {
             // Admin dashboard unreachable — cache lot without webhook URLs
-            return { ...lot, paytWebhook: null, monthlyWebhook: null };
+            return { ...lot, paytWebhook: null, monthlyWebhook: null, lotId: null, lotNumber: null };
           }
         })
       );
