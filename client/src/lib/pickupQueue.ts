@@ -258,10 +258,19 @@ async function submitQueuedPickup(pickup: QueuedPickup): Promise<void> {
   formData.append("beforePhoto", pickup.beforePhotoBlob, pickup.beforePhotoName);
   formData.append("afterPhoto", pickup.afterPhotoBlob, pickup.afterPhotoName);
 
+  const flushHeaders: HeadersInit = {};
+  if (pickup.surveyToken) flushHeaders["Authorization"] = `Bearer ${pickup.surveyToken}`;
+
   const res = await fetch("https://upwork.kowope.xyz/forms/submit", {
     method: "POST",
+    headers: flushHeaders,
     body: formData,
   });
+  if (res.status === 401) {
+    // B6: Token expired — throw a typed error so syncPickupQueue can call the
+    // on401Callback without clearing the queue.
+    throw Object.assign(new Error("TOKEN_EXPIRED"), { status: 401 });
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => "Unknown error");
     throw new Error(errText || `HTTP ${res.status}`);
@@ -269,7 +278,8 @@ async function submitQueuedPickup(pickup: QueuedPickup): Promise<void> {
 }
 
 export async function syncPickupQueue(
-  onPickedCallback?: (routeId: number, customerId: number) => Promise<void>
+  onPickedCallback?: (routeId: number, customerId: number) => Promise<void>,
+  on401Callback?: () => void
 ): Promise<{ synced: number; failed: number }> {
   if (!navigator.onLine) return { synced: 0, failed: 0 };
 
@@ -293,6 +303,13 @@ export async function syncPickupQueue(
       await removeQueuedPickup(pickup.id!);
       synced++;
     } catch (err: any) {
+      if ((err as any).status === 401) {
+        // B6: Token expired — reset this item back to 'pending' (not 'failed') so it
+        // can be retried after re-login, then stop processing the rest of the queue.
+        await updatePickupStatus(pickup.id!, "pending", "Token expired — please re-login");
+        if (on401Callback) on401Callback();
+        break; // Stop processing; all remaining items stay pending
+      }
       await updatePickupStatus(pickup.id!, "failed", err?.message || "Submission failed");
       failed++;
     }

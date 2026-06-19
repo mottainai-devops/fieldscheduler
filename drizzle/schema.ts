@@ -103,6 +103,8 @@ export const customers = mysqlTable("customers", {
   coordinateSource: varchar("coordinateSource", { length: 50 }).default("manual"),
   isMainBuilding: int("isMainBuilding").default(0),
   mainBuildingCustomerId: int("mainBuildingCustomerId"),
+  // How often this customer is serviced per week (0 = not scheduled, 1-7 = days per week)
+  pickupFrequency: int("pickupFrequency").default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -148,6 +150,7 @@ export const routes = mysqlTable("routes", {
   efficiencyScore: int("efficiencyScore"),
   status: mysqlEnum("status", ["pending", "optimized", "assigned", "in_progress", "completed", "cancelled"]).default("pending").notNull(),
   scheduledDate: varchar("scheduledDate", { length: 50 }),
+  supervisorId: int("supervisorId").references(() => workers.id),
   dispatchedAt: timestamp("dispatchedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -552,3 +555,77 @@ export const routeInstances = mysqlTable("routeInstances", {
 });
 export type RouteInstance = typeof routeInstances.$inferSelect;
 export type InsertRouteInstance = typeof routeInstances.$inferInsert;
+
+// ─── Route Schedule Customers ─────────────────────────────────────────────────
+// Explicit customer membership in a recurring schedule.
+// Allows per-customer status (active, skipped, removed) and skip tracking.
+
+export const routeScheduleCustomers = mysqlTable("routeScheduleCustomers", {
+  id: int("id").autoincrement().primaryKey(),
+  scheduleId: int("scheduleId").references(() => routeSchedules.id).notNull(),
+  customerId: int("customerId").references(() => customers.id).notNull(),
+  // active = normal, skipped = temporary skip, removed = permanent removal from schedule
+  status: mysqlEnum("status", ["active", "skipped", "removed"]).default("active").notNull(),
+  // Structured skip reason (G1)
+  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "safety_concern", "bin_not_out", "other"]),
+  skipNote: text("skipNote"),
+  // Three-strike counter: increments on each consecutive skip; resets on successful pickup
+  consecutiveSkips: int("consecutiveSkips").default(0).notNull(),
+  // When consecutiveSkips reaches 3, schedule is auto-paused and this is set
+  autoPausedAt: timestamp("autoPausedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type RouteScheduleCustomer = typeof routeScheduleCustomers.$inferSelect;
+export type InsertRouteScheduleCustomer = typeof routeScheduleCustomers.$inferInsert;
+
+// ─── Route Instance Customer Overrides ───────────────────────────────────────
+// Per-occurrence, per-customer overrides for a specific route instance.
+// Used for one-off reschedules, skips, or handoffs at the customer level.
+
+export const routeInstanceCustomerOverrides = mysqlTable("routeInstanceCustomerOverrides", {
+  id: int("id").autoincrement().primaryKey(),
+  instanceId: int("instanceId").references(() => routeInstances.id).notNull(),
+  customerId: int("customerId").references(() => customers.id).notNull(),
+  overrideType: mysqlEnum("overrideType", ["skip", "reschedule", "handoff", "note"]).notNull(),
+  // New date for reschedule overrides
+  newDate: varchar("newDate", { length: 20 }),
+  // Worker to hand off to (for handoff overrides)
+  handoffWorkerId: int("handoffWorkerId").references(() => workers.id),
+  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "safety_concern", "bin_not_out", "other"]),
+  note: text("note"),
+  createdBy: int("createdBy").references(() => workers.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type RouteInstanceCustomerOverride = typeof routeInstanceCustomerOverrides.$inferSelect;
+export type InsertRouteInstanceCustomerOverride = typeof routeInstanceCustomerOverrides.$inferInsert;
+
+// ─── Calendar Audit Log ───────────────────────────────────────────────────────
+// Immutable audit trail for all calendar mutations.
+// Append-only: never update or delete rows.
+
+export const calendarAuditLog = mysqlTable("calendarAuditLog", {
+  id: int("id").autoincrement().primaryKey(),
+  // What entity was changed
+  entityType: mysqlEnum("entityType", ["schedule", "instance", "schedule_customer", "instance_override"]).notNull(),
+  entityId: int("entityId").notNull(),
+  // What action was taken
+  action: mysqlEnum("action", [
+    "created", "updated", "cancelled", "rescheduled",
+    "customer_skipped", "customer_removed", "customer_added",
+    "handoff_requested", "handoff_accepted", "auto_paused"
+  ]).notNull(),
+  // JSON snapshot of the entity before the change (null for creates)
+  previousState: text("previousState"),
+  // JSON snapshot of the entity after the change
+  newState: text("newState"),
+  // Who made the change (worker id, admin id, or system)
+  actorType: mysqlEnum("actorType", ["worker", "admin", "system"]).notNull(),
+  actorId: int("actorId"),
+  actorName: varchar("actorName", { length: 255 }),
+  // Free-text reason or note attached to the change
+  reason: text("reason"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CalendarAuditLog = typeof calendarAuditLog.$inferSelect;
+export type InsertCalendarAuditLog = typeof calendarAuditLog.$inferInsert;

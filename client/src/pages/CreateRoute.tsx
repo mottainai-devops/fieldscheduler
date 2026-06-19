@@ -38,6 +38,9 @@ export default function CreateRoute() {
   const [showAdvancedClustering, setShowAdvancedClustering] = useState(false);
   const [minClusterSize, setMinClusterSize] = useState(3);
   const [maxClusterRadius, setMaxClusterRadius] = useState(15);
+  // A3: Supervisor picker state
+  const [selectedSupervisor, setSelectedSupervisor] = useState<number | null>(null);
+  const [supervisorLotWarning, setSupervisorLotWarning] = useState<string | null>(null);
 
   const { data: customers = [] } = trpc.fieldWorker.getCustomers.useQuery();
   const { data: clustersByDistanceRaw = [], isLoading: loadingDistance } = trpc.fieldWorker.getCustomerClusters.useQuery(
@@ -60,7 +63,41 @@ export default function CreateRoute() {
   const clustersByCount = asArray(clustersByCountRaw);
   const clusters = clusterMode === 'distance' ? clustersByDistance : clustersByCount;
   const { data: workers = [] } = trpc.fieldWorker.getWorkers.useQuery();
+  // A3: Fetch supervisors for the picker
+  const { data: supervisorsData } = trpc.fieldWorker.getSurveyAppSupervisors.useQuery();
+  const supervisors = (supervisorsData as any)?.supervisors ?? [];
+  // Filter workers to field_managers only for the worker picker
+  const fieldManagers = workers.filter((w: any) => !w.role || w.role === 'field_manager');
 
+  // A4: Lot-access validation — check if selected supervisor has access to the lots
+  // of the selected customers. Warn admin if any customer's lot is not in the supervisor's
+  // assignedLots list. This is a soft warning, not a hard block.
+  const validateSupervisorLotAccess = (supervisorId: number | null, customerIds: number[]) => {
+    if (!supervisorId || customerIds.length === 0) {
+      setSupervisorLotWarning(null);
+      return;
+    }
+    const sup = supervisors.find((s: any) => s.fieldworkerId === supervisorId);
+    if (!sup?.assignedLots?.length) {
+      setSupervisorLotWarning(null);
+      return;
+    }
+    const supLotCodes = new Set<string>(sup.assignedLots.map((l: any) => String(l.lotCode)));
+    const selectedCustomerData = asArray(customers).filter(c => customerIds.includes(c.id));
+    const unmatched = selectedCustomerData.filter(c => {
+      const maf = c.customermaf || "";
+      const lotMatch = maf.match(/-?(\d+)$/);
+      const lotCode = lotMatch ? lotMatch[1] : null;
+      return lotCode && !supLotCodes.has(lotCode);
+    });
+    if (unmatched.length > 0) {
+      setSupervisorLotWarning(
+        `Warning: ${unmatched.length} customer(s) are in lots not assigned to this supervisor (${unmatched.slice(0, 3).map(c => c.customermaf).join(", ")}${unmatched.length > 3 ? "..." : ""}). The supervisor will still be able to perform pickups, but provenance may be incomplete.`
+      );
+    } else {
+      setSupervisorLotWarning(null);
+    }
+  };
 
   const getFieldManagerName = (managerId: number | null) => {
     if (!managerId) return null;
@@ -245,6 +282,7 @@ export default function CreateRoute() {
     try {
       const routeData = {
         workerId: selectedWorker,
+        supervisorId: selectedSupervisor ?? undefined,
         totalDistance: String(optimizedRoute.totalDistance || 0),
         estimatedDuration: String(optimizedRoute.estimatedDuration || 0),
         efficiencyScore: Number(optimizedRoute.efficiencyScore || 50),
@@ -810,8 +848,40 @@ export default function CreateRoute() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* A3: Supervisor picker */}
+              <div className="mb-6">
+                <Label className="text-slate-300 text-sm mb-2 block">Assign Supervisor (Optional)</Label>
+                <Select
+                  value={selectedSupervisor ? String(selectedSupervisor) : 'none'}
+                  onValueChange={(val) => {
+                    const id = val === 'none' ? null : Number(val);
+                    setSelectedSupervisor(id);
+                    validateSupervisorLotAccess(id, selectedCustomers);
+                  }}
+                >
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                    <SelectValue placeholder="No supervisor" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-600">
+                    <SelectItem value="none" className="text-slate-400">No supervisor</SelectItem>
+                    {supervisors.map((sup: any) => (
+                      <SelectItem key={sup.fieldworkerId} value={String(sup.fieldworkerId)} className="text-white">
+                        {sup.fullName} {sup.companyName ? `(${sup.companyName})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* A4: Lot-access warning */}
+                {supervisorLotWarning && (
+                  <div className="mt-2 p-3 bg-yellow-900/30 border border-yellow-600/50 rounded text-yellow-400 text-xs">
+                    ⚠️ {supervisorLotWarning}
+                  </div>
+                )}
+              </div>
+
+              <Label className="text-slate-300 text-sm mb-2 block">Assign Field Manager</Label>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                {workers.filter(w => w.status === "active").map((worker) => (
+                {fieldManagers.filter((w: any) => w.status === "active").map((worker: any) => (
                   <div
                     key={worker.id}
                     onClick={() => setSelectedWorker(worker.id)}

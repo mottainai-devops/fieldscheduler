@@ -17,10 +17,56 @@ export default function WorkerMobile() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pin, setPin] = useState("");
   const [rememberMe, setRememberMe] = useState(true); // Default to true for convenience
-  const [routeFilter, setRouteFilter] = useState<'today' | 'all' | 'upcoming'>('today');
+  const [routeFilter, setRouteFilter] = useState<'today' | 'all' | 'upcoming' | 'week'>('today');
 
   // Pending pickup queue count for badge
   const [pickupQueueCount, setPickupQueueCount] = useState(0);
+
+  // C2: Foreground lot refresh — re-fetch /users/me when the tab becomes visible again
+  // to keep the lot cache fresh without forcing a full re-login.
+  useEffect(() => {
+    const SURVEY_API = "https://upwork.kowope.xyz";
+    const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
+    const refreshLots = async () => {
+      const token = localStorage.getItem('workerSurveyToken');
+      const role = localStorage.getItem('workerRole');
+      if (!token || role !== 'supervisor') return;
+
+      const cachedAt = localStorage.getItem('lots.cachedAt');
+      if (cachedAt) {
+        const age = Date.now() - new Date(cachedAt).getTime();
+        if (age < CACHE_MAX_AGE_MS) return; // Still fresh — skip
+      }
+
+      try {
+        const res = await fetch(`${SURVEY_API}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
+          // Token expired — clear session but preserve offline queue (B6)
+          localStorage.removeItem('workerSurveyToken');
+          localStorage.removeItem('session.tokenIssuedAt');
+          // Do NOT clear lots.cache — offline queue may still need it
+          return;
+        }
+        if (!res.ok) return;
+        const data = await res.json() as any;
+        const lots = Array.isArray(data?.user?.assignedLots) ? data.user.assignedLots : [];
+        localStorage.setItem('lots.cache', JSON.stringify(lots));
+        localStorage.setItem('lots.cachedAt', new Date().toISOString());
+      } catch {
+        // Network error — keep existing cache
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshLots();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   // Supervisor Survey App login state
   const [loginMode, setLoginMode] = useState<'select' | 'pin' | 'supervisor'>('select');
@@ -126,6 +172,12 @@ export default function WorkerMobile() {
         localStorage.setItem('workerCompanyName', w.companyName ?? '');
         localStorage.setItem('workerDefaultLotCode', w.defaultLotCode ?? '');
         localStorage.setItem('workerMonthlyBilling', String(w.monthlyBilling ?? false));
+        // C1: Lot preload — cache the assigned lots at login time
+        const lotsPayload = result.assignedLots ?? [];
+        localStorage.setItem('lots.cache', JSON.stringify(lotsPayload));
+        localStorage.setItem('lots.cachedAt', new Date().toISOString());
+        // C1: tokenIssuedAt for session age tracking
+        localStorage.setItem('session.tokenIssuedAt', new Date().toISOString());
         if (rememberMe) {
           const expiryDate = new Date();
           expiryDate.setDate(expiryDate.getDate() + 30);
@@ -178,7 +230,7 @@ export default function WorkerMobile() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = (preserveQueue = false) => {
     setSelectedWorkerId(null);
     setIsAuthenticated(false);
     setPin("");
@@ -194,11 +246,19 @@ export default function WorkerMobile() {
     localStorage.removeItem('workerName');
     localStorage.removeItem('workerId');
     localStorage.removeItem('workerSurveyToken');
+    localStorage.removeItem('session.tokenIssuedAt');
     localStorage.removeItem('workerSurveyAppUserId');
     localStorage.removeItem('workerCompanyId');
     localStorage.removeItem('workerCompanyName');
     localStorage.removeItem('workerDefaultLotCode');
     localStorage.removeItem('workerMonthlyBilling');
+    // B6: Preserve lots.cache and offline queue on 401/token-expiry logout
+    // so queued submissions can still be flushed after re-login.
+    // Only clear them on explicit user-initiated sign-out (preserveQueue=false).
+    if (!preserveQueue) {
+      localStorage.removeItem('lots.cache');
+      localStorage.removeItem('lots.cachedAt');
+    }
     setLocation('/worker-mobile');
   };
 
@@ -223,6 +283,33 @@ export default function WorkerMobile() {
   const filteredRoutes = routeFilter === 'today' ? todayRoutes : 
                         routeFilter === 'upcoming' ? upcomingRoutes : 
                         workerRoutes;
+
+  // F3/F4: Supervisor week view — date range helpers
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const endOfWeekStr = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 6);
+    return d.toISOString().slice(0, 10);
+  })();
+  const supervisorWorkerId = selectedWorkerId ? Number(localStorage.getItem('workerId') || selectedWorkerId) : null;
+  const isSupervisor = localStorage.getItem('workerRole') === 'supervisor';
+
+  // Supervisor schedule query for the Week tab
+  const { data: supervisorScheduleEvents = [] } = trpc.workerAuth.getSupervisorSchedule.useQuery(
+    {
+      supervisorId: supervisorWorkerId ?? 0,
+      from: todayStr,
+      to: endOfWeekStr,
+    },
+    { enabled: isSupervisor && !!supervisorWorkerId && routeFilter === 'week' }
+  );
+
+  // Group events by date for the Week view
+  const scheduleByDay = supervisorScheduleEvents.reduce<Record<string, typeof supervisorScheduleEvents>>((acc, ev) => {
+    if (!acc[ev.date]) acc[ev.date] = [];
+    acc[ev.date].push(ev);
+    return acc;
+  }, {});
 
   // Worker Selection Screen
   if (!selectedWorkerId) {
@@ -594,10 +681,74 @@ export default function WorkerMobile() {
             >
               All
             </button>
+            {isSupervisor && (
+              <button
+                onClick={() => setRouteFilter('week')}
+                className={`px-3 py-1 text-xs rounded transition-colors ${
+                  routeFilter === 'week' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Week
+              </button>
+            )}
           </div>
         </div>
         
-        {routesLoading ? (
+        {routeFilter === 'week' ? (
+          /* F3/F4: Supervisor Week View — RRULE-expanded schedule events grouped by day */
+          Object.keys(scheduleByDay).length === 0 ? (
+            <div className="bg-slate-800/50 rounded-lg p-8 text-center border border-slate-700">
+              <MapPin className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+              <p className="text-slate-400">No scheduled routes for this week</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(scheduleByDay).map(([date, events]) => (
+                <div key={date}>
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                    {new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+                    {date === todayStr && (
+                      <span className="ml-2 px-1.5 py-0.5 bg-blue-600 text-white rounded text-xs">Today</span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {events.map((ev, idx) => (
+                      <Card key={`${ev.scheduleId}-${idx}`} className="bg-slate-800 border-slate-700">
+                        <CardContent className="p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-medium text-white text-sm truncate">{ev.title}</h4>
+                              {ev.workerName && (
+                                <p className="text-xs text-slate-400 mt-0.5">{ev.workerName}</p>
+                              )}
+                              {ev.lotCodes.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {ev.lotCodes.map((code) => (
+                                    <span key={code} className="px-1.5 py-0.5 bg-slate-700 text-slate-300 rounded text-xs">{code}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <span className={`flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium ${
+                              ev.instanceType === 'cancelled'
+                                ? 'bg-red-500/20 text-red-400'
+                                : ev.instanceType === 'rescheduled'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-blue-500/20 text-blue-400'
+                            }`}>
+                              {ev.instanceType === 'cancelled' ? 'Cancelled' :
+                               ev.instanceType === 'rescheduled' ? 'Rescheduled' : 'Scheduled'}
+                            </span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : routesLoading ? (
           <div className="space-y-3">
             <RouteCardSkeleton />
             <RouteCardSkeleton />

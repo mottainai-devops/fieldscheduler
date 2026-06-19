@@ -239,6 +239,7 @@ export const fieldWorkerRouter = router({
       scheduledDate: z.string().optional(),
       customerIds: z.array(z.number()).optional(),
       dispatchedAt: z.string().optional(),
+      supervisorId: z.number().optional(),
     }))
     .mutation(async ({ input }) => {
       console.log('\n========== CREATE ROUTE REQUEST ==========');

@@ -101,6 +101,19 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
     const surveyAppUserId = localStorage.getItem("workerSurveyAppUserId") || "";
     const isMonthlyBilling = localStorage.getItem("workerMonthlyBilling") === "true";
 
+    // C3: Cache-miss guard — block submission if lot cache is absent.
+    // This prevents submissions with missing provenance data.
+    // The cache is written at login time (C1) and refreshed on foreground (C2).
+    const lotsCache = localStorage.getItem("lots.cache");
+    if (!lotsCache) {
+      toast.error(
+        "Lot data not loaded. Please log out and log back in to refresh your lot assignments.",
+        { duration: 6000 }
+      );
+      setSubmitting(false);
+      return;
+    }
+
     // Derive lot code from customer MAF (e.g. "DIC-410" -> "410")
     const lotMatch = (customer.customermaf || "").match(/-?(\d+)$/);
     const lotCode = lotMatch ? lotMatch[1] : defaultLotCode;
@@ -192,8 +205,12 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
       if (surveyToken) formData.append("surveyToken", surveyToken);
       if (surveyAppUserId) formData.append("surveyAppUserId", surveyAppUserId);
 
+      const headers: HeadersInit = {};
+      if (surveyToken) headers["Authorization"] = `Bearer ${surveyToken}`;
+
       const res = await fetch("https://upwork.kowope.xyz/forms/submit", {
         method: "POST",
+        headers,
         body: formData,
       });
 
