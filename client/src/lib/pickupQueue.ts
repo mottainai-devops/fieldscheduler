@@ -364,8 +364,16 @@ async function submitQueuedPickup(pickup: QueuedPickup): Promise<void> {
   formData.append("beforePhoto", pickup.beforePhotoBlob, pickup.beforePhotoName);
   formData.append("afterPhoto", pickup.afterPhotoBlob, pickup.afterPhotoName);
 
+  // C4 FIX: Read the live token from localStorage at flush time so that a
+  // re-login after token expiry is honoured for all queued pickups.
+  // Fall back to the enqueue-time snapshot only if localStorage is empty
+  // (e.g., the user cleared storage between enqueue and flush).
+  const liveToken = typeof localStorage !== 'undefined'
+    ? (localStorage.getItem('workerSurveyToken') || pickup.surveyToken)
+    : pickup.surveyToken;
+
   const flushHeaders: HeadersInit = {};
-  if (pickup.surveyToken) flushHeaders["Authorization"] = `Bearer ${pickup.surveyToken}`;
+  if (liveToken) flushHeaders["Authorization"] = `Bearer ${liveToken}`;
 
   const res = await fetch("https://upwork.kowope.xyz/forms/submit", {
     method: "POST",

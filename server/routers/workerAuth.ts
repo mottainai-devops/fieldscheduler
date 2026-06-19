@@ -654,7 +654,40 @@ export const workerAuthRouter = router({
           return { success: true, action: shouldAutoPause ? 'auto_paused' : 'skipped', consecutiveSkips: newSkips };
         }
       } else {
-        // No scheduleId — just record the skip on the route level (fallback for non-recurring routes)
+        // C1 FIX: No scheduleId (non-recurring route or schedule not yet created).
+        // Record the skip visibly: write a customerVisitNotes row so the skip is
+        // auditable, and mark the routeCustomers stop as completed so it doesn't
+        // appear as an unvisited stop. This makes skips work for all current routes.
+        try {
+          const { customerVisitNotes, routeCustomers } = await import('../../drizzle/schema');
+          const { eq, and } = await import('drizzle-orm');
+
+          // 1. Write a visit note recording the skip reason
+          await db.insert(customerVisitNotes).values({
+            customerId: input.customerId,
+            routeId: input.routeId,
+            workerId: input.workerId,
+            authorType: 'worker',
+            authorName: `Worker #${input.workerId}`,
+            noteText: `SKIP — Reason: ${input.skipReason}${input.skipNote ? '. Note: ' + input.skipNote : ''}`,
+            visitDate: new Date().toISOString().slice(0, 10),
+          } as any);
+
+          // 2. Mark the routeCustomers stop as completed so it is removed from
+          //    the active list (prevents it showing as unvisited)
+          await db.update(routeCustomers)
+            .set({ completedAt: new Date() })
+            .where(
+              and(
+                eq(routeCustomers.routeId, input.routeId),
+                eq(routeCustomers.customerId, input.customerId)
+              )
+            );
+        } catch (err) {
+          // Non-fatal — skip is still acknowledged to the client
+          console.error('[skipCustomer] Failed to record skip note:', err);
+        }
+
         return { success: true, action: 'skipped_no_schedule' };
       }
     }),
