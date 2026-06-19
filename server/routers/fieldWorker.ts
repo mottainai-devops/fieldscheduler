@@ -28,6 +28,7 @@ export const fieldWorkerRouter = router({
       pin: z.string().optional(),
       role: z.enum(["field_manager", "supervisor"]).optional(),
       preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
+      surveyAppUserId: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.createWorker(input);
@@ -46,11 +47,36 @@ export const fieldWorkerRouter = router({
       pin: z.string().optional(),
       role: z.enum(["field_manager", "supervisor"]).optional(),
       preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
+      surveyAppUserId: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       const { id, ...data } = input;
       return await fieldWorkerDb.updateWorker(id, data);
     }),
+
+  /**
+   * getSurveyAppSupervisors: Fetch all users with role='supervisor' from the
+   * Mottainai Survey App backend. Used by the admin supervisor picker in CreateRoute
+   * and the Workers management page to validate lot access.
+   * Requires SURVEY_API_ADMIN_TOKEN env var for service-account auth.
+   */
+  getSurveyAppSupervisors: protectedProcedure.query(async () => {
+    const SURVEY_API = process.env.SURVEY_API_URL || "https://upwork.kowope.xyz";
+    const adminToken = process.env.SURVEY_API_ADMIN_TOKEN || "";
+    if (!adminToken) {
+      return { supervisors: [], error: "SURVEY_API_ADMIN_TOKEN not configured" };
+    }
+    try {
+      const res = await fetch(`${SURVEY_API}/users/admin/supervisors`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!res.ok) return { supervisors: [], error: `Survey API returned ${res.status}` };
+      const data = await res.json() as any;
+      return { supervisors: data.supervisors ?? [], error: null };
+    } catch (err: any) {
+      return { supervisors: [], error: err?.message || "Failed to fetch supervisors" };
+    }
+  }),
 
   deleteWorker: protectedProcedure
     .input(z.object({ id: z.number() }))

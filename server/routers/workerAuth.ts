@@ -220,6 +220,89 @@ export const workerAuthRouter = router({
       return await complianceDb.getAbatementNoticesByCustomer(input.customerId);
     }),
 
+  // ===== SUPERVISOR SURVEY APP LOGIN =====
+
+  /**
+   * supervisorLogin: Authenticate a supervisor using their Mottainai Survey App credentials.
+   *
+   * Flow:
+   * 1. POST credentials to Survey App /users/login endpoint.
+   * 2. Verify the returned user has role='supervisor'.
+   * 3. Look up the shadow worker row by surveyAppUserId.
+   * 4. If no shadow row exists, auto-provision one (name, email, role=supervisor).
+   * 5. Return the worker row + Survey App token for lot preloading.
+   */
+  supervisorLogin: publicProcedure
+    .input(z.object({
+      email: z.string().email(),
+      password: z.string(), // base64-encoded, as Survey App expects
+    }))
+    .mutation(async ({ input }) => {
+      const SURVEY_API = process.env.SURVEY_API_URL || "https://upwork.kowope.xyz";
+
+      // Step 1: Authenticate against Survey App
+      let surveyUser: any;
+      let surveyToken: string;
+      try {
+        const loginRes = await fetch(`${SURVEY_API}/users/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: input.email.toLowerCase(), password: input.password }),
+        });
+        if (!loginRes.ok) {
+          const errBody = await loginRes.text();
+          throw new Error(errBody || "Invalid email or password");
+        }
+        const loginData = await loginRes.json() as any;
+        surveyToken = loginData.token;
+        surveyUser = loginData.user;
+      } catch (err: any) {
+        throw new Error(err?.message || "Survey App login failed");
+      }
+
+      // Step 2: Verify role
+      if (!surveyUser || surveyUser.role !== "supervisor") {
+        throw new Error("This account does not have supervisor access");
+      }
+
+      const surveyAppUserId = String(surveyUser.id);
+
+      // Step 3: Find or auto-provision shadow worker row
+      let worker = await fieldWorkerDb.getWorkerBySurveyAppUserId(surveyAppUserId);
+
+      if (!worker) {
+        // Step 4: Auto-provision shadow worker
+        await fieldWorkerDb.createWorker({
+          name: surveyUser.fullName || surveyUser.email,
+          email: surveyUser.email,
+          role: "supervisor",
+          status: "active",
+          surveyAppUserId,
+          // No PIN — supervisor login is always via Survey App credentials
+        });
+        worker = await fieldWorkerDb.getWorkerBySurveyAppUserId(surveyAppUserId);
+        if (!worker) throw new Error("Failed to provision supervisor worker record");
+      }
+
+      // Step 5: Return worker + Survey App token
+      return {
+        success: true,
+        surveyToken,
+        worker: {
+          id: worker.id,
+          name: worker.name,
+          email: worker.email,
+          role: (worker as any).role ?? "supervisor",
+          preferredWebhookType: (worker as any).preferredWebhookType ?? null,
+          surveyAppUserId,
+          companyId: surveyUser.companyId || null,
+          companyName: surveyUser.companyName || null,
+          defaultLotCode: surveyUser.defaultLotCode || null,
+          monthlyBilling: surveyUser.monthlyBilling ?? false,
+        },
+      };
+    }),
+
   // ===== SUPERVISOR PICKUP PROCEDURES =====
 
   // Set the supervisor's preferred webhook type (payt or monthly)

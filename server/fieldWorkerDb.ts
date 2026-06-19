@@ -23,6 +23,19 @@ export async function getWorkerByEmail(email: string) {
   return result[0] || null;
 }
 
+/**
+ * Look up a worker by their Mottainai Survey App user ID.
+ * Used during supervisor login to find or create the shadow worker row.
+ */
+export async function getWorkerBySurveyAppUserId(surveyAppUserId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(workers)
+    .where(eq((workers as any).surveyAppUserId, surveyAppUserId))
+    .limit(1);
+  return result[0] || null;
+}
+
 export async function createWorker(data: {
   name: string;
   email?: string;
@@ -34,6 +47,7 @@ export async function createWorker(data: {
   pin?: string;
   role?: "field_manager" | "supervisor";
   preferredWebhookType?: "payt" | "monthly" | null;
+  surveyAppUserId?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -49,6 +63,7 @@ export async function createWorker(data: {
     pin: data.pin,
     ...(data.role ? { role: data.role } : {}),
     ...(data.preferredWebhookType !== undefined ? { preferredWebhookType: data.preferredWebhookType } : {}),
+    ...(data.surveyAppUserId ? { surveyAppUserId: data.surveyAppUserId } : {}),
   } as any);
   
   return result;
@@ -65,13 +80,14 @@ export async function updateWorker(id: number, data: {
   pin?: string;
   role?: "field_manager" | "supervisor";
   preferredWebhookType?: "payt" | "monthly" | null;
+  surveyAppUserId?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
   const result = await db
     .update(workers)
-    .set(data)
+    .set(data as any)
     .where(eq(workers.id, id));
   
   return result;

@@ -17,6 +17,13 @@ export default function WorkerMobile() {
   const [pin, setPin] = useState("");
   const [rememberMe, setRememberMe] = useState(true); // Default to true for convenience
   const [routeFilter, setRouteFilter] = useState<'today' | 'all' | 'upcoming'>('today');
+
+  // Supervisor Survey App login state
+  const [loginMode, setLoginMode] = useState<'select' | 'pin' | 'supervisor'>('select');
+  const [supervisorEmail, setSupervisorEmail] = useState("");
+  const [supervisorPassword, setSupervisorPassword] = useState("");
+  const [supervisorLoginError, setSupervisorLoginError] = useState("");
+  const [supervisorLoginLoading, setSupervisorLoginLoading] = useState(false);
   
   // Offline support
   const { isOnline, pendingCount, isSyncing, syncNow } = useOfflineSync();
@@ -75,9 +82,52 @@ export default function WorkerMobile() {
     }
   }, []);
 
+  const supervisorLoginMutation = trpc.workerAuth.supervisorLogin.useMutation();
+
   const handleWorkerSelect = (workerId: number) => {
     setSelectedWorkerId(workerId);
     setPin("");
+    setLoginMode('pin');
+  };
+
+  const handleSupervisorLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSupervisorLoginError("");
+    setSupervisorLoginLoading(true);
+    try {
+      const encodedPassword = btoa(supervisorPassword);
+      const result = await supervisorLoginMutation.mutateAsync({
+        email: supervisorEmail,
+        password: encodedPassword,
+      });
+      if (result.success && result.worker) {
+        const w = result.worker;
+        setSelectedWorkerId(w.id);
+        setIsAuthenticated(true);
+        localStorage.setItem('workerRole', w.role ?? 'supervisor');
+        localStorage.setItem('workerPreferredWebhookType', w.preferredWebhookType ?? '');
+        localStorage.setItem('workerName', w.name ?? '');
+        localStorage.setItem('workerId', w.id.toString());
+        localStorage.setItem('workerSurveyToken', result.surveyToken ?? '');
+        localStorage.setItem('workerSurveyAppUserId', w.surveyAppUserId ?? '');
+        localStorage.setItem('workerCompanyId', w.companyId ?? '');
+        localStorage.setItem('workerCompanyName', w.companyName ?? '');
+        localStorage.setItem('workerDefaultLotCode', w.defaultLotCode ?? '');
+        localStorage.setItem('workerMonthlyBilling', String(w.monthlyBilling ?? false));
+        if (rememberMe) {
+          const expiryDate = new Date();
+          expiryDate.setDate(expiryDate.getDate() + 30);
+          localStorage.setItem('selectedWorkerId', w.id.toString());
+          localStorage.setItem('workerAuthenticated', 'true');
+          localStorage.setItem('workerAuthExpiry', expiryDate.toISOString());
+        }
+        setLocation('/worker-mobile/routes');
+      }
+    } catch (err: any) {
+      setSupervisorLoginError(err?.message || 'Login failed. Check your credentials.');
+    } finally {
+      setSupervisorLoginLoading(false);
+    }
   };
 
   const handlePinSubmit = (e: React.FormEvent) => {
@@ -120,6 +170,10 @@ export default function WorkerMobile() {
     setSelectedWorkerId(null);
     setIsAuthenticated(false);
     setPin("");
+    setLoginMode('select');
+    setSupervisorEmail("");
+    setSupervisorPassword("");
+    setSupervisorLoginError("");
     localStorage.removeItem('selectedWorkerId');
     localStorage.removeItem('workerAuthenticated');
     localStorage.removeItem('workerAuthExpiry');
@@ -127,6 +181,12 @@ export default function WorkerMobile() {
     localStorage.removeItem('workerPreferredWebhookType');
     localStorage.removeItem('workerName');
     localStorage.removeItem('workerId');
+    localStorage.removeItem('workerSurveyToken');
+    localStorage.removeItem('workerSurveyAppUserId');
+    localStorage.removeItem('workerCompanyId');
+    localStorage.removeItem('workerCompanyName');
+    localStorage.removeItem('workerDefaultLotCode');
+    localStorage.removeItem('workerMonthlyBilling');
     setLocation('/worker-mobile');
   };
 
@@ -215,14 +275,109 @@ export default function WorkerMobile() {
           )}
         </div>
 
+        {/* Supervisor Login Option */}
+        <div className="text-center mt-6">
+          <p className="text-slate-500 text-sm mb-2">Are you a supervisor?</p>
+          <Button
+            variant="outline"
+            className="border-purple-500/40 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+            onClick={() => setLoginMode('supervisor')}
+          >
+            <Lock className="w-4 h-4 mr-2" />
+            Supervisor Login
+          </Button>
+        </div>
+
         {/* Admin Link */}
-        <div className="text-center mt-8">
+        <div className="text-center mt-4">
           <Link href="/dashboard">
             <Button variant="ghost" className="text-slate-400 hover:text-white">
               Go to Admin Dashboard
             </Button>
           </Link>
         </div>
+      </div>
+    );
+  }
+
+  // Supervisor Survey App Login Screen
+  if (loginMode === 'supervisor' && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-slate-800 border-slate-700">
+          <CardContent className="p-8">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Lock className="w-8 h-8 text-purple-400" />
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Supervisor Login</h2>
+              <p className="text-slate-400 text-sm">Sign in with your Mottainai Survey App account</p>
+            </div>
+
+            <form onSubmit={handleSupervisorLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+                <Input
+                  type="email"
+                  placeholder="supervisor@example.com"
+                  value={supervisorEmail}
+                  onChange={(e) => setSupervisorEmail(e.target.value)}
+                  className="bg-slate-900 border-slate-700 text-white placeholder-slate-500"
+                  autoFocus
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1">Password</label>
+                <Input
+                  type="password"
+                  placeholder="Enter your password"
+                  value={supervisorPassword}
+                  onChange={(e) => setSupervisorPassword(e.target.value)}
+                  className="bg-slate-900 border-slate-700 text-white placeholder-slate-500"
+                  required
+                />
+              </div>
+
+              {supervisorLoginError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                  <p className="text-red-400 text-sm">{supervisorLoginError}</p>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="rememberMeSupervisor"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-purple-500"
+                />
+                <label htmlFor="rememberMeSupervisor" className="text-sm text-slate-300 cursor-pointer">
+                  Remember me for 30 days
+                </label>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1 bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                  onClick={() => { setLoginMode('select'); setSupervisorLoginError(''); }}
+                >
+                  Back
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 bg-purple-600 hover:bg-purple-700 text-white"
+                  disabled={supervisorLoginLoading || !supervisorEmail || !supervisorPassword}
+                >
+                  {supervisorLoginLoading ? 'Signing in...' : 'Sign In'}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     );
   }

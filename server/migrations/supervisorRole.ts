@@ -62,6 +62,23 @@ export async function runSupervisorRoleMigration() {
       }
     }
 
+    // 4. Add surveyAppUserId column to workers
+    // Links a supervisor to their Mottainai Survey App user account.
+    // Auto-populated on first supervisor login via Survey App credentials.
+    try {
+      await db.execute(sql`
+        ALTER TABLE workers
+        ADD COLUMN \`surveyAppUserId\` VARCHAR(100) NULL DEFAULT NULL
+      `);
+      console.log("[migration:supervisorRole] ✅ Added workers.surveyAppUserId");
+    } catch (e: any) {
+      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+        console.log("[migration:supervisorRole] ⏭️  workers.surveyAppUserId already exists");
+      } else {
+        throw e;
+      }
+    }
+
     console.log("[migration:supervisorRole] 🎉 Migration complete");
   } catch (err) {
     console.error("[migration:supervisorRole] ❌ Migration failed:", err);

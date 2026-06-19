@@ -92,10 +92,30 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
       return;
     }
 
+    // Read supervisor session data written by WorkerMobile supervisorLogin handler
+    const surveyToken = localStorage.getItem("workerSurveyToken") || "";
+    const companyId = localStorage.getItem("workerCompanyId") || "";
+    const companyName = localStorage.getItem("workerCompanyName") || "";
+    const defaultLotCode = localStorage.getItem("workerDefaultLotCode") || "";
+    const surveyAppUserId = localStorage.getItem("workerSurveyAppUserId") || "";
+    const isMonthlyBilling = localStorage.getItem("workerMonthlyBilling") === "true";
+
+    // Derive lot code from customer MAF (e.g. "DIC-410" -> "410")
+    const lotMatch = (customer.customermaf || "").match(/-?(\d+)$/);
+    const lotCode = lotMatch ? lotMatch[1] : defaultLotCode;
+
     setSubmitting(true);
     try {
       const formData = new FormData();
+      // ── Core fields ──────────────────────────────────────────────────────────
       formData.append("formId", webhookUrl);
+      formData.append("supervisorId", workerName);
+      formData.append("binType", binType);
+      formData.append("binQuantity", binQty);
+      formData.append("incidentReport", incidentReport);
+      formData.append("beforePhoto", beforePhoto, beforePhoto.name);
+      formData.append("afterPhoto", afterPhoto, afterPhoto.name);
+      // ── Customer identity fields ─────────────────────────────────────────────
       formData.append("customerName", customer.name || "");
       formData.append("customerPhone", customer.phone || "");
       formData.append("customerEmail", customer.email || "");
@@ -103,15 +123,28 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
       formData.append("customerId", String(customer.id));
       formData.append("unitCode", customer.unitCode || "");
       formData.append("arcgisBuildingId", customer.arcgisBuildingId || "");
+      formData.append("buildingId", customer.arcgisBuildingId || "");
       formData.append("mafCode", customer.customermaf || "");
-      formData.append("supervisorId", workerName);
-      formData.append("binType", binType);
-      formData.append("binQuantity", binQty);
-      formData.append("incidentReport", incidentReport);
+      formData.append("userIdentificationNumber", customer.customermaf || "");
       formData.append("latitude", String(customer.latitude || ""));
       formData.append("longitude", String(customer.longitude || ""));
-      formData.append("beforePhoto", beforePhoto, beforePhoto.name);
-      formData.append("afterPhoto", afterPhoto, afterPhoto.name);
+      // ── Lot / company attribution ────────────────────────────────────────────
+      formData.append("lotCode", lotCode);
+      if (companyId) formData.append("companyId", companyId);
+      if (companyName) formData.append("companyName", companyName);
+      // ── Billing type ─────────────────────────────────────────────────────────
+      formData.append("isMonthly", String(webhookType === "monthly"));
+      formData.append("customerType", webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential");
+      // ── Pickup date ──────────────────────────────────────────────────────────
+      formData.append("pickUpDate", new Date().toISOString());
+      formData.append("pickupDate", new Date().toISOString());
+      // ── Source attribution ───────────────────────────────────────────────────
+      // submittedFrom is mapped to source='field_worker' on the backend
+      formData.append("submittedFrom", "FieldWorker");
+      formData.append("source", "field_worker");
+      // ── Survey App auth token (for backend identity verification) ────────────
+      if (surveyToken) formData.append("surveyToken", surveyToken);
+      if (surveyAppUserId) formData.append("surveyAppUserId", surveyAppUserId);
 
       const res = await fetch("https://upwork.kowope.xyz/forms/submit", {
         method: "POST",

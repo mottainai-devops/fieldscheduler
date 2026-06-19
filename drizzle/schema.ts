@@ -54,6 +54,10 @@ export const workers = mysqlTable("workers", {
   skills: text("skills"),
   role: mysqlEnum("role", ["field_manager", "supervisor"]).default("field_manager").notNull(),
   preferredWebhookType: mysqlEnum("preferredWebhookType", ["payt", "monthly"]),
+  // Survey App integration: links this worker to a Mottainai Survey App user account.
+  // Populated automatically on first supervisor login via Survey App credentials.
+  // Null for field managers (PIN-only login).
+  surveyAppUserId: varchar("surveyAppUserId", { length: 100 }),
   status: mysqlEnum("status", ["active", "inactive", "on_leave"]).default("active").notNull(),
   shiftStart: varchar("shiftStart", { length: 10 }).default("08:00"),
   shiftEnd: varchar("shiftEnd", { length: 10 }).default("17:00"),
