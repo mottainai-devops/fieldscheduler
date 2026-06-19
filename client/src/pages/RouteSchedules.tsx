@@ -38,6 +38,9 @@ import {
   RefreshCw,
   Ban,
   ArrowRightLeft,
+  Archive,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -558,6 +561,34 @@ export default function RouteSchedules() {
     onError: (e) => toast.error(e.message),
   });
 
+  // H6: Archive-and-recreate
+  const [archiveDialog, setArchiveDialog] = useState<{ scheduleId: number; currentRrule: string; title: string } | null>(null);
+  const [archiveNewRrule, setArchiveNewRrule] = useState("");
+  const [archiveRrulePreset, setArchiveRrulePreset] = useState("");
+  const [archiveReason, setArchiveReason] = useState("");
+  const archiveAndRecreateMutation = trpc.calendarOverrides.archiveAndRecreate.useMutation({
+    onSuccess: () => {
+      utils.calendar.listSchedules.invalidate();
+      utils.calendar.getCalendarEvents.invalidate();
+      setArchiveDialog(null);
+      setArchiveNewRrule("");
+      setArchiveRrulePreset("");
+      setArchiveReason("");
+      toast.success("Schedule updated going forward. Old schedule archived.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // I1: Handoff requests
+  const { data: handoffRequests = [] } = trpc.calendarOverrides.listHandoffRequests.useQuery({ status: "pending" });
+  const resolveHandoffMutation = trpc.calendarOverrides.resolveHandoffRequest.useMutation({
+    onSuccess: () => {
+      utils.calendarOverrides.listHandoffRequests.invalidate();
+      toast.success("Handoff request resolved.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const prevMonth = () => {
     if (calMonth === 0) { setCalYear(y => y - 1); setCalMonth(11); }
     else setCalMonth(m => m - 1);
@@ -682,14 +713,31 @@ export default function RouteSchedules() {
                               variant="ghost"
                               size="icon"
                               className="text-slate-400 hover:text-white h-8 w-8"
+                              title="Edit schedule"
                               onClick={() => { setEditSchedule(s); setShowForm(true); }}
                             >
                               <Pencil className="w-4 h-4" />
+                            </Button>
+                            {/* H6: Edit going forward */}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-orange-400 hover:text-orange-300 h-8 w-8"
+                              title="Edit going forward (archive current, create new)"
+                              onClick={() => {
+                                setArchiveDialog({ scheduleId: s.id, currentRrule: s.rrule, title: s.title });
+                                setArchiveNewRrule("");
+                                setArchiveRrulePreset("");
+                                setArchiveReason("");
+                              }}
+                            >
+                              <Archive className="w-4 h-4" />
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
                               className="text-red-400 hover:text-red-300 h-8 w-8"
+                              title="Delete schedule"
                               onClick={() => {
                                 if (confirm(`Delete schedule "${s.title}"? This cannot be undone.`)) {
                                   deleteMutation.mutate({ id: s.id });
@@ -783,6 +831,134 @@ export default function RouteSchedules() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      )}
+
+      {/* H6: Archive-and-recreate dialog */}
+      {archiveDialog && (
+        <Dialog open={!!archiveDialog} onOpenChange={(o) => !o && setArchiveDialog(null)}>
+          <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Archive className="w-5 h-5 text-orange-400" />
+                Edit Going Forward
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3 text-sm text-orange-300">
+                This will <strong>archive</strong> the current schedule (ending yesterday) and create a new one with the updated recurrence starting today. Existing customer assignments will be copied.
+              </div>
+              <p className="text-slate-400 text-sm">
+                Schedule: <span className="text-white font-medium">{archiveDialog.title}</span>
+              </p>
+              <p className="text-slate-400 text-sm">
+                Current recurrence: <span className="font-mono text-xs text-slate-300">{archiveDialog.currentRrule}</span>
+              </p>
+              <div>
+                <Label className="text-slate-300">New recurrence *</Label>
+                <Select
+                  value={archiveRrulePreset}
+                  onValueChange={(v) => {
+                    setArchiveRrulePreset(v);
+                    if (v !== "CUSTOM") setArchiveNewRrule(v);
+                    else setArchiveNewRrule("");
+                  }}
+                >
+                  <SelectTrigger className="bg-slate-900 border-slate-700 text-white mt-1">
+                    <SelectValue placeholder="Select recurrence pattern" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-700">
+                    {RRULE_PRESETS.map((p) => (
+                      <SelectItem key={p.value} value={p.value} className="text-white">{p.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {archiveRrulePreset === "CUSTOM" && (
+                  <Input
+                    value={archiveNewRrule}
+                    onChange={(e) => setArchiveNewRrule(e.target.value)}
+                    placeholder="e.g. FREQ=WEEKLY;BYDAY=TU,FR"
+                    className="bg-slate-900 border-slate-700 text-white mt-2 font-mono text-sm"
+                  />
+                )}
+              </div>
+              <div>
+                <Label className="text-slate-300">Reason (optional)</Label>
+                <Textarea
+                  value={archiveReason}
+                  onChange={(e) => setArchiveReason(e.target.value)}
+                  placeholder="Why is the recurrence changing?"
+                  className="bg-slate-900 border-slate-700 text-white mt-1 resize-none"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setArchiveDialog(null)} className="text-slate-400">Cancel</Button>
+              <Button
+                disabled={!archiveNewRrule || archiveAndRecreateMutation.isPending}
+                className="bg-orange-600 hover:bg-orange-700"
+                onClick={() => {
+                  if (!archiveNewRrule) { toast.error("Please select a new recurrence."); return; }
+                  archiveAndRecreateMutation.mutate({
+                    scheduleId: archiveDialog.scheduleId,
+                    newRrule: archiveNewRrule,
+                    reason: archiveReason || undefined,
+                  });
+                }}
+              >
+                {archiveAndRecreateMutation.isPending ? "Applying..." : "Apply Going Forward"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* I1: Pending handoff requests panel */}
+      {handoffRequests.length > 0 && (
+        <Card className="bg-slate-800 border-orange-500/30">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-orange-400 flex items-center gap-2 text-base">
+              <ArrowRightLeft className="w-4 h-4" />
+              Pending Handoff Requests ({handoffRequests.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(handoffRequests as any[]).map((req: any) => (
+              <div key={req.id} className="flex items-start justify-between gap-4 p-3 bg-slate-700/50 rounded-lg">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-white">
+                    {req.supervisorName ?? `Supervisor #${req.supervisorId}`}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">{req.reason}</p>
+                  {req.scheduleId && (
+                    <p className="text-xs text-slate-500 mt-0.5">Schedule #{req.scheduleId}</p>
+                  )}
+                  <p className="text-xs text-slate-500">{new Date(req.createdAt).toLocaleString()}</p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-green-400 hover:text-green-300 hover:bg-green-500/10 h-8 px-2"
+                    onClick={() => resolveHandoffMutation.mutate({ handoffRequestId: req.id, resolution: "accepted" })}
+                    disabled={resolveHandoffMutation.isPending}
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-1" /> Accept
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-8 px-2"
+                    onClick={() => resolveHandoffMutation.mutate({ handoffRequestId: req.id, resolution: "declined" })}
+                    disabled={resolveHandoffMutation.isPending}
+                  >
+                    <XCircle className="w-4 h-4 mr-1" /> Decline
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
     </div>
   );

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { 
   ArrowLeft, MapPin, Navigation, CheckCircle,
-  AlertTriangle, Package, Wifi, WifiOff 
+  AlertTriangle, Package, Wifi, WifiOff, SkipForward, ArrowRightLeft
 } from "lucide-react";
 import { useRoute, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -17,6 +17,17 @@ export default function WorkerMobileRouteDetail() {
   const routeId = params?.id ? parseInt(params.id) : null;
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pickupCustomer, setPickupCustomer] = useState<any | null>(null);
+
+  // G1/G2/G3: Skip dialog state
+  const [skipTarget, setSkipTarget] = useState<{ customerId: number; customerName: string } | null>(null);
+  const [skipReason, setSkipReason] = useState<string>('');
+  const [skipNote, setSkipNote] = useState<string>('');
+  const [skipLoading, setSkipLoading] = useState(false);
+  // I1: Handoff request state
+  const [showHandoffDialog, setShowHandoffDialog] = useState(false);
+  const [handoffReason, setHandoffReason] = useState('');
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const requestHandoff = trpc.calendarOverrides.requestHandoff.useMutation();
 
   // Worker session from localStorage
   const workerId = parseInt(localStorage.getItem("workerId") || localStorage.getItem("selectedWorkerId") || "0");
@@ -88,6 +99,43 @@ export default function WorkerMobileRouteDetail() {
     refetchCustomers();
   };
 
+  const skipCustomerMutation = trpc.workerAuth.skipCustomer.useMutation();
+
+  const handleSkipSubmit = async () => {
+    if (!skipTarget || !skipReason) return;
+    if (skipReason === 'other' && !skipNote.trim()) {
+      toast.error('Please provide a note for "Other" skip reason');
+      return;
+    }
+    setSkipLoading(true);
+    try {
+      const scheduleId = parseInt(localStorage.getItem('currentScheduleId') || '0') || undefined;
+      const result = await skipCustomerMutation.mutateAsync({
+        scheduleId: scheduleId && scheduleId > 0 ? scheduleId : undefined,
+        routeId: routeId!,
+        customerId: skipTarget.customerId,
+        skipReason: skipReason as any,
+        skipNote: skipNote.trim() || undefined,
+        workerId,
+      });
+      if (result.action === 'removed') {
+        toast.success('Customer permanently removed from schedule. Admin notified.');
+      } else if (result.action === 'auto_paused') {
+        toast.warning(`Customer paused after 3 consecutive skips. Admin notified urgently.`);
+      } else {
+        toast.success('Customer skipped. Will reappear on next occurrence.');
+      }
+      setSkipTarget(null);
+      setSkipReason('');
+      setSkipNote('');
+      refetchCustomers();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to skip customer');
+    } finally {
+      setSkipLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-900">
       {/* Network Status */}
@@ -122,15 +170,29 @@ export default function WorkerMobileRouteDetail() {
               )}
             </p>
           </div>
-          <span className={`px-2 py-1 text-xs rounded-full ${
-            route.status === "completed"
-              ? "bg-green-500/20 text-green-400"
-              : route.status === "in_progress"
-              ? "bg-yellow-500/20 text-yellow-400"
-              : "bg-blue-500/20 text-blue-400"
-          }`}>
-            {route.status}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-1 text-xs rounded-full ${
+              route.status === "completed"
+                ? "bg-green-500/20 text-green-400"
+                : route.status === "in_progress"
+                ? "bg-yellow-500/20 text-yellow-400"
+                : "bg-blue-500/20 text-blue-400"
+            }`}>
+              {route.status}
+            </span>
+            {/* I1: Request Handoff — supervisor only */}
+            {isSupervisor && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-orange-500/40 text-orange-400 hover:bg-orange-500/10 text-xs px-2 py-1 h-auto"
+                onClick={() => setShowHandoffDialog(true)}
+              >
+                <ArrowRightLeft className="w-3 h-3 mr-1" />
+                Handoff
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Progress Bar */}
@@ -244,6 +306,16 @@ export default function WorkerMobileRouteDetail() {
                             Pickup
                           </Button>
                         </div>
+                        {/* G1/G2/G3: Skip button */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSkipTarget({ customerId: customer.customerId, customerName: customer.customer?.name || 'Customer' })}
+                          className="w-full text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/10"
+                        >
+                          <SkipForward className="w-4 h-4 mr-1" />
+                          Skip
+                        </Button>
                       </div>
                     )
                   ) : (
@@ -316,6 +388,147 @@ export default function WorkerMobileRouteDetail() {
           routeId={routeId}
           customer={pickupCustomer}
         />
+      )}
+
+      {/* G1/G2/G3: Skip Reason Dialog */}
+      {skipTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
+          <div className="bg-slate-800 rounded-t-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Skip Customer</h3>
+              <button
+                onClick={() => { setSkipTarget(null); setSkipReason(''); setSkipNote(''); }}
+                className="text-slate-400 hover:text-white text-xl"
+              >
+                &times;
+              </button>
+            </div>
+            <p className="text-sm text-slate-400">{skipTarget.customerName}</p>
+
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400 uppercase tracking-wide">Reason</label>
+              {[
+                { value: 'no_access', label: 'Gate locked / no access' },
+                { value: 'customer_request', label: 'Customer not present' },
+                { value: 'bin_not_out', label: 'Bins not out' },
+                { value: 'safety_concern', label: 'Weather / safety' },
+                { value: 'permanent_moved', label: 'Permanent — customer moved out' },
+                { value: 'permanent_closed', label: 'Permanent — business closed' },
+                { value: 'other', label: 'Other (note required)' },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setSkipReason(opt.value)}
+                  className={`w-full text-left px-4 py-2.5 rounded-lg text-sm transition-colors ${
+                    skipReason === opt.value
+                      ? opt.value.startsWith('permanent')
+                        ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                        : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40'
+                      : 'bg-slate-700 text-slate-300 border border-transparent hover:bg-slate-600'
+                  }`}
+                >
+                  {opt.label}
+                  {opt.value.startsWith('permanent') && (
+                    <span className="ml-2 text-xs text-red-400">(permanent)</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {(skipReason === 'other' || skipReason.startsWith('permanent')) && (
+              <div>
+                <label className="text-xs text-slate-400 uppercase tracking-wide">Note {skipReason === 'other' ? '(required)' : '(optional)'}</label>
+                <textarea
+                  value={skipNote}
+                  onChange={(e) => setSkipNote(e.target.value)}
+                  placeholder="Add a note..."
+                  rows={2}
+                  className="w-full mt-1 bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:outline-none focus:border-yellow-500"
+                />
+              </div>
+            )}
+
+            <Button
+              onClick={handleSkipSubmit}
+              disabled={!skipReason || skipLoading || (skipReason === 'other' && !skipNote.trim())}
+              className={`w-full ${
+                skipReason.startsWith('permanent')
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-yellow-600 hover:bg-yellow-700'
+              } text-white border-0`}
+            >
+              {skipLoading ? 'Skipping...' : skipReason.startsWith('permanent') ? 'Permanently Remove' : 'Skip Customer'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* I1: Request Handoff dialog */}
+      {showHandoffDialog && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
+          <div className="bg-slate-800 rounded-t-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <ArrowRightLeft className="w-5 h-5 text-orange-400" />
+                Request Handoff
+              </h3>
+              <button
+                onClick={() => { setShowHandoffDialog(false); setHandoffReason(''); }}
+                className="text-slate-400 hover:text-white text-xl"
+              >&times;</button>
+            </div>
+            <p className="text-sm text-slate-400">
+              Route #{route?.id} — this will notify the admin to reassign this route.
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400 uppercase tracking-wide">Reason (required)</label>
+              {[
+                'Unable to complete — vehicle issue',
+                'Unable to complete — personal emergency',
+                'Route too large — need assistance',
+                'Safety concern on route',
+                'Other',
+              ].map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setHandoffReason(r)}
+                  className={`w-full text-left px-4 py-2.5 rounded-lg text-sm transition-colors ${
+                    handoffReason === r
+                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                      : 'bg-slate-700 text-slate-300 border border-transparent hover:bg-slate-600'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <Button
+              disabled={!handoffReason || handoffLoading}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white border-0"
+              onClick={async () => {
+                if (!handoffReason || !workerId) return;
+                setHandoffLoading(true);
+                try {
+                  await requestHandoff.mutateAsync({
+                    scheduleId: undefined,
+                    instanceId: undefined,
+                    supervisorId: workerId,
+                    reason: handoffReason,
+                  });
+                  toast.success('Handoff request submitted. Admin has been notified.');
+                  setShowHandoffDialog(false);
+                  setHandoffReason('');
+                } catch (err: any) {
+                  toast.error(err?.message || 'Failed to submit handoff request.');
+                } finally {
+                  setHandoffLoading(false);
+                }
+              }}
+            >
+              {handoffLoading ? 'Submitting...' : 'Submit Handoff Request'}
+            </Button>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -532,7 +532,7 @@ export const routeSchedules = mysqlTable("routeSchedules", {
   rdates: text("rdates").default("[]"),
   // Default lot codes for this schedule (JSON array)
   lotCodes: text("lotCodes").default("[]"),
-  status: mysqlEnum("status", ["active", "paused", "ended"]).default("active").notNull(),
+  status: mysqlEnum("status", ["active", "paused", "ended", "archived"]).default("active").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -629,3 +629,18 @@ export const calendarAuditLog = mysqlTable("calendarAuditLog", {
 });
 export type CalendarAuditLog = typeof calendarAuditLog.$inferSelect;
 export type InsertCalendarAuditLog = typeof calendarAuditLog.$inferInsert;
+
+// ─── Handoff Requests ─────────────────────────────────────────────────────────
+// I1: Supervisor requests to hand off a scheduled route to another worker.
+export const handoffRequests = mysqlTable("handoffRequests", {
+  id: int("id").autoincrement().primaryKey(),
+  scheduleId: int("scheduleId").references(() => routeSchedules.id),
+  instanceId: int("instanceId").references(() => routeInstances.id),
+  supervisorId: int("supervisorId").references(() => workers.id).notNull(),
+  reason: text("reason").notNull(),
+  status: mysqlEnum("status", ["pending", "accepted", "declined"]).default("pending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type HandoffRequest = typeof handoffRequests.$inferSelect;
+export type InsertHandoffRequest = typeof handoffRequests.$inferInsert;

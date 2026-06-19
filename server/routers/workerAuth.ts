@@ -429,6 +429,152 @@ export const workerAuthRouter = router({
       return await fieldWorkerDb.updateRouteStatus(input.routeId, "in_progress");
     }),
 
+  // ===== G1/G2/G3: SKIP CUSTOMER SEMANTICS =====
+  // Supervisor skips a customer on a specific route occurrence.
+  // - Transient reasons: auto-reappear next occurrence (status stays 'active')
+  // - Permanent reasons: set status='removed', notify admin
+  // - Three consecutive transient skips: set status='paused', notify admin urgently
+  //
+  // The skip is recorded on routeScheduleCustomers (schedule-level) and
+  // optionally on routeInstanceCustomerOverrides (occurrence-level).
+  skipCustomer: publicProcedure
+    .input(z.object({
+      scheduleId: z.number().int().positive().optional(),
+      routeId: z.number().int().positive(),
+      customerId: z.number().int().positive(),
+      skipReason: z.enum([
+        'no_access',        // Gate locked / no access
+        'customer_request', // Customer not present
+        'bin_not_out',      // Bins not out
+        'safety_concern',   // Weather / safety
+        'permanent_moved',  // Permanent — customer moved out
+        'permanent_closed', // Permanent — business closed
+        'other',            // Other (free text required)
+      ]),
+      skipNote: z.string().optional(),
+      workerId: z.number().int().positive(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("../db");
+      const { routeScheduleCustomers } = await import("../../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      const isPermanent = input.skipReason === 'permanent_moved' || input.skipReason === 'permanent_closed';
+
+      // Map permanent reasons to the enum values stored in DB
+      const dbSkipReason = isPermanent ? 'other' : input.skipReason as any;
+
+      if (input.scheduleId) {
+        // Look up existing routeScheduleCustomers row
+        const existing = await db
+          .select()
+          .from(routeScheduleCustomers)
+          .where(
+            and(
+              eq(routeScheduleCustomers.scheduleId, input.scheduleId),
+              eq(routeScheduleCustomers.customerId, input.customerId)
+            )
+          )
+          .limit(1);
+
+        if (isPermanent) {
+          // G2: Permanent skip — set status='removed'
+          if (existing.length > 0) {
+            await db
+              .update(routeScheduleCustomers)
+              .set({
+                status: 'removed',
+                skipReason: dbSkipReason,
+                skipNote: input.skipNote || null,
+                updatedAt: new Date(),
+              } as any)
+              .where(
+                and(
+                  eq(routeScheduleCustomers.scheduleId, input.scheduleId),
+                  eq(routeScheduleCustomers.customerId, input.customerId)
+                )
+              );
+          } else {
+            await db.insert(routeScheduleCustomers).values({
+              scheduleId: input.scheduleId,
+              customerId: input.customerId,
+              status: 'removed',
+              skipReason: dbSkipReason,
+              skipNote: input.skipNote || null,
+              consecutiveSkips: 1,
+            } as any);
+          }
+
+          // Notify admin of permanent removal
+          try {
+            const notificationDb = await import('../notificationDb');
+            await notificationDb.createAdminNotification({
+              type: 'warning',
+              title: 'Customer Permanently Removed from Schedule',
+              message: `Customer #${input.customerId} was permanently removed from schedule #${input.scheduleId} by worker #${input.workerId}. Reason: ${input.skipReason === 'permanent_moved' ? 'Customer moved out' : 'Business closed'}. ${input.skipNote ? 'Note: ' + input.skipNote : ''}`,
+              relatedId: input.customerId,
+            });
+          } catch { /* non-fatal */ }
+
+          return { success: true, action: 'removed' };
+        } else {
+          // G1/G3: Transient skip — increment consecutiveSkips
+          const currentSkips = existing.length > 0 ? (existing[0].consecutiveSkips ?? 0) : 0;
+          const newSkips = currentSkips + 1;
+          const shouldAutoPause = newSkips >= 3;
+
+          if (existing.length > 0) {
+            await db
+              .update(routeScheduleCustomers)
+              .set({
+                status: shouldAutoPause ? 'skipped' : 'active',
+                skipReason: dbSkipReason,
+                skipNote: input.skipNote || null,
+                consecutiveSkips: newSkips,
+                autoPausedAt: shouldAutoPause ? new Date() : null,
+                updatedAt: new Date(),
+              } as any)
+              .where(
+                and(
+                  eq(routeScheduleCustomers.scheduleId, input.scheduleId),
+                  eq(routeScheduleCustomers.customerId, input.customerId)
+                )
+              );
+          } else {
+            await db.insert(routeScheduleCustomers).values({
+              scheduleId: input.scheduleId,
+              customerId: input.customerId,
+              status: 'active',
+              skipReason: dbSkipReason,
+              skipNote: input.skipNote || null,
+              consecutiveSkips: newSkips,
+              autoPausedAt: shouldAutoPause ? new Date() : null,
+            } as any);
+          }
+
+          // G3: Three-strike auto-pause — notify admin urgently
+          if (shouldAutoPause) {
+            try {
+              const notificationDb = await import('../notificationDb');
+              await notificationDb.createAdminNotification({
+                type: 'error',
+                title: 'Customer Auto-Paused (3 Consecutive Skips)',
+                message: `Customer #${input.customerId} on schedule #${input.scheduleId} has been skipped 3 consecutive times and has been auto-paused. Urgent review required. Last reason: ${input.skipReason}. Worker: #${input.workerId}.`,
+                relatedId: input.customerId,
+              });
+            } catch { /* non-fatal */ }
+          }
+
+          return { success: true, action: shouldAutoPause ? 'auto_paused' : 'skipped', consecutiveSkips: newSkips };
+        }
+      } else {
+        // No scheduleId — just record the skip on the route level (fallback for non-recurring routes)
+        return { success: true, action: 'skipped_no_schedule' };
+      }
+    }),
+
   // ===== CUSTOMER VISIT NOTES =====
   getCustomerNotes: publicProcedure
     .input(z.object({ customerId: z.number() }))

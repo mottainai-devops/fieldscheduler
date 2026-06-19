@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import {
   CheckCircle,
   WifiOff,
   Wifi,
+  Pencil,
 } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -21,12 +22,29 @@ import {
   type QueuedPickup,
 } from "@/lib/pickupQueue";
 import { trpc } from "@/lib/trpc";
+import PickupModal from "@/components/PickupModal";
+
+// E6: Discard reasons
+const DISCARD_REASONS = [
+  "Duplicate entry",
+  "Customer already served by another route",
+  "Customer cancelled",
+  "Data entry error",
+  "Other",
+];
 
 export default function PendingPickups() {
   const [pickups, setPickups] = useState<QueuedPickup[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // E6: Edit state — reopen PickupModal prefilled with queued payload
+  const [editPickup, setEditPickup] = useState<QueuedPickup | null>(null);
+
+  // E6: Discard state — require reason before deleting
+  const [discardTarget, setDiscardTarget] = useState<QueuedPickup | null>(null);
+  const [discardReason, setDiscardReason] = useState("");
 
   const markPicked = trpc.workerAuth.markCustomerPicked.useMutation();
 
@@ -75,14 +93,25 @@ export default function PendingPickups() {
     }
   };
 
-  const handleDismiss = async (id: number) => {
+  // E6: Discard with required reason
+  const handleDiscardConfirm = async () => {
+    if (!discardTarget || !discardReason.trim()) return;
     try {
-      await removeQueuedPickup(id);
-      setPickups((prev) => prev.filter((p) => p.id !== id));
-      toast.success("Pickup removed from queue.");
+      await removeQueuedPickup(discardTarget.id!);
+      setPickups((prev) => prev.filter((p) => p.id !== discardTarget.id));
+      toast.success(`Pickup discarded: ${discardReason}`);
+      setDiscardTarget(null);
+      setDiscardReason("");
     } catch {
-      toast.error("Failed to remove pickup.");
+      toast.error("Failed to discard pickup.");
     }
+  };
+
+  // E6: After editing a queued item, reset its retries and re-queue
+  const handleEditSuccess = async () => {
+    setEditPickup(null);
+    await loadPickups();
+    toast.success("Pickup updated and re-queued with 0 retries.");
   };
 
   const formatDate = (ts: number) =>
@@ -103,7 +132,7 @@ export default function PendingPickups() {
           </Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-lg font-bold text-white">Pending Pickups</h1>
+          <h1 className="text-lg font-bold text-white">Pending &amp; Failed</h1>
           <p className="text-xs text-slate-400">Queued offline submissions</p>
         </div>
         {/* Online indicator */}
@@ -195,16 +224,25 @@ export default function PendingPickups() {
                 </div>
               )}
 
-              {/* Actions */}
+              {/* E6: Actions — Retry, Edit, Discard */}
               <div className="flex gap-2 pt-1">
                 <Button
                   size="sm"
                   variant="outline"
                   className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
-                  onClick={() => handleDismiss(pickup.id!)}
+                  onClick={() => { setDiscardTarget(pickup); setDiscardReason(""); }}
                 >
                   <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                  Dismiss
+                  Discard
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 border-blue-500/40 text-blue-400 hover:bg-blue-500/10"
+                  onClick={() => setEditPickup(pickup)}
+                >
+                  <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                  Edit
                 </Button>
                 <Button
                   size="sm"
@@ -220,6 +258,85 @@ export default function PendingPickups() {
           </Card>
         ))}
       </div>
+
+      {/* E6: Discard reason dialog */}
+      {discardTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
+          <div className="bg-slate-800 rounded-t-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Discard Pickup</h3>
+              <button
+                onClick={() => { setDiscardTarget(null); setDiscardReason(""); }}
+                className="text-slate-400 hover:text-white text-xl"
+              >
+                &times;
+              </button>
+            </div>
+            <p className="text-sm text-slate-400">
+              {discardTarget.customerName} — {discardTarget.binType} × {discardTarget.binQuantity}
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400 uppercase tracking-wide">Reason (required)</label>
+              {DISCARD_REASONS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setDiscardReason(r)}
+                  className={`w-full text-left px-4 py-2.5 rounded-lg text-sm transition-colors ${
+                    discardReason === r
+                      ? "bg-red-500/20 text-red-300 border border-red-500/40"
+                      : "bg-slate-700 text-slate-300 border border-transparent hover:bg-slate-600"
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <Button
+              onClick={handleDiscardConfirm}
+              disabled={!discardReason}
+              className="w-full bg-red-600 hover:bg-red-700 text-white border-0"
+            >
+              Confirm Discard
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* E6: Edit — reopen PickupModal prefilled via draft store */}
+      {editPickup && (
+        <PickupModal
+          open={true}
+          onClose={() => setEditPickup(null)}
+          onSuccess={handleEditSuccess}
+          routeId={editPickup.routeId}
+          customer={{
+            id: editPickup.customerId,
+            name: editPickup.customerName,
+            phone: editPickup.customerPhone,
+            email: editPickup.customerEmail,
+            address: editPickup.customerAddress,
+            customermaf: editPickup.mafCode,
+            unitCode: editPickup.unitCode,
+            arcgisBuildingId: editPickup.arcgisBuildingId,
+            latitude: editPickup.latitude,
+            longitude: editPickup.longitude,
+          }}
+          prefill={{
+            binType: editPickup.binType,
+            binQty: editPickup.binQuantity,
+            incidentReport: editPickup.incidentReport,
+            webhookType: editPickup.webhookType,
+            beforePhotoBlob: editPickup.beforePhotoBlob,
+            beforePhotoName: editPickup.beforePhotoName,
+            afterPhotoBlob: editPickup.afterPhotoBlob,
+            afterPhotoName: editPickup.afterPhotoName,
+          }}
+          onDiscardQueued={async () => {
+            await removeQueuedPickup(editPickup.id!);
+            setEditPickup(null);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -9,8 +9,12 @@
  */
 
 const DB_NAME = "FieldWorkerDB";
-const DB_VERSION = 2; // bumped from v1 to add pickupQueue store
+const DB_VERSION = 3; // v3 adds pickupDrafts store for E7 draft persistence
 const PICKUP_QUEUE_STORE = "pickupQueue";
+const PICKUP_DRAFTS_STORE = "pickupDrafts";
+
+// E4: Maximum number of queued pickups before blocking new submissions
+export const MAX_QUEUE_SIZE = 20;
 
 export type PickupQueueStatus = "pending" | "failed" | "syncing";
 
@@ -66,7 +70,7 @@ function openDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
+      request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       // Add pickupQueue store if it doesn't exist (v1 -> v2 upgrade)
       if (!db.objectStoreNames.contains(PICKUP_QUEUE_STORE)) {
@@ -78,6 +82,11 @@ function openDB(): Promise<IDBDatabase> {
         store.createIndex("queuedAt", "queuedAt", { unique: false });
         store.createIndex("routeId", "routeId", { unique: false });
       }
+      // E7: Add pickupDrafts store (v3 upgrade)
+      if (!db.objectStoreNames.contains(PICKUP_DRAFTS_STORE)) {
+        // keyed by routeCustomerId ("routeId_customerId")
+        db.createObjectStore(PICKUP_DRAFTS_STORE, { keyPath: "draftKey" });
+      }
     };
   });
   return dbPromise;
@@ -87,7 +96,12 @@ function openDB(): Promise<IDBDatabase> {
 
 export async function enqueuePickup(
   pickup: Omit<QueuedPickup, "id" | "status" | "retries" | "lastError" | "queuedAt" | "lastAttemptAt">
-): Promise<number> {
+): Promise<{ id: number } | { blocked: true; count: number }> {
+  // E4: Queue cap — block at MAX_QUEUE_SIZE
+  const current = await getPickupQueueCount();
+  if (current >= MAX_QUEUE_SIZE) {
+    return { blocked: true, count: current };
+  }
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(PICKUP_QUEUE_STORE, "readwrite");
@@ -99,7 +113,60 @@ export async function enqueuePickup(
       queuedAt: Date.now(),
       lastAttemptAt: null,
     });
-    req.onsuccess = () => resolve(req.result as number);
+    req.onsuccess = () => resolve({ id: req.result as number });
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// ─── E7: Draft persistence helpers ───────────────────────────────────────────
+
+export interface PickupDraft {
+  draftKey: string; // "routeId_customerId"
+  routeId: number;
+  customerId: number;
+  binType: string;
+  binQty: string;
+  incidentReport: string;
+  webhookType: "payt" | "monthly";
+  beforePhotoBlob?: Blob;
+  beforePhotoName?: string;
+  afterPhotoBlob?: Blob;
+  afterPhotoName?: string;
+  savedAt: number;
+}
+
+export function makeDraftKey(routeId: number, customerId: number): string {
+  return `${routeId}_${customerId}`;
+}
+
+export async function saveDraft(draft: Omit<PickupDraft, 'savedAt'>): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PICKUP_DRAFTS_STORE, 'readwrite');
+    const req = tx.objectStore(PICKUP_DRAFTS_STORE).put({ ...draft, savedAt: Date.now() });
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function loadDraft(routeId: number, customerId: number): Promise<PickupDraft | null> {
+  const db = await openDB();
+  const key = makeDraftKey(routeId, customerId);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PICKUP_DRAFTS_STORE, 'readonly');
+    const req = tx.objectStore(PICKUP_DRAFTS_STORE).get(key);
+    req.onsuccess = () => resolve((req.result as PickupDraft) || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteDraft(routeId: number, customerId: number): Promise<void> {
+  const db = await openDB();
+  const key = makeDraftKey(routeId, customerId);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PICKUP_DRAFTS_STORE, 'readwrite');
+    const req = tx.objectStore(PICKUP_DRAFTS_STORE).delete(key);
+    req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
 }
@@ -225,34 +292,43 @@ export function onPickupSyncComplete(cb: () => void) {
   syncListeners.push(cb);
 }
 
+// D4: Helper — only append non-null, non-empty string fields to FormData
+function appendIfPresent(fd: FormData, key: string, value: string | null | undefined): void {
+  if (value !== null && value !== undefined && value !== '' && value !== 'null' && value !== 'undefined') {
+    fd.append(key, value);
+  }
+}
+
 async function submitQueuedPickup(pickup: QueuedPickup): Promise<void> {
   const formData = new FormData();
+  // Required fields — always present
   formData.append("formId", pickup.webhookUrl);
   formData.append("supervisorId", pickup.supervisorId);
   formData.append("binType", pickup.binType);
   formData.append("binQuantity", pickup.binQuantity);
-  formData.append("incidentReport", pickup.incidentReport);
-  formData.append("customerName", pickup.customerName);
-  formData.append("customerPhone", pickup.customerPhone);
-  formData.append("customerEmail", pickup.customerEmail);
-  formData.append("customerAddress", pickup.customerAddress);
   formData.append("customerId", String(pickup.customerId));
-  formData.append("unitCode", pickup.unitCode);
-  formData.append("arcgisBuildingId", pickup.arcgisBuildingId);
-  formData.append("buildingId", pickup.arcgisBuildingId);
-  formData.append("mafCode", pickup.mafCode);
-  formData.append("userIdentificationNumber", pickup.mafCode);
-  formData.append("latitude", pickup.latitude);
-  formData.append("longitude", pickup.longitude);
-  formData.append("lotCode", pickup.lotCode);
-  if (pickup.companyId) formData.append("companyId", pickup.companyId);
-  if (pickup.companyName) formData.append("companyName", pickup.companyName);
   formData.append("isMonthly", String(pickup.webhookType === "monthly"));
   formData.append("customerType", pickup.webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential");
   formData.append("pickUpDate", pickup.pickUpDate);
   formData.append("pickupDate", pickup.pickUpDate);
   formData.append("submittedFrom", "FieldWorker");
   formData.append("source", "field_worker");
+  // D4: Nullable fields — omit if null/empty
+  appendIfPresent(formData, "incidentReport", pickup.incidentReport);
+  appendIfPresent(formData, "customerName", pickup.customerName);
+  appendIfPresent(formData, "customerPhone", pickup.customerPhone);
+  appendIfPresent(formData, "customerEmail", pickup.customerEmail);
+  appendIfPresent(formData, "customerAddress", pickup.customerAddress);
+  appendIfPresent(formData, "unitCode", pickup.unitCode);
+  appendIfPresent(formData, "arcgisBuildingId", pickup.arcgisBuildingId);
+  appendIfPresent(formData, "buildingId", pickup.arcgisBuildingId);
+  appendIfPresent(formData, "mafCode", pickup.mafCode);
+  appendIfPresent(formData, "userIdentificationNumber", pickup.mafCode);
+  appendIfPresent(formData, "latitude", pickup.latitude);
+  appendIfPresent(formData, "longitude", pickup.longitude);
+  appendIfPresent(formData, "lotCode", pickup.lotCode);
+  appendIfPresent(formData, "companyId", pickup.companyId);
+  appendIfPresent(formData, "companyName", pickup.companyName);
   if (pickup.surveyToken) formData.append("surveyToken", pickup.surveyToken);
   if (pickup.surveyAppUserId) formData.append("surveyAppUserId", pickup.surveyAppUserId);
   formData.append("beforePhoto", pickup.beforePhotoBlob, pickup.beforePhotoName);

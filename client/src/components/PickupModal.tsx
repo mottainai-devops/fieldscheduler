@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -6,7 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Camera, CheckCircle, Loader2, Package, AlertTriangle, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { enqueuePickup, resizePhoto } from "@/lib/pickupQueue";
+import {
+  enqueuePickup, resizePhoto, saveDraft, loadDraft, deleteDraft, makeDraftKey,
+  MAX_QUEUE_SIZE, getPickupQueueCount,
+} from "@/lib/pickupQueue";
 
 interface PickupModalProps {
   open: boolean;
@@ -25,24 +28,37 @@ interface PickupModalProps {
     latitude?: string | number;
     longitude?: string | number;
   };
+  // E6: Prefill from a queued pickup (Edit flow)
+  prefill?: {
+    binType?: string;
+    binQty?: string;
+    incidentReport?: string;
+    webhookType?: "payt" | "monthly";
+    beforePhotoBlob?: Blob;
+    beforePhotoName?: string;
+    afterPhotoBlob?: Blob;
+    afterPhotoName?: string;
+  };
+  // E6: Called after the original queued item should be removed (Edit flow)
+  onDiscardQueued?: () => Promise<void>;
 }
 
 const BIN_TYPES = ["240L", "120L", "1100L", "Skip", "Bag"];
 
-export default function PickupModal({ open, onClose, onSuccess, routeId, customer }: PickupModalProps) {
+export default function PickupModal({ open, onClose, onSuccess, routeId, customer, prefill, onDiscardQueued }: PickupModalProps) {
   const workerId = parseInt(localStorage.getItem("workerId") || "0");
   const workerName = localStorage.getItem("workerName") || "";
   const storedWebhookType = localStorage.getItem("workerPreferredWebhookType") as "payt" | "monthly" | "" | null;
 
   const [step, setStep] = useState<"webhook-choice" | "form">(
-    storedWebhookType ? "form" : "webhook-choice"
+    prefill || storedWebhookType ? "form" : "webhook-choice"
   );
   const [webhookType, setWebhookType] = useState<"payt" | "monthly">(
-    (storedWebhookType as "payt" | "monthly") || "payt"
+    prefill?.webhookType || (storedWebhookType as "payt" | "monthly") || "payt"
   );
-  const [binType, setBinType] = useState("");
-  const [binQty, setBinQty] = useState("1");
-  const [incidentReport, setIncidentReport] = useState("");
+  const [binType, setBinType] = useState(prefill?.binType || "");
+  const [binQty, setBinQty] = useState(prefill?.binQty || "1");
+  const [incidentReport, setIncidentReport] = useState(prefill?.incidentReport || "");
   const [beforePhoto, setBeforePhoto] = useState<File | null>(null);
   const [afterPhoto, setAfterPhoto] = useState<File | null>(null);
   const [beforePreview, setBeforePreview] = useState<string | null>(null);
@@ -51,6 +67,64 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
 
   const beforeInputRef = useRef<HTMLInputElement>(null);
   const afterInputRef = useRef<HTMLInputElement>(null);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // E6: Rehydrate prefill photos when editing a queued item
+  useEffect(() => {
+    if (!open || !prefill) return;
+    if (prefill.beforePhotoBlob) {
+      const f = new File([prefill.beforePhotoBlob], prefill.beforePhotoName || 'before.jpg', { type: 'image/jpeg' });
+      setBeforePhoto(f);
+      setBeforePreview(URL.createObjectURL(prefill.beforePhotoBlob));
+    }
+    if (prefill.afterPhotoBlob) {
+      const f = new File([prefill.afterPhotoBlob], prefill.afterPhotoName || 'after.jpg', { type: 'image/jpeg' });
+      setAfterPhoto(f);
+      setAfterPreview(URL.createObjectURL(prefill.afterPhotoBlob));
+    }
+  }, [open, prefill]);
+
+  // E7: Rehydrate draft on open (only when not in edit/prefill mode)
+  useEffect(() => {
+    if (!open || prefill) return;
+    loadDraft(routeId, customer.id).then((draft) => {
+      if (!draft) return;
+      if (draft.binType) setBinType(draft.binType);
+      if (draft.binQty) setBinQty(draft.binQty);
+      if (draft.incidentReport) setIncidentReport(draft.incidentReport);
+      if (draft.webhookType) setWebhookType(draft.webhookType);
+      if (draft.beforePhotoBlob) {
+        setBeforePhoto(new File([draft.beforePhotoBlob], draft.beforePhotoName || 'before.jpg', { type: 'image/jpeg' }));
+        setBeforePreview(URL.createObjectURL(draft.beforePhotoBlob));
+      }
+      if (draft.afterPhotoBlob) {
+        setAfterPhoto(new File([draft.afterPhotoBlob], draft.afterPhotoName || 'after.jpg', { type: 'image/jpeg' }));
+        setAfterPreview(URL.createObjectURL(draft.afterPhotoBlob));
+      }
+      toast.info('Draft restored — your previous progress has been reloaded.', { duration: 3000 });
+    }).catch(() => {});
+  }, [open, routeId, customer.id]);
+
+  // E7: Auto-save draft on form field changes (debounced 1s)
+  const triggerDraftSave = useCallback((overrides?: Partial<{ binType: string; binQty: string; incidentReport: string; webhookType: 'payt' | 'monthly'; beforePhotoBlob?: Blob; beforePhotoName?: string; afterPhotoBlob?: Blob; afterPhotoName?: string }>) => {
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      const draftKey = makeDraftKey(routeId, customer.id);
+      saveDraft({
+        draftKey,
+        routeId,
+        customerId: customer.id,
+        binType: overrides?.binType ?? binType,
+        binQty: overrides?.binQty ?? binQty,
+        incidentReport: overrides?.incidentReport ?? incidentReport,
+        webhookType: overrides?.webhookType ?? webhookType,
+        beforePhotoBlob: overrides?.beforePhotoBlob ?? (beforePhoto ? beforePhoto : undefined),
+        beforePhotoName: overrides?.beforePhotoName ?? (beforePhoto ? beforePhoto.name : undefined),
+        afterPhotoBlob: overrides?.afterPhotoBlob ?? (afterPhoto ? afterPhoto : undefined),
+        afterPhotoName: overrides?.afterPhotoName ?? (afterPhoto ? afterPhoto.name : undefined),
+      }).catch(() => {});
+    }, 1000);
+  }, [routeId, customer.id, binType, binQty, incidentReport, webhookType, beforePhoto, afterPhoto]);
 
   const setWebhookPref = trpc.workerAuth.setWebhookPreference.useMutation();
   const markPicked = trpc.workerAuth.markCustomerPicked.useMutation();
@@ -65,11 +139,13 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
     if (type === "before") {
       setBeforePhoto(file);
       setBeforePreview(url);
+      triggerDraftSave({ beforePhotoBlob: file, beforePhotoName: file.name });
     } else {
       setAfterPhoto(file);
       setAfterPreview(url);
+      triggerDraftSave({ afterPhotoBlob: file, afterPhotoName: file.name });
     }
-  }, []);
+  }, [triggerDraftSave]);
 
   const handleWebhookChoice = async (choice: "payt" | "monthly") => {
     setWebhookType(choice);
@@ -128,7 +204,17 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
 
       // If offline, enqueue for later and mark optimistically
       if (!navigator.onLine) {
-        await enqueuePickup({
+        // E4: Check queue cap before enqueuing
+        const queueCount = await getPickupQueueCount();
+        if (queueCount >= MAX_QUEUE_SIZE) {
+          toast.error(
+            `You have ${queueCount} pending pickups. Please sync your pending pickups before continuing.`,
+            { duration: 8000 }
+          );
+          setSubmitting(false);
+          return;
+        }
+        const result = await enqueuePickup({
           routeId,
           customerId: customer.id,
           customerName: customer.name || "",
@@ -159,49 +245,61 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
           afterPhotoBlob: resizedAfter.blob,
           afterPhotoName: resizedAfter.name,
         });
+        if ('blocked' in result) {
+          toast.error(
+            `Queue full (${result.count}/${MAX_QUEUE_SIZE}). Please sync your pending pickups before continuing.`,
+            { duration: 8000 }
+          );
+          setSubmitting(false);
+          return;
+        }
+        // E7: Clear draft after successful queue
+        await deleteDraft(routeId, customer.id).catch(() => {});
         toast.warning("You are offline. Pickup queued — it will be submitted automatically when you reconnect.", { duration: 5000 });
         onSuccess();
         onClose();
         return;
       }
 
+      // D4: Helper — only append non-null, non-empty fields
+      const appendIfPresent = (fd: FormData, key: string, value: string | null | undefined) => {
+        if (value !== null && value !== undefined && value !== '' && value !== 'null' && value !== 'undefined') {
+          fd.append(key, value);
+        }
+      };
+
       const formData = new FormData();
-      // ── Core fields ──────────────────────────────────────────────────────────
+      // ── Required fields — always present ────────────────────────────────────
       formData.append("formId", webhookUrl);
       formData.append("supervisorId", workerName);
       formData.append("binType", binType);
       formData.append("binQuantity", binQty);
-      formData.append("incidentReport", incidentReport);
-      formData.append("beforePhoto", resizedBefore.blob, resizedBefore.name);
-      formData.append("afterPhoto", resizedAfter.blob, resizedAfter.name);
-      // ── Customer identity fields ─────────────────────────────────────────────
-      formData.append("customerName", customer.name || "");
-      formData.append("customerPhone", customer.phone || "");
-      formData.append("customerEmail", customer.email || "");
-      formData.append("customerAddress", customer.address || "");
       formData.append("customerId", String(customer.id));
-      formData.append("unitCode", customer.unitCode || "");
-      formData.append("arcgisBuildingId", customer.arcgisBuildingId || "");
-      formData.append("buildingId", customer.arcgisBuildingId || "");
-      formData.append("mafCode", customer.customermaf || "");
-      formData.append("userIdentificationNumber", customer.customermaf || "");
-      formData.append("latitude", String(customer.latitude || ""));
-      formData.append("longitude", String(customer.longitude || ""));
-      // ── Lot / company attribution ────────────────────────────────────────────
-      formData.append("lotCode", lotCode);
-      if (companyId) formData.append("companyId", companyId);
-      if (companyName) formData.append("companyName", companyName);
-      // ── Billing type ─────────────────────────────────────────────────────────
       formData.append("isMonthly", String(webhookType === "monthly"));
       formData.append("customerType", webhookType === "monthly" ? "Monthly Billing - Residential" : "PAYT - Residential");
-      // ── Pickup date ──────────────────────────────────────────────────────────
       formData.append("pickUpDate", new Date().toISOString());
       formData.append("pickupDate", new Date().toISOString());
-      // ── Source attribution ───────────────────────────────────────────────────
-      // submittedFrom is mapped to source='field_worker' on the backend
       formData.append("submittedFrom", "FieldWorker");
       formData.append("source", "field_worker");
-      // ── Survey App auth token (for backend identity verification) ────────────
+      formData.append("beforePhoto", resizedBefore.blob, resizedBefore.name);
+      formData.append("afterPhoto", resizedAfter.blob, resizedAfter.name);
+      // ── D4: Nullable fields — omit if null/empty ─────────────────────────────
+      appendIfPresent(formData, "incidentReport", incidentReport);
+      appendIfPresent(formData, "customerName", customer.name);
+      appendIfPresent(formData, "customerPhone", customer.phone);
+      appendIfPresent(formData, "customerEmail", customer.email);
+      appendIfPresent(formData, "customerAddress", customer.address);
+      appendIfPresent(formData, "unitCode", customer.unitCode);
+      appendIfPresent(formData, "arcgisBuildingId", customer.arcgisBuildingId);
+      appendIfPresent(formData, "buildingId", customer.arcgisBuildingId);
+      appendIfPresent(formData, "mafCode", customer.customermaf);
+      appendIfPresent(formData, "userIdentificationNumber", customer.customermaf);
+      appendIfPresent(formData, "latitude", customer.latitude != null ? String(customer.latitude) : null);
+      appendIfPresent(formData, "longitude", customer.longitude != null ? String(customer.longitude) : null);
+      appendIfPresent(formData, "lotCode", lotCode);
+      appendIfPresent(formData, "companyId", companyId);
+      appendIfPresent(formData, "companyName", companyName);
+      // ── Survey App auth token ────────────────────────────────────────────────
       if (surveyToken) formData.append("surveyToken", surveyToken);
       if (surveyAppUserId) formData.append("surveyAppUserId", surveyAppUserId);
 
@@ -221,6 +319,14 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
 
       // Mark as picked in DB
       await markPicked.mutateAsync({ routeId, customerId: customer.id });
+
+      // E7: Clear draft after successful submission
+      await deleteDraft(routeId, customer.id).catch(() => {});
+
+      // E6: If this was an edit of a queued item, remove the old queued entry
+      if (onDiscardQueued) {
+        await onDiscardQueued().catch(() => {});
+      }
 
       toast.success("Pickup recorded successfully!");
       onSuccess();
@@ -311,7 +417,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
             {/* Bin type */}
             <div className="space-y-1">
               <label className="text-sm text-slate-300 font-medium">Bin Type *</label>
-              <Select value={binType} onValueChange={setBinType}>
+              <Select value={binType} onValueChange={(v) => { setBinType(v); triggerDraftSave({ binType: v }); }}>
                 <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
                   <SelectValue placeholder="Select bin type..." />
                 </SelectTrigger>
@@ -326,7 +432,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
             {/* Bin quantity */}
             <div className="space-y-1">
               <label className="text-sm text-slate-300 font-medium">Bin Quantity</label>
-              <Select value={binQty} onValueChange={setBinQty}>
+              <Select value={binQty} onValueChange={(v) => { setBinQty(v); triggerDraftSave({ binQty: v }); }}>
                 <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
                   <SelectValue />
                 </SelectTrigger>
@@ -403,7 +509,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, custome
               <label className="text-sm text-slate-300 font-medium">Incident Report (optional)</label>
               <Textarea
                 value={incidentReport}
-                onChange={e => setIncidentReport(e.target.value)}
+                onChange={e => { setIncidentReport(e.target.value); triggerDraftSave({ incidentReport: e.target.value }); }}
                 placeholder="Note any issues encountered..."
                 className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500 resize-none"
                 rows={3}
