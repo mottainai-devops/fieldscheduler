@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { db } from "../db";
+import { getDb } from "../db";
 import { routeSchedules, routeInstances, workers } from "../../drizzle/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { RRule, RRuleSet, rrulestr } from "rrule";
@@ -150,6 +150,8 @@ function expandSchedule(
 export const calendarRouter = router({
   /** List all schedules (admin view) */
   listSchedules: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
     const schedules = await db
       .select()
       .from(routeSchedules)
@@ -161,6 +163,8 @@ export const calendarRouter = router({
   getSchedule: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       const [schedule] = await db
         .select()
         .from(routeSchedules)
@@ -174,6 +178,8 @@ export const calendarRouter = router({
   createSchedule: protectedProcedure
     .input(ScheduleInput)
     .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       const [result] = await db.insert(routeSchedules).values({
         workerId: input.workerId,
         supervisorId: input.supervisorId ?? null,
@@ -194,6 +200,8 @@ export const calendarRouter = router({
   updateSchedule: protectedProcedure
     .input(ScheduleInput.extend({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       const { id, ...rest } = input;
       await db
         .update(routeSchedules)
@@ -214,6 +222,8 @@ export const calendarRouter = router({
   deleteSchedule: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       await db.delete(routeInstances).where(eq(routeInstances.scheduleId, input.id));
       await db.delete(routeSchedules).where(eq(routeSchedules.id, input.id));
       return { success: true };
@@ -226,6 +236,8 @@ export const calendarRouter = router({
   getCalendarEvents: protectedProcedure
     .input(DateRangeInput)
     .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return [];
       const from = new Date(input.from + "T00:00:00Z");
       const to = new Date(input.to + "T23:59:59Z");
 
@@ -276,6 +288,8 @@ export const calendarRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       // Upsert: if an instance already exists for this date, update it
       const existing = await db
         .select()
@@ -317,6 +331,8 @@ export const calendarRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       const existing = await db
         .select()
         .from(routeInstances)
