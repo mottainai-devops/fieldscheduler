@@ -397,15 +397,6 @@ export const workerAuthRouter = router({
         };
       });
 
-      // TEMP DIAG: dump full enriched assignedLots before returning to client
-      console.log('[supervisorLogin] response for', surveyUser.email, JSON.stringify({
-        surveyAppCompanyId: surveyUser.companyId,
-        adminLotMapSize: adminLotMap.size,
-        adminLotMapKeys: Array.from(adminLotMap.keys()),
-        assignedLotsCount: assignedLots.length,
-        assignedLots,
-      }, null, 2));
-
       return {
         success: true,
         surveyToken,
@@ -1025,15 +1016,6 @@ export const workerAuthRouter = router({
           lotNumber: match?.lotNumber ?? null,
         };
       });
-
-      // TEMP DIAG: dump full enriched assignedLots before returning to client
-      console.log('[getAssignedLots] response for', surveyUser.email || surveyUser.id, JSON.stringify({
-        surveyAppCompanyId: surveyUser.companyId,
-        adminLotMapSize: adminLotMap.size,
-        adminLotMapKeys: Array.from(adminLotMap.keys()),
-        assignedLotsCount: assignedLots.length,
-        assignedLots,
-      }, null, 2));
 
       return { assignedLots };
     }),
