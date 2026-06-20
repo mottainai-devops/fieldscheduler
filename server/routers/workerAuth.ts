@@ -340,6 +340,18 @@ export const workerAuthRouter = router({
         Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
 
       const ADMIN_API = process.env.ADMIN_DASHBOARD_URL || "https://admin.kowope.xyz";
+
+      // The Survey App MongoDB _id is the same _id used by the admin dashboard
+      // User model — both services share the same 'arcgis' MongoDB database.
+      // Passing it as userId lets lots.list resolve the user's company and
+      // return the correct role-filtered lot list instead of the guest/empty path.
+      //
+      // TODO(security): Passing userId as service-to-service auth is interim.
+      // Long-term this should be a service-level shared secret or signed JWT
+      // (e.g. ADMIN_DASHBOARD_SERVICE_TOKEN env var) so a leaked userId cannot
+      // be used to impersonate a user against admin-dashboard endpoints.
+      const surveyUserId = String(surveyUser._id || surveyUser.id || "");
+
       const assignedLots: Array<{
         lotCode: string;
         lotName: string;
@@ -350,7 +362,7 @@ export const workerAuthRouter = router({
         rawLots.map(async (lot) => {
           try {
             const res = await fetch(
-              `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { search: lot.lotCode, page: 1, limit: 5 } } }))}`,
+              `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { userId: surveyUserId, search: lot.lotCode, page: 1, limit: 5 } } }))}`,
               { signal: AbortSignal.timeout(5000) }
             );
             if (!res.ok) return { ...lot, paytWebhook: null, monthlyWebhook: null };
@@ -943,6 +955,17 @@ export const workerAuthRouter = router({
       const rawLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
         Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
 
+      // The Survey App MongoDB _id is the same _id used by the admin dashboard
+      // User model — both services share the same 'arcgis' MongoDB database.
+      // Passing it as userId lets lots.list resolve the user's company and
+      // return the correct role-filtered lot list instead of the guest/empty path.
+      //
+      // TODO(security): Passing userId as service-to-service auth is interim.
+      // Long-term this should be a service-level shared secret or signed JWT
+      // (e.g. ADMIN_DASHBOARD_SERVICE_TOKEN env var) so a leaked userId cannot
+      // be used to impersonate a user against admin-dashboard endpoints.
+      const surveyUserId = String(surveyUser._id || surveyUser.id || "");
+
       // Enrich each lot with paytWebhook + monthlyWebhook + lotId + lotNumber from admin dashboard
       const assignedLots: Array<{
         lotCode: string;
@@ -956,7 +979,7 @@ export const workerAuthRouter = router({
         rawLots.map(async (lot) => {
           try {
             const res = await fetch(
-              `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { search: lot.lotCode, page: 1, limit: 5 } } }))}`,
+              `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { userId: surveyUserId, search: lot.lotCode, page: 1, limit: 5 } } }))}`,
               { signal: AbortSignal.timeout(5000) }
             );
             if (!res.ok) return { ...lot, paytWebhook: null, monthlyWebhook: null, lotId: null, lotNumber: null };
