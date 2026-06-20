@@ -277,14 +277,11 @@ export default function CreateRoute() {
       toast.error("Pick at least 1 customer");
       return;
     }
-    if (!selectedWorker) {
-      toast.error("Pick a worker");
-      return;
-    }
+    // Worker (supervisor or field manager) is only required at createRoute, not here.
+    // The mutation only sends { customerIds }; worker assignment happens at step 3.
 
     console.log("[OPTIMIZE] payload", {
       selectedCustomers,
-      selectedWorker,
     });
 
     setOptimizing(true);
