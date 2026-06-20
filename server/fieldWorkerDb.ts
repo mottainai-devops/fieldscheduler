@@ -257,9 +257,27 @@ export async function getAllRoutes() {
   const db = await getDb();
   if (!db) return [];
   
-  // Get all routes with customer count
-  const allRoutes = await db.select().from(routes).orderBy(desc(routes.createdAt));
-  
+  // Fetch routes with worker name via LEFT JOIN
+  const allRoutes = await db
+    .select({
+      id: routes.id,
+      workerId: routes.workerId,
+      supervisorId: (routes as any).supervisorId,
+      vehicleId: routes.vehicleId,
+      status: routes.status,
+      totalDistance: routes.totalDistance,
+      estimatedDuration: routes.estimatedDuration,
+      efficiencyScore: routes.efficiencyScore,
+      scheduledDate: routes.scheduledDate,
+      dispatchedAt: routes.dispatchedAt,
+      createdAt: routes.createdAt,
+      updatedAt: routes.updatedAt,
+      workerName: workers.name,
+    })
+    .from(routes)
+    .leftJoin(workers, eq(routes.workerId, workers.id))
+    .orderBy(desc(routes.createdAt));
+
   // For each route, count the customers
   const routesWithCounts = await Promise.all(
     allRoutes.map(async (route) => {
@@ -267,14 +285,14 @@ export async function getAllRoutes() {
         .select({ count: sql<number>`count(*)` })
         .from(routeCustomers)
         .where(eq(routeCustomers.routeId, route.id));
-      
+
       return {
         ...route,
         customerCount: Number(customerCount[0]?.count || 0)
       };
     })
   );
-  
+
   return routesWithCounts;
 }
 

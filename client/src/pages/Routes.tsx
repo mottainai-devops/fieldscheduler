@@ -65,7 +65,7 @@ export default function Routes() {
 
       // Field manager filter (worker name)
       if (filterManager.trim()) {
-        const name = (route.worker?.name || "").toLowerCase();
+        const name = ((route as any).workerName || "").toLowerCase();
         if (!name.includes(filterManager.trim().toLowerCase())) return false;
       }
 
@@ -274,7 +274,7 @@ export default function Routes() {
                         <div className="text-sm text-slate-400 space-y-1">
                           <div className="flex items-center gap-2">
                             <MapPin className="w-3 h-3" />
-                            <span>{route.worker?.name || "Unassigned"}</span>
+                            <span>{(route as any).workerName || "Unassigned"}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <Navigation className="w-3 h-3" />
