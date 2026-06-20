@@ -290,14 +290,9 @@ export default function CreateRoute() {
       toast.error("Please complete all steps before creating the route");
       return;
     }
-    // A4: Hard block — supervisor must have lot access for all selected customers
-    if (supervisorLotWarning) {
-      toast.error(
-        "Cannot create route: " + supervisorLotWarning + " Please choose a supervisor with access to all selected lots, or remove the out-of-lot customers.",
-        { duration: 8000 }
-      );
-      return;
-    }
+    // A4: Soft warning — supervisor lot mismatch is advisory only; route can still be submitted.
+    // The supervisor will still be able to perform pickups; provenance may be incomplete.
+    // A toast is shown but the route creation proceeds.
     
     try {
       const routeData = {
@@ -970,10 +965,10 @@ export default function CreateRoute() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                {/* A4: Lot-access hard block — route cannot be created until resolved */}
+                {/* A4: Soft warning — advisory only, route can still be submitted */}
                 {supervisorLotWarning && (
-                  <div className="mt-2 p-3 bg-red-900/30 border border-red-600/50 rounded text-red-400 text-xs">
-                    🚫 <strong>Route blocked:</strong> {supervisorLotWarning} Choose a supervisor with access to all selected lots, or remove the out-of-lot customers.
+                  <div className="mt-2 p-3 bg-amber-900/30 border border-amber-600/50 rounded text-amber-400 text-xs">
+                    ⚠️ <strong>Lot mismatch:</strong> {supervisorLotWarning} The route will still be created; provenance may be incomplete.
                   </div>
                 )}
               </div>
