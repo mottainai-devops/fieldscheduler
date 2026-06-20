@@ -103,7 +103,10 @@ export default function WorkerMobile() {
   // Cache routes when they load
   useEffect(() => {
     if (routes.length > 0 && selectedWorkerId) {
-      const workerRoutes = routes.filter(r => r.workerId === selectedWorkerId);
+      // Include routes where this worker is the field manager OR the supervisor
+      const workerRoutes = routes.filter(
+        r => r.workerId === selectedWorkerId || (r as any).supervisorId === selectedWorkerId
+      );
       if (workerRoutes.length > 0) {
         cacheRoutes(workerRoutes);
       }

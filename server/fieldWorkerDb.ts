@@ -648,7 +648,13 @@ export async function updateFilterPreset(id: number, data: any, workerId: number
 export async function getRoutesByWorkerId(workerId: number) {
   const db = await getDb();
   if (!db) return [];
-  return await db.select().from(routes).where(eq(routes.workerId, workerId)).orderBy(desc(routes.createdAt));
+  // Return routes where this worker is either the field manager (workerId) OR the supervisor (supervisorId).
+  // Supervisor-only routes have workerId=null; they must still be visible to the assigned supervisor.
+  return await db
+    .select()
+    .from(routes)
+    .where(or(eq(routes.workerId, workerId), eq(routes.supervisorId, workerId)))
+    .orderBy(desc(routes.createdAt));
 }
 
 // Update route with flexible fields
