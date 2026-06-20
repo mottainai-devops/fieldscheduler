@@ -77,13 +77,15 @@ export default function CreateRoute() {
   // Filter workers to field_managers only for the worker picker
   const fieldManagers = workers.filter((w: any) => !w.role || w.role === 'field_manager');
 
-  // A4: Lot-access validation — §2.3 v4.5.8
+  // A4: Lot-access validation — §2.3 v4.5.9 (cherry_picker exception)
+  // Canonical rules (operator-confirmed):
+  //   role = 'cherry_picker'    → UNRESTRICTED, always Full Coverage regardless of lots[]
+  //   role = 'user'             → restricted by lots[]; lots:[] = hard block (No Lot Access)
+  //   role = 'field_supervisor' → restricted by lots[]; lots:[] = hard block (No Lot Access)
   // Lot-code matching uses three equivalences (from workerAuth.ts):
   //   1. exact match: supLotCode === customerMaf
   //   2. leading-zero-stripped: supLotCode === customerMaf.replace(/^0+/, '')
   //   3. numeric fallback: parseInt(supLotCode) === parseInt(customerMaf)
-  // Supervisors with lots: [] have no restriction (soft advisory only).
-  // Supervisors with lots assigned but missing coverage get a hard block.
   const lotCodesMatch = (supLotCode: string, customerMaf: string): boolean => {
     const s = String(supLotCode).trim();
     const c = String(customerMaf).trim();
@@ -96,19 +98,41 @@ export default function CreateRoute() {
     return false;
   };
 
-  // Returns: { blocked: boolean; unmatchedMafs: string[] }
-  const checkSupervisorLotAccess = (supObj: any | null, customerIds: number[]): { blocked: boolean; unmatchedMafs: string[] } => {
-    if (!supObj || customerIds.length === 0) return { blocked: false, unmatchedMafs: [] };
+  // Returns: { blocked: boolean; group: 'full_coverage'|'partial_coverage'|'no_access'; badge: string; unmatchedMafs: string[] }
+  const checkSupervisorLotAccess = (supObj: any | null, customerIds: number[]): {
+    blocked: boolean;
+    group: 'full_coverage' | 'partial_coverage' | 'no_access';
+    badge: string;
+    unmatchedMafs: string[];
+  } => {
+    if (!supObj) return { blocked: false, group: 'full_coverage', badge: '', unmatchedMafs: [] };
+    // cherry_picker: always unrestricted
+    if (supObj.role === 'cherry_picker') {
+      return { blocked: false, group: 'full_coverage', badge: '✓ Any Lot', unmatchedMafs: [] };
+    }
+    // user / field_supervisor: restricted by lots[]
     const supLots: any[] = supObj?.lots ?? supObj?.assignedLots ?? [];
-    // No lots assigned → no restriction (soft advisory)
-    if (!supLots.length) return { blocked: false, unmatchedMafs: [] };
+    if (!supLots.length) {
+      return { blocked: true, group: 'no_access', badge: '✗ No lot access', unmatchedMafs: [] };
+    }
+    if (customerIds.length === 0) {
+      return { blocked: false, group: 'full_coverage', badge: `✓ ${supLots.length} lot${supLots.length !== 1 ? 's' : ''}`, unmatchedMafs: [] };
+    }
     const selectedCustomerData = asArray(customers).filter(c => customerIds.includes(c.id));
     const unmatched = selectedCustomerData.filter(c => {
-      const maf = (c.customermaf || "").trim();
+      const maf = (c.customermaf || '').trim();
       if (!maf) return false;
       return !supLots.some((l: any) => lotCodesMatch(String(l.lotCode), maf));
     });
-    return { blocked: unmatched.length > 0, unmatchedMafs: unmatched.map(c => c.customermaf) };
+    if (unmatched.length === 0) {
+      return { blocked: false, group: 'full_coverage', badge: '✓ Full', unmatchedMafs: [] };
+    }
+    return {
+      blocked: true,
+      group: 'partial_coverage',
+      badge: `✗ ${unmatched.length} lot${unmatched.length !== 1 ? 's' : ''} missing`,
+      unmatchedMafs: unmatched.map(c => c.customermaf),
+    };
   };
 
   const validateSupervisorLotAccess = (supObj: any | null, customerIds: number[]) => {
@@ -116,14 +140,10 @@ export default function CreateRoute() {
       setSupervisorLotWarning(null);
       return;
     }
-    const supLots: any[] = supObj?.lots ?? supObj?.assignedLots ?? [];
-    if (!supLots.length) {
-      // No lots assigned — soft advisory
-      setSupervisorLotWarning('__no_lots__');
-      return;
-    }
-    const { blocked, unmatchedMafs } = checkSupervisorLotAccess(supObj, customerIds);
-    if (blocked) {
+    const { blocked, group, unmatchedMafs } = checkSupervisorLotAccess(supObj, customerIds);
+    if (group === 'no_access') {
+      setSupervisorLotWarning('__no_access__');
+    } else if (blocked && group === 'partial_coverage') {
       const listed = unmatchedMafs.slice(0, 3).join(', ');
       const extra = unmatchedMafs.length > 3 ? ` +${unmatchedMafs.length - 3} more` : '';
       setSupervisorLotWarning(`__blocked__:${listed}${extra}`);
@@ -307,21 +327,27 @@ export default function CreateRoute() {
   };
 
   const handleCreateRoute = async () => {
-    if (!selectedWorker || !optimizedRoute) {
+    if (!optimizedRoute) {
       toast.error("Please complete all steps before creating the route");
       return;
     }
-    // A4: Hard block if supervisor has lots assigned but misses coverage of selected customers.
-    // Soft advisory if supervisor has no lots at all (no restriction enforced).
-    if (selectedSupervisorObj && supervisorLotWarning?.startsWith('__blocked__')) {
-      const detail = supervisorLotWarning.replace('__blocked__:', '');
-      toast.error(`Route blocked: supervisor does not cover all selected lots (${detail}). Choose a supervisor with full coverage or remove the out-of-lot customers.`);
+    // Item 2: at least one of supervisor or field manager must be selected
+    if (!selectedSupervisorObj && !selectedWorker) {
+      toast.error("Select a supervisor or a field manager (or both) before creating the route.");
+      return;
+    }
+    // A4: Hard block if supervisor has no lot access or partial coverage
+    if (selectedSupervisorObj && (supervisorLotWarning?.startsWith('__blocked__') || supervisorLotWarning === '__no_access__')) {
+      const detail = supervisorLotWarning === '__no_access__'
+        ? 'supervisor has no lot assignments'
+        : supervisorLotWarning.replace('__blocked__:', '');
+      toast.error(`Route blocked: ${detail}. Choose a supervisor with full lot coverage or remove the out-of-lot customers.`);
       return;
     }
     
     try {
       const routeData = {
-        workerId: selectedWorker,
+        workerId: selectedWorker ?? undefined,
         // §2.3 v4.5.7: pass Survey App user id + name/email so the server can call
         // ensureSupervisorWorker and resolve the local workers.id automatically.
         // supervisorId is left undefined here; the server resolves it from surveyAppSupervisorId.
@@ -945,28 +971,29 @@ export default function CreateRoute() {
                             No supervisor
                           </CommandItem>
                         </CommandGroup>
-                        {/* Grouped picker: Full Coverage → Partial/No Coverage → No Lots Assigned */}
+                        {/* Grouped picker: Full Coverage → Partial Coverage → No Lot Access */}
+                        {/* cherry_picker role: always Full Coverage / ✓ Any Lot */}
+                        {/* user / field_supervisor with lots:[]: No Lot Access / hard-blocked */}
                         {(() => {
                           const q = supervisorSearch.toLowerCase();
                           const filtered = supervisors.filter((sup: any) => {
                             if (!q) return true;
                             return (
-                              (sup.fullName || "").toLowerCase().includes(q) ||
-                              (sup.email || "").toLowerCase().includes(q) ||
-                              (sup.companyName || "").toLowerCase().includes(q) ||
-                              (sup.defaultLotCode || "").toLowerCase().includes(q) ||
+                              (sup.fullName || '').toLowerCase().includes(q) ||
+                              (sup.email || '').toLowerCase().includes(q) ||
+                              (sup.companyName || '').toLowerCase().includes(q) ||
+                              (sup.defaultLotCode || '').toLowerCase().includes(q) ||
                               (sup.lots || []).some((l: any) => String(l.lotCode).toLowerCase().includes(q))
                             );
                           });
                           const fullCoverage: any[] = [];
                           const partialCoverage: any[] = [];
-                          const noLots: any[] = [];
+                          const noAccess: any[] = [];
                           filtered.forEach((sup: any) => {
-                            const supLots: any[] = sup?.lots ?? sup?.assignedLots ?? [];
-                            if (!supLots.length) { noLots.push(sup); return; }
-                            const { blocked } = checkSupervisorLotAccess(sup, selectedCustomers);
-                            if (blocked) partialCoverage.push(sup);
-                            else fullCoverage.push(sup);
+                            const { group } = checkSupervisorLotAccess(sup, selectedCustomers);
+                            if (group === 'full_coverage') fullCoverage.push(sup);
+                            else if (group === 'partial_coverage') partialCoverage.push(sup);
+                            else noAccess.push(sup);
                           });
                           const renderItem = (sup: any, coverageBadge?: React.ReactNode) => (
                             <CommandItem
@@ -977,7 +1004,7 @@ export default function CreateRoute() {
                                 setSelectedSupervisor(null);
                                 validateSupervisorLotAccess(sup, selectedCustomers);
                                 setSupervisorPickerOpen(false);
-                                setSupervisorSearch("");
+                                setSupervisorSearch('');
                               }}
                               className="text-white cursor-pointer"
                             >
@@ -994,7 +1021,7 @@ export default function CreateRoute() {
                                 </div>
                                 <span className="text-xs text-slate-400 truncate">
                                   {sup.email}{sup.companyName ? ` · ${sup.companyName}` : ''}
-                                  {sup.lots?.length ? ` · ${sup.lots.length} lot${sup.lots.length !== 1 ? 's' : ''}` : ''}
+                                  {sup.role === 'cherry_picker' ? ' · cherry picker' : sup.lots?.length ? ` · ${sup.lots.length} lot${sup.lots.length !== 1 ? 's' : ''}` : ''}
                                 </span>
                               </div>
                             </CommandItem>
@@ -1002,28 +1029,31 @@ export default function CreateRoute() {
                           return (
                             <>
                               {fullCoverage.length > 0 && (
-                                <CommandGroup heading={selectedCustomers.length > 0 ? `Full Coverage (${fullCoverage.length})` : `With Lots (${fullCoverage.length})`}>
-                                  {fullCoverage.map(sup => renderItem(sup,
-                                    selectedCustomers.length > 0
-                                      ? <span className="text-xs text-green-400 shrink-0">✓ Full</span>
-                                      : undefined
-                                  ))}
+                                <CommandGroup heading={selectedCustomers.length > 0 ? `Full Coverage (${fullCoverage.length})` : `Available (${fullCoverage.length})`}>
+                                  {fullCoverage.map(sup => {
+                                    const { badge } = checkSupervisorLotAccess(sup, selectedCustomers);
+                                    return renderItem(sup,
+                                      selectedCustomers.length > 0
+                                        ? <span className="text-xs text-green-400 shrink-0">{badge}</span>
+                                        : undefined
+                                    );
+                                  })}
                                 </CommandGroup>
                               )}
                               {partialCoverage.length > 0 && (
                                 <CommandGroup heading={`Partial Coverage (${partialCoverage.length})`}>
                                   {partialCoverage.map(sup => {
-                                    const { unmatchedMafs } = checkSupervisorLotAccess(sup, selectedCustomers);
+                                    const { badge } = checkSupervisorLotAccess(sup, selectedCustomers);
                                     return renderItem(sup,
-                                      <span className="text-xs text-red-400 shrink-0">✗ {unmatchedMafs.length} lot{unmatchedMafs.length !== 1 ? 's' : ''} missing</span>
+                                      <span className="text-xs text-red-400 shrink-0">{badge}</span>
                                     );
                                   })}
                                 </CommandGroup>
                               )}
-                              {noLots.length > 0 && (
-                                <CommandGroup heading={`No Lots Assigned (${noLots.length})`}>
-                                  {noLots.map(sup => renderItem(sup,
-                                    <span className="text-xs text-amber-400 shrink-0">⚠ No lots</span>
+                              {noAccess.length > 0 && (
+                                <CommandGroup heading={`No Lot Access (${noAccess.length})`}>
+                                  {noAccess.map(sup => renderItem(sup,
+                                    <span className="text-xs text-red-400 shrink-0">✗ No lot access</span>
                                   ))}
                                 </CommandGroup>
                               )}
@@ -1034,21 +1064,21 @@ export default function CreateRoute() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                {/* A4: Hard block warning (lots assigned but coverage gap) */}
+                {/* A4: Hard block — partial coverage (lots assigned but gap exists) */}
                 {supervisorLotWarning?.startsWith('__blocked__') && (
                   <div className="mt-2 p-3 bg-red-900/30 border border-red-600/50 rounded text-red-400 text-xs">
-                    🚫 <strong>Route blocked:</strong> This supervisor does not have access to all selected customer lots ({supervisorLotWarning.replace('__blocked__:', '')}). Choose a supervisor with full lot coverage, or remove the out-of-lot customers.
+                    🚫 <strong>Route blocked:</strong> This supervisor does not cover all selected customer lots ({supervisorLotWarning.replace('__blocked__:', '')}). Choose a supervisor with full lot coverage, or remove the out-of-lot customers.
                   </div>
                 )}
-                {/* A4: Soft advisory (no lots assigned — no restriction, but provenance unavailable) */}
-                {supervisorLotWarning === '__no_lots__' && (
-                  <div className="mt-2 p-3 bg-amber-900/30 border border-amber-600/50 rounded text-amber-400 text-xs">
-                    ⚠️ <strong>No lot assignments:</strong> This supervisor has no lot assignments in the Survey App. The route will still be created, but provenance tracking will be unavailable.
+                {/* A4: Hard block — no lot access (user/field_supervisor with lots:[]) */}
+                {supervisorLotWarning === '__no_access__' && (
+                  <div className="mt-2 p-3 bg-red-900/30 border border-red-600/50 rounded text-red-400 text-xs">
+                    🚫 <strong>Route blocked:</strong> This supervisor has no lot assignments in the Survey App. Assign lots to this supervisor first, or choose a different supervisor.
                   </div>
                 )}
               </div>
 
-              <Label className="text-slate-300 text-sm mb-2 block">Assign Field Manager</Label>
+              <Label className="text-slate-300 text-sm mb-2 block">Assign Field Manager <span className="text-slate-500 font-normal">(Optional — at least one of supervisor or field manager required)</span></Label>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                 {fieldManagers.filter((w: any) => w.status === "active").map((worker: any) => (
                   <div
@@ -1111,7 +1141,7 @@ export default function CreateRoute() {
                     type="button"
                     className="btn btn-primary bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="optimize-route"
-                    disabled={optimizing || !selectedCustomers?.length || !selectedWorker}
+                    disabled={optimizing || !selectedCustomers?.length || (!selectedWorker && !selectedSupervisorObj)}
                     onClick={(e) => { 
                       e.preventDefault(); 
                       e.stopPropagation(); 
