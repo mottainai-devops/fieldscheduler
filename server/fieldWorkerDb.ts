@@ -384,28 +384,8 @@ export async function createRoute(data: {
   console.log('[DB] Extracted customerIds:', customerIds);
   console.log('[DB] Route data to insert:', JSON.stringify(routeData, null, 2));
 
-  // B4: Idempotency guard — prevent duplicate routes for the same worker+date.
-  // If a route already exists for this worker on this scheduledDate, return it
-  // instead of creating a second one. This handles double-clicks and retries.
-  if (routeData.workerId && routeData.scheduledDate) {
-    const { eq, and } = await import("drizzle-orm");
-    const existing = await db
-      .select({ id: routes.id })
-      .from(routes)
-      .where(
-        and(
-          eq(routes.workerId, routeData.workerId),
-          eq(routes.scheduledDate, routeData.scheduledDate),
-          eq(routes.status, "assigned")
-        )
-      )
-      .limit(1);
-    if (existing.length > 0) {
-      const existingId = existing[0].id;
-      console.log(`[DB] Idempotency: route ${existingId} already exists for worker ${routeData.workerId} on ${routeData.scheduledDate}. Returning existing.`);
-      return { routeId: existingId, idempotent: true };
-    }
-  }
+  // Note: idempotency guard removed — multiple routes per worker per day are valid.
+  // Double-click protection is handled at the UI layer (disabled button after submit).
   
   try {
     // Create the route
