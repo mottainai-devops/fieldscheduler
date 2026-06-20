@@ -1,11 +1,20 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar } from "lucide-react";
 import { trpc } from "@/lib/trpc";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import AppHeader from "@/components/AppHeader";
 import { ListSkeleton } from "@/components/LoadingComponents";
 import { ErrorState } from "@/components/ErrorComponents";
+
+const STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "assigned", label: "Assigned" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "completed", label: "Completed" },
+  { value: "inactive", label: "Inactive (7d+)" },
+];
 
 export default function Routes() {
   const { data: routes = [], isLoading, error, refetch } = trpc.fieldWorker.getRoutes.useQuery();
@@ -14,6 +23,63 @@ export default function Routes() {
     { id: selectedRoute! },
     { enabled: selectedRoute !== null }
   );
+
+  // Filter state
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterDate, setFilterDate] = useState("");
+  const [filterManager, setFilterManager] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+
+  const sevenDaysAgo = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d;
+  }, []);
+
+  const filteredRoutes = useMemo(() => {
+    return routes.filter((route) => {
+      // Status filter
+      if (filterStatus !== "all") {
+        if (filterStatus === "inactive") {
+          // Inactive = not completed AND last update > 7 days ago
+          const isNotCompleted = route.status !== "completed" && route.status !== "cancelled";
+          const lastActivity = route.updatedAt
+            ? new Date(route.updatedAt)
+            : route.scheduledDate
+            ? new Date(route.scheduledDate)
+            : null;
+          const isStale = lastActivity ? lastActivity < sevenDaysAgo : false;
+          if (!(isNotCompleted && isStale)) return false;
+        } else {
+          if (route.status !== filterStatus) return false;
+        }
+      }
+
+      // Date filter (match scheduledDate)
+      if (filterDate) {
+        const routeDate = route.scheduledDate
+          ? new Date(route.scheduledDate).toISOString().slice(0, 10)
+          : null;
+        if (routeDate !== filterDate) return false;
+      }
+
+      // Field manager filter (worker name)
+      if (filterManager.trim()) {
+        const name = (route.worker?.name || "").toLowerCase();
+        if (!name.includes(filterManager.trim().toLowerCase())) return false;
+      }
+
+      return true;
+    });
+  }, [routes, filterStatus, filterDate, filterManager, sevenDaysAgo]);
+
+  const hasActiveFilters = filterStatus !== "all" || filterDate !== "" || filterManager !== "";
+
+  const clearFilters = () => {
+    setFilterStatus("all");
+    setFilterDate("");
+    setFilterManager("");
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -69,21 +135,125 @@ export default function Routes() {
           {/* Route List */}
           <div className="lg:col-span-1">
             <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <CardTitle className="text-white">All Routes ({routes.length})</CardTitle>
+              <CardHeader className="pb-2">
+                {/* Title row with filter toggle */}
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white">
+                    All Routes ({filteredRoutes.length}
+                    {hasActiveFilters && routes.length !== filteredRoutes.length
+                      ? ` of ${routes.length}`
+                      : ""})
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    {hasActiveFilters && (
+                      <button
+                        onClick={clearFilters}
+                        className="text-xs text-slate-400 hover:text-white flex items-center gap-1"
+                        title="Clear all filters"
+                      >
+                        <X className="w-3 h-3" /> Clear
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowFilters((v) => !v)}
+                      className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors ${
+                        showFilters || hasActiveFilters
+                          ? "border-blue-500 text-blue-400 bg-blue-600/10"
+                          : "border-slate-600 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <Filter className="w-3 h-3" />
+                      Filters
+                      {hasActiveFilters && (
+                        <span className="ml-1 bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
+                          {[filterStatus !== "all", filterDate !== "", filterManager !== ""].filter(Boolean).length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Expandable filter panel */}
+                {showFilters && (
+                  <div className="mt-3 space-y-3 border-t border-slate-700 pt-3">
+                    {/* Status chips */}
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1.5">Status</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {STATUS_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            onClick={() => setFilterStatus(opt.value)}
+                            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                              filterStatus === opt.value
+                                ? "border-blue-500 bg-blue-600/20 text-blue-300"
+                                : "border-slate-600 text-slate-400 hover:border-slate-400"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Date picker */}
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1.5">Date</p>
+                      <div className="relative">
+                        <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                        <input
+                          type="date"
+                          value={filterDate}
+                          onChange={(e) => setFilterDate(e.target.value)}
+                          className="w-full pl-7 pr-2 py-1.5 text-xs bg-slate-700/50 border border-slate-600 rounded text-slate-200 focus:outline-none focus:border-blue-500"
+                        />
+                        {filterDate && (
+                          <button
+                            onClick={() => setFilterDate("")}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Field manager search */}
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1.5">Field Manager</p>
+                      <div className="relative">
+                        <Input
+                          placeholder="Search by name…"
+                          value={filterManager}
+                          onChange={(e) => setFilterManager(e.target.value)}
+                          className="h-7 text-xs bg-slate-700/50 border-slate-600 text-slate-200 placeholder:text-slate-500 focus:border-blue-500"
+                        />
+                        {filterManager && (
+                          <button
+                            onClick={() => setFilterManager("")}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardHeader>
+
               <CardContent>
                 {error ? (
                   <ErrorState error={error} onRetry={refetch} compact />
                 ) : isLoading ? (
                   <ListSkeleton items={6} />
-                ) : routes.length === 0 ? (
+                ) : filteredRoutes.length === 0 ? (
                   <div className="text-center py-8 text-slate-400">
-                    No routes yet
+                    {hasActiveFilters ? "No routes match the current filters" : "No routes yet"}
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                    {routes.map((route) => (
+                    {filteredRoutes.map((route) => (
                       <div
                         key={route.id}
                         onClick={() => setSelectedRoute(route.id)}
@@ -227,4 +397,3 @@ export default function Routes() {
     </div>
   );
 }
-
