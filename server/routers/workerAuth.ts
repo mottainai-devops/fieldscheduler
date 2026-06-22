@@ -1026,4 +1026,81 @@ export const workerAuthRouter = router({
 
       return { assignedLots };
     }),
+
+  /**
+   * smokeTestRoutesUpdate: One-time admin mutation to set up routes for smoke test workflow 8.
+   * Route #150 → 2026-06-23, new route #151 → 2026-06-24, new route #152 → 2026-06-25.
+   * All with supervisorId=14 (adewuyiadey@gmail.com). Protected by a secret token.
+   * SAFE TO REMOVE after smoke test is complete.
+   */
+  smokeTestRoutesUpdate: publicProcedure
+    .input(z.object({ secret: z.string() }))
+    .mutation(async ({ input }) => {
+      const EXPECTED_SECRET = process.env.SMOKE_TEST_SECRET || "mottainai-smoke-2026";
+      if (input.secret !== EXPECTED_SECRET) {
+        throw new Error("Invalid secret");
+      }
+      const { routes, routeCustomers } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      const SUPERVISOR_ID = 14; // adewuyiadey@gmail.com
+      const CUSTOMER_IDS = [12764, 12622, 12625];
+      const ROUTE_BASE = {
+        workerId: null as number | null,
+        vehicleId: null as number | null,
+        totalDistance: "1.5901714018701711",
+        estimatedDuration: "6.115435840192722",
+        efficiencyScore: 50,
+        status: "assigned" as const,
+        supervisorId: SUPERVISOR_ID,
+      };
+
+      // Step 1: Update route #150 to 2026-06-23 and set supervisorId=14
+      await db.update(routes)
+        .set({ scheduledDate: "2026-06-23", supervisorId: SUPERVISOR_ID })
+        .where(eq(routes.id, 150));
+
+      // Step 2: Create route #151 for 2026-06-24
+      const result151 = await db.insert(routes).values({
+        ...ROUTE_BASE,
+        scheduledDate: "2026-06-24",
+      });
+      const route151Id = Number((result151 as any)[0]?.insertId ?? (result151 as any).insertId);
+      await db.insert(routeCustomers).values(
+        CUSTOMER_IDS.map((customerId, i) => ({
+          routeId: route151Id,
+          customerId,
+          sequenceNumber: i + 1,
+          estimatedServiceTime: 30,
+        }))
+      );
+
+      // Step 3: Create route #152 for 2026-06-25
+      const result152 = await db.insert(routes).values({
+        ...ROUTE_BASE,
+        scheduledDate: "2026-06-25",
+      });
+      const route152Id = Number((result152 as any)[0]?.insertId ?? (result152 as any).insertId);
+      await db.insert(routeCustomers).values(
+        CUSTOMER_IDS.map((customerId, i) => ({
+          routeId: route152Id,
+          customerId,
+          sequenceNumber: i + 1,
+          estimatedServiceTime: 30,
+        }))
+      );
+
+      return {
+        success: true,
+        routes: [
+          { id: 150, scheduledDate: "2026-06-23", supervisorId: SUPERVISOR_ID },
+          { id: route151Id, scheduledDate: "2026-06-24", supervisorId: SUPERVISOR_ID },
+          { id: route152Id, scheduledDate: "2026-06-25", supervisorId: SUPERVISOR_ID },
+        ],
+        message: "Smoke test routes created. Route #150 updated, routes #151 and #152 created.",
+      };
+    }),
 });
