@@ -648,11 +648,22 @@ export async function getRoutesByWorkerId(workerId: number) {
   if (!db) return [];
   // Return routes where this worker is either the field manager (workerId) OR the supervisor (supervisorId).
   // Supervisor-only routes have workerId=null; they must still be visible to the assigned supervisor.
-  return await db
+  const routeRows = await db
     .select()
     .from(routes)
     .where(or(eq(routes.workerId, workerId), eq(routes.supervisorId, workerId)))
     .orderBy(desc(routes.createdAt));
+
+  // Attach customer count so the mobile route list card can display "N customers".
+  return await Promise.all(
+    routeRows.map(async (route) => {
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(routeCustomers)
+        .where(eq(routeCustomers.routeId, route.id));
+      return { ...route, customerCount: Number(countResult[0]?.count || 0) };
+    })
+  );
 }
 
 // Update route with flexible fields
