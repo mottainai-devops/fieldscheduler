@@ -9,7 +9,7 @@
  *   J1 — Audit log: all mutations write a row to calendarAuditLog
  */
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { TRPCError } from "@trpc/server";
 import {
@@ -514,7 +514,13 @@ export const calendarOverridesRouter = router({
    * Supervisor taps "Request Handoff" on a scheduled route.
    * Creates a handoff request record and notifies admin.
    */
-  requestHandoff: protectedProcedure
+  // Bug B fix: changed from protectedProcedure to publicProcedure.
+  // The worker mobile app authenticates via a Survey App Bearer token stored in
+  // secure storage, NOT a Manus OAuth session cookie. protectedProcedure only
+  // validates cookies, so every handoff call returned HTTP 401, which the Flutter
+  // _handle401() interceptor caught and displayed as "Session expired, please sign in again".
+  // supervisorId is validated against the fieldWorkers table inside the mutation body.
+  requestHandoff: publicProcedure
     .input(
       z.object({
         scheduleId: z.number().int().positive().optional(),

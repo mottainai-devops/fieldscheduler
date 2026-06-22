@@ -245,7 +245,12 @@ export const workerAuthRouter = router({
       try {
         return await zoho.getCustomerInvoices(input.zohoContactId);
       } catch (error: any) {
-        return { error: error.message };
+        // Bug A fix: return empty array on error so Flutter can safely cast to
+        // List<dynamic>. Returning { error: message } caused a
+        // '_Map<String, dynamic> is not a subtype of FutureOr<List<dynamic>>'
+        // crash in customer_detail_screen.dart line 81.
+        console.error('[getCustomerInvoices] Zoho error:', error.message);
+        return [];
       }
     }),
 
@@ -255,7 +260,9 @@ export const workerAuthRouter = router({
       try {
         return await zoho.getCustomerPayments(input.zohoContactId);
       } catch (error: any) {
-        return { error: error.message };
+        // Same fix as getCustomerInvoices — return empty array to avoid Flutter type crash.
+        console.error('[getCustomerPayments] Zoho error:', error.message);
+        return [];
       }
     }),
 
