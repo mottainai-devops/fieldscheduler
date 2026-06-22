@@ -253,17 +253,10 @@ function ScheduleFormDialog({
   const { data: supervisorsData } = trpc.fieldWorker.getSurveyAppSupervisors.useQuery();
   const surveyAppSupervisors: any[] = (supervisorsData as any)?.supervisors ?? [];
 
-  // Fetch supervisors from the Survey App - same source as Create Route picker
-  const { data: supervisorsData } = trpc.fieldWorker.getSurveyAppSupervisors.useQuery();
-  const surveyAppSupervisors: any[] = (supervisorsData as any)?.supervisors ?? [];
-
   const createMutation = trpc.calendar.createSchedule.useMutation();
   const updateMutation = trpc.calendar.updateSchedule.useMutation();
 
   const fieldManagers = workers.filter((w) => w.role === "field_manager");
-  // Supervisors come from the Survey App - same source as Create Route picker.
-  // surveyAppSupervisors items: { id, fullName, email, fieldworkerId, ... }
-  // fieldworkerId is the workers.id (local DB) for this supervisor.
   const supervisors = surveyAppSupervisors;
 
   const effectiveRrule =

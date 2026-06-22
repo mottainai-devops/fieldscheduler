@@ -521,52 +521,59 @@ export const fieldWorkerRouter = router({
       customerIds: z.array(z.number()),
     }))
     .mutation(async ({ input }) => {
-      const arcgis = await import("../services/arcgis");
-      
+      const { optimizeRouteWithMottainai } = await import("../services/mottainaiRouteOptimization");
+
       // Get customer details with coordinates
       const customersData = await Promise.all(
         input.customerIds.map(id => fieldWorkerDb.getCustomerById(id))
       );
-      
+
       // Filter out null customers and those without coordinates
       const validCustomers = customersData.filter(
         c => c && c.latitude && c.longitude
       ) as Array<{ id: number; latitude: string; longitude: string; name: string; address: string }>;
-      
+
       if (validCustomers.length < 2) {
         throw new Error("At least 2 customers with valid coordinates required");
       }
-      
-      // Prepare stops for ArcGIS
-      const stops = validCustomers.map(c => ({
+
+      // Use the first customer as the starting point (field worker's first stop)
+      const [first, ...rest] = validCustomers;
+      const startingPoint = {
+        latitude: parseFloat(first.latitude),
+        longitude: parseFloat(first.longitude),
+        name: first.name || first.address,
+      };
+      const customers = validCustomers.map(c => ({
+        id: c.id,
         latitude: parseFloat(c.latitude),
         longitude: parseFloat(c.longitude),
         name: c.name || c.address,
       }));
-      
-      // Call ArcGIS optimization
-      const result = await arcgis.calculateOptimizedRoute(stops);
-      
-      if (!result) {
-        throw new Error("Route optimization failed");
+
+      // Call Mottainai OSRM-based optimization (no API key required)
+      const result = await optimizeRouteWithMottainai({ startingPoint, customers });
+
+      if (!result.success) {
+        throw new Error(result.message || "Route optimization failed");
       }
-      
+
       // Map the optimized sequence back to customers
-      const optimizedStops = result.stops.map((stop, index) => {
-        const customer = validCustomers[index];
+      const optimizedStops = result.optimizedOrder.map(opt => {
+        const customer = validCustomers.find(c => c.id === opt.customerId);
         return {
-          ...customer,
-          customerId: customer.id,
-          sequence: stop.sequence,
-          latitude: stop.latitude,
-          longitude: stop.longitude,
+          ...(customer ?? {}),
+          customerId: opt.customerId,
+          sequence: opt.sequence,
+          latitude: customer ? parseFloat(customer.latitude) : 0,
+          longitude: customer ? parseFloat(customer.longitude) : 0,
         };
       });
-      
+
       return {
         stops: optimizedStops,
-        totalDistance: result.totalDistance,
-        totalTime: result.totalTime,
+        totalDistance: result.summary.totalDistance,
+        totalTime: result.summary.totalDuration,
       };
     }),
 });
