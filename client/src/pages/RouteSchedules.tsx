@@ -341,9 +341,13 @@ function ScheduleFormDialog({
                 </SelectTrigger>
                 <SelectContent className="bg-slate-800 border-slate-700">
                   <SelectItem value="none" className="text-slate-400">None</SelectItem>
-                  {supervisors.map((w) => (
-                    <SelectItem key={w.id} value={String(w.id)} className="text-white">
-                      {w.name}
+                  {supervisors.map((sup: any) => (
+                    <SelectItem
+                      key={String(sup.id)}
+                      value={String(sup.fieldworkerId ?? sup.id)}
+                      className="text-white"
+                    >
+                      {sup.fullName}{sup.email ? ` (${sup.email})` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
