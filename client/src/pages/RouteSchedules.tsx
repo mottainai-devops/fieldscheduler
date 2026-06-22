@@ -253,10 +253,10 @@ function ScheduleFormDialog({
   const updateMutation = trpc.calendar.updateSchedule.useMutation();
 
   const fieldManagers = workers.filter((w) => w.role === "field_manager");
-  // Include both roles — workers table uses 'field_manager' and 'supervisor';
-  // the Create Route picker (getSurveyAppSupervisors) uses the Survey App role set.
-  // Here we show all workers as eligible supervisors to match the widened set.
-  const supervisors = workers.filter((w) => w.role === "supervisor" || w.role === "field_manager");
+  // Supervisors come from the Survey App - same source as Create Route picker.
+  // surveyAppSupervisors items: { id, fullName, email, fieldworkerId, ... }
+  // fieldworkerId is the workers.id (local DB) for this supervisor.
+  const supervisors = surveyAppSupervisors;
 
   const effectiveRrule =
     form.rrulePreset === "CUSTOM" ? form.rruleCustom : form.rrulePreset;
