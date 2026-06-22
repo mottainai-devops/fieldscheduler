@@ -253,6 +253,10 @@ function ScheduleFormDialog({
   const { data: supervisorsData } = trpc.fieldWorker.getSurveyAppSupervisors.useQuery();
   const surveyAppSupervisors: any[] = (supervisorsData as any)?.supervisors ?? [];
 
+  // Fetch supervisors from the Survey App - same source as Create Route picker
+  const { data: supervisorsData } = trpc.fieldWorker.getSurveyAppSupervisors.useQuery();
+  const surveyAppSupervisors: any[] = (supervisorsData as any)?.supervisors ?? [];
+
   const createMutation = trpc.calendar.createSchedule.useMutation();
   const updateMutation = trpc.calendar.updateSchedule.useMutation();
 
