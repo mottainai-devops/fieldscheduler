@@ -1103,4 +1103,60 @@ export const workerAuthRouter = router({
         message: "Smoke test routes created. Route #150 updated, routes #151 and #152 created.",
       };
     }),
+
+  /**
+   * smokeTestReplaceCustomers: One-time mutation to replace AFT customers in routes
+   * #150-152 with MOT-027/108/076 customers, and delete duplicate routes #154/#155.
+   * SAFE TO REMOVE after smoke test is complete.
+   */
+  smokeTestReplaceCustomers: publicProcedure
+    .input(z.object({ secret: z.string() }))
+    .mutation(async ({ input }) => {
+      const EXPECTED_SECRET = process.env.SMOKE_TEST_SECRET || "mottainai-smoke-2026";
+      if (input.secret !== EXPECTED_SECRET) throw new Error("Invalid secret");
+      const { routes, routeCustomers } = await import("../../drizzle/schema");
+      const { inArray } = await import("drizzle-orm");
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      // Route 150 (2026-06-23): 1 customer from each of MOT-027, MOT-108, MOT-076 (multi-lot test)
+      const route150Customers = [
+        { routeId: 150, customerId: 9251,  sequenceNumber: 1, estimatedServiceTime: 30 }, // MOT-027
+        { routeId: 150, customerId: 9489,  sequenceNumber: 2, estimatedServiceTime: 30 }, // MOT-108
+        { routeId: 150, customerId: 12902, sequenceNumber: 3, estimatedServiceTime: 30 }, // MOT-076
+      ];
+      // Route 151 (2026-06-24): 3 customers from MOT-027
+      const route151Customers = [
+        { routeId: 151, customerId: 9251, sequenceNumber: 1, estimatedServiceTime: 30 },
+        { routeId: 151, customerId: 9252, sequenceNumber: 2, estimatedServiceTime: 30 },
+        { routeId: 151, customerId: 9253, sequenceNumber: 3, estimatedServiceTime: 30 },
+      ];
+      // Route 152 (2026-06-25): 3 customers from MOT-108
+      const route152Customers = [
+        { routeId: 152, customerId: 9489, sequenceNumber: 1, estimatedServiceTime: 30 },
+        { routeId: 152, customerId: 9490, sequenceNumber: 2, estimatedServiceTime: 30 },
+        { routeId: 152, customerId: 9491, sequenceNumber: 3, estimatedServiceTime: 30 },
+      ];
+
+      // Delete old customers from routes 150/151/152
+      await db.delete(routeCustomers).where(inArray(routeCustomers.routeId, [150, 151, 152]));
+      // Insert new customers
+      await db.insert(routeCustomers).values([...route150Customers, ...route151Customers, ...route152Customers]);
+
+      // Delete duplicate routes 154 and 155 (created by a second smokeTestRoutesUpdate call)
+      await db.delete(routeCustomers).where(inArray(routeCustomers.routeId, [154, 155]));
+      await db.delete(routes).where(inArray(routes.id, [154, 155]));
+
+      return {
+        success: true,
+        updated: [
+          { routeId: 150, date: "2026-06-23", customers: [9251, 9489, 12902], note: "multi-lot: MOT-027/108/076" },
+          { routeId: 151, date: "2026-06-24", customers: [9251, 9252, 9253], note: "MOT-027" },
+          { routeId: 152, date: "2026-06-25", customers: [9489, 9490, 9491], note: "MOT-108" },
+        ],
+        deleted: [154, 155],
+        message: "Route customers replaced with MOT-027/108/076. Duplicate routes 154/155 deleted.",
+      };
+    }),
 });
