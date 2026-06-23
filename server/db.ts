@@ -59,6 +59,13 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = 'admin';
       updateSet.role = 'admin';
     }
+    // fieldManagerId: links this users row to the workers table row for scoped data access.
+    // Must be passed by adminAuth.login for supervisor-role workers so that role-gated
+    // queries (e.g. customerRouter.getCustomers) can scope results correctly.
+    if (user.fieldManagerId !== undefined) {
+      values.fieldManagerId = user.fieldManagerId;
+      updateSet.fieldManagerId = user.fieldManagerId;
+    }
 
     if (!values.lastSignedIn) {
       values.lastSignedIn = new Date();

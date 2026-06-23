@@ -47,6 +47,9 @@ export const adminAuthRouter = router({
           email: worker.email || null,
           loginMethod: 'email',
           role: usersRole,
+          // fieldManagerId links this session's users row to the workers table so that
+          // role-gated queries (e.g. customerRouter.getCustomers) can scope by worker.
+          fieldManagerId: worker.id,
         });
         
         console.log('[AdminAuth] User record created/updated for:', openId);
