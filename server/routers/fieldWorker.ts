@@ -3,6 +3,7 @@ import * as fieldWorkerDb from "../fieldWorkerDb";
 import { clusterCustomers } from "../utils/clustering";
 import { clusterCustomersByCount } from "../utils/clusteringByCount";
 import { protectedProcedure, router } from "../_core/trpc";
+import * as notificationDb from "../notificationDb";
 
 export const fieldWorkerRouter = router({
   // Worker operations
@@ -336,6 +337,49 @@ export const fieldWorkerRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.deleteRoute(input.id);
+    }),
+
+  /**
+   * 5A(d): Check if a worker already has a route on a given date.
+   * Returns the conflicting routes (id, status) so the UI can warn the admin.
+   */
+  getWorkerRoutesOnDate: protectedProcedure
+    .input(z.object({
+      workerId: z.number(),
+      scheduledDate: z.string(), // YYYY-MM-DD
+    }))
+    .query(async ({ input }) => {
+      return await fieldWorkerDb.getWorkerRoutesOnDate(input.workerId, input.scheduledDate);
+    }),
+
+  /**
+   * 5A(c): Update a route's scheduledDate and fire a worker notification.
+   * Used by the admin route-detail panel when an admin edits the date.
+   */
+  updateRouteAndNotifyWorker: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      scheduledDate: z.string(), // YYYY-MM-DD
+    }))
+    .mutation(async ({ input }) => {
+      const updated = await fieldWorkerDb.updateRoute(input.id, { scheduledDate: input.scheduledDate });
+      // Fire notification to the assigned worker (if any)
+      const workerId = (updated as any)?.workerId;
+      if (workerId) {
+        try {
+          await notificationDb.createWorkerNotification({
+            workerId,
+            type: 'route_date_changed',
+            title: 'Route date updated',
+            message: `Your route #${input.id} has been rescheduled to ${input.scheduledDate}.`,
+            relatedId: input.id,
+          });
+        } catch (notifErr: any) {
+          // Non-fatal — log but don't fail the mutation
+          console.error('[updateRouteAndNotifyWorker] Notification failed:', notifErr.message);
+        }
+      }
+      return updated;
     }),
 
   // Clustering operations

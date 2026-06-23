@@ -666,6 +666,20 @@ export async function getRoutesByWorkerId(workerId: number) {
   );
 }
 
+/**
+ * 5A(d): Return all routes assigned to a worker on a specific date.
+ * Used for conflict detection in the Create Route wizard.
+ */
+export async function getWorkerRoutesOnDate(workerId: number, scheduledDate: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({ id: routes.id, status: routes.status, scheduledDate: routes.scheduledDate })
+    .from(routes)
+    .where(and(eq(routes.workerId, workerId), eq(routes.scheduledDate, scheduledDate)));
+  return rows;
+}
+
 // Update route with flexible fields
 export async function updateRoute(id: number, data: {
   workerId?: number;

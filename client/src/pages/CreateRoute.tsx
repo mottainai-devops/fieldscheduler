@@ -41,6 +41,11 @@ export default function CreateRoute() {
   const [showAdvancedClustering, setShowAdvancedClustering] = useState(false);
   const [minClusterSize, setMinClusterSize] = useState(3);
   const [maxClusterRadius, setMaxClusterRadius] = useState(15);
+  // 5A(b): Scheduled date for the route (default today)
+  const [scheduledDate, setScheduledDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  // 5A(d): Worker conflict state
+  const [workerConflicts, setWorkerConflicts] = useState<Array<{ id: number; status: string }>>([]);
+
   // A3: Supervisor picker state
   // selectedSupervisor holds the resolved workers.id (set after ensureSupervisorWorker on submit)
   // selectedSupervisorObj holds the full Survey App user object for display and lot-access validation
@@ -76,6 +81,13 @@ export default function CreateRoute() {
   const supervisors = (supervisorsData as any)?.supervisors ?? [];
   // Filter workers to field_managers only for the worker picker
   const fieldManagers = workers.filter((w: any) => !w.role || w.role === 'field_manager');
+  // 5A(d): Conflict detection — query routes for selected worker + scheduledDate
+  const { data: conflictData, refetch: refetchConflicts } = trpc.fieldWorker.getWorkerRoutesOnDate.useQuery(
+    { workerId: selectedWorker!, scheduledDate },
+    { enabled: selectedWorker !== null && !!scheduledDate, retry: false }
+  );
+  // Keep workerConflicts in sync with query result
+  const workerConflictRoutes = (conflictData ?? []) as Array<{ id: number; status: string }>;
 
   // A4: Lot-access validation — §2.3 v4.5.9 (cherry_picker exception)
   // Canonical rules (operator-confirmed):
@@ -355,7 +367,7 @@ export default function CreateRoute() {
         estimatedDuration: String(optimizedRoute.estimatedDuration || 0),
         efficiencyScore: Number(optimizedRoute.efficiencyScore || 50),
         customerIds: selectedCustomers.filter(id => typeof id === 'number' && !isNaN(id)),
-        scheduledDate: new Date().toISOString().split('T')[0],
+        scheduledDate: scheduledDate,  // 5A(b): use admin-selected date
         status: "assigned" as const,
       };
       
@@ -1076,6 +1088,12 @@ export default function CreateRoute() {
               </div>
 
               <Label className="text-slate-300 text-sm mb-2 block">Assign Field Manager <span className="text-slate-500 font-normal">(Optional — at least one of supervisor or field manager required)</span></Label>
+              {/* 5A(d): Worker conflict warning */}
+              {workerConflictRoutes.length > 0 && (
+                <div className="mb-4 p-3 bg-yellow-900/30 border border-yellow-600/50 rounded text-yellow-300 text-xs">
+                  ⚠️ <strong>Scheduling conflict:</strong> The selected field manager already has {workerConflictRoutes.length} route{workerConflictRoutes.length > 1 ? 's' : ''} on {scheduledDate} (Route{workerConflictRoutes.length > 1 ? 's' : ''} #{workerConflictRoutes.map(r => r.id).join(', #')}). You can still proceed, but consider reassigning.
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                 {fieldManagers.filter((w: any) => w.status === "active").map((worker: any) => (
                   <div
@@ -1156,6 +1174,27 @@ export default function CreateRoute() {
         {/* Step 3: Optimized Route */}
         {step === 3 && optimizedRoute && (
           <div className="space-y-6">
+            {/* 5A(b): Scheduled date picker */}
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardHeader>
+                <CardTitle className="text-white text-base">Schedule Date</CardTitle>
+                <CardDescription className="text-slate-400">Choose the date this route will be executed</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <Label className="text-slate-300 text-sm w-32 flex-shrink-0">Scheduled Date</Label>
+                  <input
+                    type="date"
+                    value={scheduledDate}
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setScheduledDate(e.target.value)}
+                    className="bg-slate-700 border border-slate-600 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-slate-400 text-xs">(defaults to today)</span>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card className="bg-slate-800/50 border-slate-700">
               <CardHeader>
                 <CardTitle className="text-white">Optimized Route</CardTitle>

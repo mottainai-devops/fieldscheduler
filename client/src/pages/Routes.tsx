@@ -1,12 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar } from "lucide-react";
+import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar, Pencil, Save } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import AppHeader from "@/components/AppHeader";
 import { ListSkeleton } from "@/components/LoadingComponents";
 import { ErrorState } from "@/components/ErrorComponents";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 
 const STATUS_OPTIONS = [
   { value: "all", label: "All" },
@@ -19,10 +21,34 @@ const STATUS_OPTIONS = [
 export default function Routes() {
   const { data: routes = [], isLoading, error, refetch } = trpc.fieldWorker.getRoutes.useQuery();
   const [selectedRoute, setSelectedRoute] = useState<number | null>(null);
-  const { data: routeDetails } = trpc.fieldWorker.getRouteDetails.useQuery(
+  const { data: routeDetails, refetch: refetchDetails } = trpc.fieldWorker.getRouteDetails.useQuery(
     { id: selectedRoute! },
     { enabled: selectedRoute !== null }
   );
+  const utils = trpc.useUtils();
+
+  // 5A(c): Editable date state
+  const [editingDate, setEditingDate] = useState(false);
+  const [editDateValue, setEditDateValue] = useState("");
+  const { isAdmin, isFieldManager } = useAuth();
+  const canEditDate = isAdmin || isFieldManager;
+
+  const updateRouteAndNotifyMutation = trpc.fieldWorker.updateRouteAndNotifyWorker.useMutation({
+    onSuccess: () => {
+      toast.success("Route date updated and worker notified.");
+      setEditingDate(false);
+      refetchDetails();
+      utils.fieldWorker.getRoutes.invalidate();
+    },
+    onError: (err: any) => {
+      toast.error(`Failed to update date: ${err.message}`);
+    },
+  });
+
+  const handleSaveDate = () => {
+    if (!selectedRoute || !editDateValue) return;
+    updateRouteAndNotifyMutation.mutate({ id: selectedRoute, scheduledDate: editDateValue });
+  };
 
   // Filter state
   const [filterStatus, setFilterStatus] = useState("all");
@@ -280,6 +306,13 @@ export default function Routes() {
                             <Navigation className="w-3 h-3" />
                             <span>{route.customerCount || 0} stops</span>
                           </div>
+                          {/* 5A(e): Show scheduled date on route card */}
+                          {route.scheduledDate && (
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-3 h-3" />
+                              <span>{new Date(route.scheduledDate).toLocaleDateString()}</span>
+                            </div>
+                          )}
                           {route.efficiencyScore && (
                             <div className="flex items-center gap-2">
                               <Target className="w-3 h-3" />
@@ -317,6 +350,56 @@ export default function Routes() {
                         <p className="text-sm text-slate-400 mt-1">
                           {routeDetails.worker?.name || "Unassigned"}
                         </p>
+                        {/* 5A(c): Scheduled date display + editable field */}
+                        <div className="flex items-center gap-2 mt-2">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          {editingDate ? (
+                            <>
+                              <input
+                                type="date"
+                                value={editDateValue}
+                                onChange={(e) => setEditDateValue(e.target.value)}
+                                className="bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                              <Button
+                                size="sm"
+                                className="h-6 px-2 text-xs bg-blue-600 hover:bg-blue-700"
+                                onClick={handleSaveDate}
+                                disabled={updateRouteAndNotifyMutation.isPending}
+                              >
+                                <Save className="w-3 h-3 mr-1" />
+                                {updateRouteAndNotifyMutation.isPending ? "Saving…" : "Save"}
+                              </Button>
+                              <button
+                                className="text-slate-400 hover:text-white text-xs"
+                                onClick={() => setEditingDate(false)}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs text-slate-400">
+                                {(routeDetails as any).scheduledDate
+                                  ? new Date((routeDetails as any).scheduledDate).toLocaleDateString()
+                                  : "No date set"}
+                              </span>
+                              {canEditDate && (
+                                <button
+                                  className="text-slate-500 hover:text-blue-400 transition-colors"
+                                  title="Edit scheduled date"
+                                  onClick={() => {
+                                    const current = (routeDetails as any).scheduledDate;
+                                    setEditDateValue(current ? new Date(current).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+                                    setEditingDate(true);
+                                  }}
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
                       <span className={`px-3 py-1 rounded flex items-center gap-2 ${getStatusColor(routeDetails.status)}`}>
                         {getStatusIcon(routeDetails.status)}
