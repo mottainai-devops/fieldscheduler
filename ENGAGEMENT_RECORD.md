@@ -187,3 +187,117 @@ The following rules are active for all future work on this codebase:
 | Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
 | 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
 | 5B | Pending | — | Tariff parity & validation |
+
+---
+
+### Pattern #9 — Role-alias scoping bypass: admin-role users see 0 rows
+
+**Discovered:** 2026-06-24, during Dashboard 0-customers investigation (Tranche 5B close-out).
+
+**Instance:** `fieldWorker.getCustomers` was updated in Pattern #8 to check
+`ctx.user.fieldManagerId !== null` instead of `ctx.user.role === 'field_manager'`.
+This correctly scoped supervisors (users.role='field_manager') to their own
+customers. However, it also scoped **admin-role users** (field_manager workers
+mapped to users.role='admin' by `adminAuth.login`) to their own customers —
+because `fieldManagerId` is set for all workers, including admins.
+
+Worker id 1 (`adeyadewuyi@gmail.com`) has `workers.role='field_manager'`, which
+maps to `users.role='admin'` and `users.fieldManagerId=1`. With the Pattern #8
+fix, `getCustomers` saw `fieldManagerId=1` and scoped to customers with
+`fieldManager=1` — returning 0 rows because no customers are assigned to worker 1.
+
+**Fix:** The scoping condition is now:
+```ts
+const isScoped = ctx.user.fieldManagerId && ctx.user.role !== 'admin';
+```
+Admin-role users (full UI access) see all customers regardless of `fieldManagerId`.
+Supervisor-role users (scoped access) see only their assigned customers.
+
+Commit: `d94540ff`
+
+**Rule added (Rule 10):**
+
+**Rule 10 — Scoping guards must be paired with an admin-bypass clause.**  
+When a query is scoped by a data field (e.g. `fieldManagerId`), the guard must
+also check that the user is not an admin-level role. Admin users must always see
+the full dataset. The pattern is:
+```ts
+const isScoped = ctx.user.scopingField && ctx.user.role !== 'admin';
+```
+A scoping guard without an admin-bypass will silently return 0 rows for admin
+accounts whose `scopingField` happens to be set but has no matching data.
+
+---
+
+### Pattern #10 — Load-bearing fallback removal without data backfill
+
+**Discovered:** 2026-06-24, during Item 4 (building_id fallback) analysis (Tranche 5B).
+
+**Instance:** The `_buildingId` getter in `pickup_submission_screen.dart` fell back
+to `mafCode` when `buildingId` was null. The mafCode fallback was load-bearing:
+the FieldScheduler `customers` table has 229 customers (3%) with null `buildingId`,
+and 5,439 customers (77%) whose `buildingId` is in a non-canonical shape (e.g.,
+`TKB-052`, `SAY-076`, `CUM-415`) that does not match the ArcGIS composite pattern.
+
+Removing the mafCode fallback without first populating `buildingId` in the
+FieldScheduler database would have caused submission failures for ~80% of customers.
+
+**FieldScheduler buildingId shape audit (2026-06-24):**
+
+| Shape | Count | % | Example |
+|-------|-------|---|---------|
+| Null/empty | 229 | 3% | — |
+| TKB-XXX | 1,086 | 15% | `TKB-052` |
+| MOT-XXX (mafCode as buildingId) | 268 | 4% | `MOT-027` |
+| Other (SAY, CUM, etc.) | 5,439 | 77% | `SAY-076`, `CUM-415` |
+| Composite ArcGIS pattern | 0 | 0% | — |
+| **Total** | **7,022** | | |
+
+**Fix (two-phase):**
+- Phase 4a (data): Populate `buildingId` in FieldScheduler from the Mottainai
+  platform CustomerData records. The canonical `buildingId` is the composite
+  ArcGIS string (e.g., `"9591 LASIKA06 006"`). The current non-canonical shapes
+  (TKB, SAY, CUM) are lot-code abbreviations that must be resolved against the
+  Mottainai platform before the mafCode fallback can be removed.
+- Phase 4b (code): Remove the mafCode fallback **only after** Phase 4a is complete
+  and verified. Commit `b91e2c8` (Item 4 code change) is staged but must not be
+  deployed until Phase 4a data sync is confirmed.
+
+**Rule added (Rule 11):**
+
+**Rule 11 — Load-bearing fallbacks must be documented before removal.**  
+Before removing any fallback (e.g., `?? mafCode`, `|| 'medium'`, `|| 'other'`),
+audit the production data to determine what percentage of records would be affected
+if the fallback were absent. If >1% of records depend on the fallback, the removal
+must be preceded by a data backfill that eliminates the dependency. Document the
+audit results in the PR description.
+
+---
+
+## Standing Rules (Cumulative)
+
+The following rules are active for all future work on this codebase:
+
+| # | Rule | Source |
+|---|------|--------|
+| 1 | No empty catch blocks. Every catch must at minimum `console.error(e)`. | Pattern #6 |
+| 2 | Background-job pattern for endpoints that run >2s. No synchronous long-running handlers. | Phase A close-out |
+| 3 | One-shot crons must be flagged in PR review with a comment explaining why they are not recurring. | Phase A close-out |
+| 4 | Behavioral verification required for all new features. Code existence is not sufficient evidence. | Phase A close-out |
+| 5 | Role checks must log a `warn` when they deny a user whose underlying data suggests they should have had access. | Pattern #7a |
+| 6 | 404s from internal API calls must never be silently caught. Log at `error` and surface to error tracking. | Pattern #7b |
+| 7 | Token helper return types must be explicit. No `object` wrappers around raw token strings. | Pattern #4 |
+| 8 | Cache fallbacks to stale data must log a `warn` with key and staleness duration. | Pattern #2 |
+| 9 | When a check depends on a data field, write that field in every create/update path. Use the field that is actually written, not a derived alias. | Pattern #8 |
+| 10 | Scoping guards must include an admin-bypass clause. Admin-role users must always see the full dataset. | Pattern #9 |
+| 11 | Load-bearing fallbacks must be audited before removal. If >1% of records depend on the fallback, backfill the data first. | Pattern #10 |
+
+---
+
+## Tranche Close-Out Log
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
+| 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
+| 5B | Partially closed | 2026-06-24 | Items 1/1b/2/3/5 delivered. Item 4 split into 4a (data backfill, pending) + 4b (code, staged). Dashboard 0-customers fixed (d94540ff). |
