@@ -112,7 +112,11 @@ export const fieldWorkerRouter = router({
     }),
 
   // Customer operations
-  getCustomers: protectedProcedure.query(async () => {
+  getCustomers: protectedProcedure.query(async ({ ctx }) => {
+    // field_manager role: scope to their assigned customers only
+    if (ctx.user.role === 'field_manager' && ctx.user.fieldManagerId) {
+      return await fieldWorkerDb.getCustomersByFieldManager(ctx.user.fieldManagerId);
+    }
     return await fieldWorkerDb.getAllCustomers();
   }),
 
