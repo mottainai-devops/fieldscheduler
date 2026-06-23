@@ -56,15 +56,12 @@ jobs:
             ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
           set -e
           cd /home/ubuntu/field-worker-scheduler
-          echo "Running database schema sync..."
-          # Use drizzle-kit push (direct schema diff) instead of migrate,
-          # because the migration journal is out of sync with the live DB.
-          # drizzle-kit push compares schema.ts to the live DB and applies
-          # only the missing columns/tables, skipping already-existing ones.
-          # Pipe 'yes' to accept all drizzle-kit push prompts non-interactively
-          # (e.g. unique constraint warnings). --force skips destructive-change prompts.
-          yes | npx drizzle-kit push --force || true
-          echo "Schema sync complete!"
+          echo "Running targeted database migrations..."
+          # Use a targeted migration script instead of drizzle-kit push/migrate.
+          # The migration journal is out of sync with the live DB; drizzle-kit
+          # prompts interactively and cannot run in CI. The script is idempotent.
+          node scripts/migrate-add-fieldmanagerid.mjs
+          echo "Migrations complete!"
           ENDSSH
 
       - name: Deploy on server
