@@ -47,6 +47,20 @@ jobs:
             dist/ \
             ubuntu@${{ secrets.DEPLOY_HOST }}:/home/ubuntu/field-worker-scheduler/dist/
 
+      - name: Run database migrations
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          echo "Running database migrations..."
+          pnpm db:push
+          echo "Migrations complete!"
+          ENDSSH
+
       - name: Deploy on server
         run: |
           ssh -i ~/.ssh/deploy_key \
