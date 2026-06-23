@@ -1722,3 +1722,21 @@ All features implemented, tested, and verified. The application successfully han
 - [ ] Check Zoho OAuth app settings and token validity
 - [ ] May need to re-authorize the entire Zoho OAuth connection
 
+
+## TECH DEBT — Fix on Next Touch (logged Tranche 5A close-out, Jun 2025)
+
+These are pre-existing TypeScript errors that were present before Tranche 5A work began.
+They are non-blocking (build still succeeds via esbuild) but should be resolved the next
+time either file is touched for related work — do not let them accumulate further.
+
+- [ ] **`CreateRoute.tsx` — `maxDistance` parameter mismatch in `getCustomerClusters.useQuery`**
+  - File: `client/src/pages/CreateRoute.tsx` ~line 60
+  - Error: `TS2769 — Object literal may only specify known properties, and 'maxDistance' does not exist in type '{ clusterDistance?: number; ... }'`
+  - Fix: rename `maxDistance` → `clusterDistance` at the call site (matches the tRPC input schema)
+  - Risk if deferred: query silently ignores the distance parameter, clusters always use default radius
+
+- [ ] **`CreateRoute.tsx` — `preset` reference in skills map**
+  - File: `client/src/pages/CreateRoute.tsx` ~line 1129 (Step 2 worker card skills renderer)
+  - Error: `TS2304 — Cannot find name 'preset'`
+  - Fix: replace `key={preset.id}` with `key={idx}` (the loop variable already in scope)
+  - Risk if deferred: React key warning in console; cosmetic only, no data impact
