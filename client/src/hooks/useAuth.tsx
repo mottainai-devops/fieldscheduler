@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { trpc } from "@/lib/trpc";
 
 export interface AuthUser {
   id: number;
@@ -8,18 +8,23 @@ export interface AuthUser {
   fieldManagerId: number | null;
 }
 
+/**
+ * Lightweight auth hook for fieldscheduler pages.
+ * Uses trpc.auth.me (reads from DB on every request) instead of /api/user (404).
+ * Derives isAdmin / isFieldManager from the user's role field.
+ */
 export function useAuth() {
-  const { data: user, isLoading } = useQuery<AuthUser>({
-    queryKey: ["/api/user"],
+  const { data: user, isLoading } = trpc.auth.me.useQuery(undefined, {
     retry: false,
+    refetchOnWindowFocus: false,
   });
 
   const isAdmin = user?.role === "admin";
   const isFieldManager = user?.role === "field_manager";
-  const fieldManagerId = user?.fieldManagerId;
+  const fieldManagerId = (user as any)?.fieldManagerId ?? null;
 
   return {
-    user,
+    user: user ?? null,
     isLoading,
     isAuthenticated: !!user,
     isAdmin,
