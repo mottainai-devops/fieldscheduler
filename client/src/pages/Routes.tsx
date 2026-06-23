@@ -7,7 +7,7 @@ import { useState, useMemo } from "react";
 import AppHeader from "@/components/AppHeader";
 import { ListSkeleton } from "@/components/LoadingComponents";
 import { ErrorState } from "@/components/ErrorComponents";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 
 const STATUS_OPTIONS = [
@@ -30,7 +30,9 @@ export default function Routes() {
   // 5A(c): Editable date state
   const [editingDate, setEditingDate] = useState(false);
   const [editDateValue, setEditDateValue] = useState("");
-  const { isAdmin, isFieldManager } = useAuth();
+  const { user: authUser } = useAuth();
+  const isAdmin = authUser?.role === 'admin';
+  const isFieldManager = authUser?.role === 'field_manager';
   const canEditDate = isAdmin || isFieldManager;
 
   const updateRouteAndNotifyMutation = trpc.fieldWorker.updateRouteAndNotifyWorker.useMutation({
