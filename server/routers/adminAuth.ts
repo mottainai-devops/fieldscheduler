@@ -34,11 +34,19 @@ export const adminAuthRouter = router({
         // Create a user record in the users table if it doesn't exist
         // Use the worker's email as the openId for session purposes
         const openId = `worker-${worker.id}-${worker.email}`;
+        // Map the worker's role to the users table role so that UI role-gates work:
+        //   field_manager -> admin   (can edit routes, reschedule, view all data)
+        //   supervisor    -> field_manager (read-heavy, limited edits)
+        const usersRole: 'admin' | 'field_manager' | 'user' =
+          worker.role === 'field_manager' ? 'admin' :
+          worker.role === 'supervisor'    ? 'field_manager' :
+          'user';
         await db.upsertUser({
           openId,
           name: worker.name || null,
           email: worker.email || null,
           loginMethod: 'email',
+          role: usersRole,
         });
         
         console.log('[AdminAuth] User record created/updated for:', openId);
