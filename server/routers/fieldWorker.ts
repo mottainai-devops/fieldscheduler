@@ -113,8 +113,14 @@ export const fieldWorkerRouter = router({
 
   // Customer operations
   getCustomers: protectedProcedure.query(async ({ ctx }) => {
-    // field_manager role: scope to their assigned customers only
-    if (ctx.user.role === 'field_manager' && ctx.user.fieldManagerId) {
+    // Scope to assigned customers if fieldManagerId is set.
+    // Note: adminAuth.login maps workers.role='field_manager' → users.role='admin'
+    // so we cannot rely on ctx.user.role === 'field_manager' here.
+    // Instead, any user whose users row has a non-null fieldManagerId is a field manager
+    // and should only see their own customers.
+    // Pure admin accounts (adeyadewuyi@gmail.com etc.) have fieldManagerId=null and see all.
+    if (ctx.user.fieldManagerId) {
+      console.log(`[getCustomers] Scoping to fieldManagerId=${ctx.user.fieldManagerId} for user ${ctx.user.email}`);
       return await fieldWorkerDb.getCustomersByFieldManager(ctx.user.fieldManagerId);
     }
     return await fieldWorkerDb.getAllCustomers();
