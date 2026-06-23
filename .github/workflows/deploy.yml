@@ -57,10 +57,21 @@ jobs:
           set -e
           cd /home/ubuntu/field-worker-scheduler
           echo "Running targeted database migrations..."
-          # Use a targeted migration script instead of drizzle-kit push/migrate.
-          # The migration journal is out of sync with the live DB; drizzle-kit
-          # prompts interactively and cannot run in CI. The script is idempotent.
-          node scripts/migrate-add-fieldmanagerid.mjs
+          # Inline idempotent migration: add fieldManagerId to users table.
+          # Uses node -e to avoid needing a script file on the server.
+          # The .env file on the server provides DATABASE_URL.
+          node -e "
+            const mysql = require('mysql2/promise');
+            require('dotenv').config();
+            const url = process.env.DATABASE_URL;
+            if (!url) { console.error('No DATABASE_URL'); process.exit(1); }
+            mysql.createConnection(url).then(async conn => {
+              const [rows] = await conn.execute(\"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='fieldManagerId'\");
+              if (rows.length) { console.log('fieldManagerId already exists, skipping'); }
+              else { await conn.execute(\"ALTER TABLE users ADD COLUMN fieldManagerId int NULL\"); console.log('fieldManagerId column added'); }
+              await conn.end();
+            }).catch(e => { console.error(e.message); process.exit(1); });
+          "
           echo "Migrations complete!"
           ENDSSH
 
