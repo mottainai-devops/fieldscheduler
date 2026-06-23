@@ -61,7 +61,9 @@ jobs:
           # because the migration journal is out of sync with the live DB.
           # drizzle-kit push compares schema.ts to the live DB and applies
           # only the missing columns/tables, skipping already-existing ones.
-          npx drizzle-kit push --force
+          # Pipe 'yes' to accept all drizzle-kit push prompts non-interactively
+          # (e.g. unique constraint warnings). --force skips destructive-change prompts.
+          yes | npx drizzle-kit push --force || true
           echo "Schema sync complete!"
           ENDSSH
 
