@@ -127,6 +127,41 @@ condition to handle gracefully.
 
 ---
 
+### Pattern #8 — Missing data write that role check depends on
+**Discovered:** 2026-06-23, during P1/P2 pre-5B verification.
+
+**Instance:** `fieldWorker.getCustomers` was gated on `ctx.user.role === 'field_manager'`
+to scope customers to a field manager's own assignments. However, `adminAuth.login`
+never wrote the `fieldManagerId` column to the `users` table — the column did not
+exist in the production schema. Even after the column was added (P1 fix), the
+scoping still failed because the role check used the wrong value: `adminAuth.login`
+maps `workers.role='field_manager'` → `users.role='admin'`, so
+`ctx.user.role === 'field_manager'` never matched for Bukola.
+
+**Two sub-failures:**
+1. The `fieldManagerId` column was not written at all (P1 fix: added column +
+   `upsertUser` write + deploy.yml inline migration).
+2. The role check used the wrong field (`users.role`) instead of the data field
+   that was actually populated (`users.fieldManagerId`).
+
+**Fix:** `getCustomers` now checks `ctx.user.fieldManagerId !== null` (the data
+field that is actually written) rather than `ctx.user.role === 'field_manager'`
+(a derived value that is aliased differently by the login path).
+
+Commit: `59d30506`
+
+**Rule added (Rule 9):**
+
+**Rule 9 — Coupled-data integrity: write the field wherever the entity is created or updated.**  
+When a query or access-control check depends on a data field (e.g. `fieldManagerId`),
+that field must be written in *every* code path that creates or updates the entity
+(login, registration, admin edit, import). A check that depends on a field that is
+never written is a silent always-fail. Additionally, the check must use the field
+that is actually written, not a derived or aliased value that may differ across
+login paths.
+
+---
+
 ## Standing Rules (Cumulative)
 
 The following rules are active for all future work on this codebase:
@@ -141,6 +176,7 @@ The following rules are active for all future work on this codebase:
 | 6 | 404s from internal API calls must never be silently caught. Log at `error` and surface to error tracking. | Pattern #7b |
 | 7 | Token helper return types must be explicit. No `object` wrappers around raw token strings. | Pattern #4 |
 | 8 | Cache fallbacks to stale data must log a `warn` with key and staleness duration. | Pattern #2 |
+| 9 | When a check depends on a data field, write that field in every create/update path. Use the field that is actually written, not a derived alias. | Pattern #8 |
 
 ---
 
