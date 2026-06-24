@@ -289,6 +289,11 @@ export async function getAllRoutes() {
       createdAt: routes.createdAt,
       updatedAt: routes.updatedAt,
       workerName: workers.name,
+      // Tranche 8: recurring schedule columns
+      isRecurring: routes.isRecurring,
+      cadence: routes.cadence,
+      recurrenceStartDate: routes.recurrenceStartDate,
+      recurrenceEndDate: routes.recurrenceEndDate,
       // Tranche 6 Item 3: expose worker role for assignee-role filter
       workerRole: workers.role,
     })
