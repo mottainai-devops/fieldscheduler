@@ -472,4 +472,43 @@ The following rules are active for all future work on this codebase:
 |---------|--------|------------|-------|
 | Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
 | 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
-| 5B | Partially closed | 2026-06-24 | Items 1/1b/2/3/5 delivered. Item 4 split into 4a (data backfill, pending) + 4b (code, staged). Three-tier role model implemented (3208e048). Survey App 120L regression fixed (adf469c). Phase A regression audit: all other items CLEAR. |
+| 5B | Closed | 2026-06-24 | All items delivered. Item 3 migration: 7,602 CustomerData + 1,824 FormSubmission arcgisBuildingId backfilled. Item 4b: mafCode fallback removed (26626c2, 2c21d0d). Item 5: Fixed Billing canonical 6-entry list aligned across all layers (ac370a5); MongoDB migrated. Rule 16 logged. |
+
+---
+
+### Pattern #14 — Canonical list drift across system layers
+**Discovered:** 2026-06-24, during Tranche 5B Item 5 close-out.
+**Instance:** The Fixed Billing `BinTypeEnum` (backend Zod schema) and `BIN_TYPES`
+(admin dashboard frontend) contained 9 entries (`120L`, `240L`, `660L`, `1100L`,
+`MAMMOTH (1100 LITRE)`, `7-11 TONNE COMPACTOR`, `27 CBM DINO BIN`, `sachet`,
+`other`) that did not match the canonical 6-entry list used by the Survey App
+pickup form and the FieldScheduler mobile app. The two lists had diverged silently
+over multiple tranches. The MongoDB live data (2 agreements, 2 tariff schedules)
+also used the shorthand `240L` instead of the canonical `240 LITRE WHEELIE BIN`.
+**Fix:** BinTypeEnum and BIN_TYPES aligned to canonical 6 entries. MongoDB data
+migrated. Committed `ac370a5` to `mottainai-admin-dashboard` main.
+**Rule added (Rule 16):**
+
+---
+
+## Standing Rules
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 1 | No empty catch blocks. Every catch must at minimum `console.error(e)`. | Pattern #6 |
+| 2 | Background-job pattern for endpoints that run >2s. No synchronous long-running handlers. | Phase A close-out |
+| 3 | One-shot crons must be flagged in PR review with a comment explaining why they are not recurring. | Phase A close-out |
+| 4 | Behavioral verification required for all new features. Code existence is not sufficient evidence. | Phase A close-out |
+| 5 | Role checks must log a `warn` when they deny a user whose underlying data suggests they should have had access. Silent denial hides role-mapping bugs. | Pattern #7a |
+| 6 | 404s from internal API calls must never be silently caught. Log at `error` level. A 404 from an internal endpoint is always a code bug. | Pattern #7b |
+| 7 | Token helper return types must be explicit (`string`, not `object`). All callers must have a type assertion that would fail at compile time if the shape changes. | Pattern #4 |
+| 8 | Cache fallbacks to stale data must log a `warn` with the cache key and staleness duration. Fallbacks are not silent. | Pattern #2 |
+| 9 | When a query or access-control check depends on a data field, write that field's null/empty/malformed rate before shipping. If >5% of records are in a bad state, block the feature until the data is clean. | Pattern #9 |
+| 10 | Enum values that appear in multiple system layers (mobile app, backend Zod schema, admin dashboard frontend, MongoDB data) must be defined in one canonical source and cross-referenced in all others. Any change to the canonical list requires a migration plan for all layers simultaneously. | Pattern #14 |
+| 11 | Load-bearing fallbacks must be audited before removal. If >1% of records depend on the fallback, backfill the data first. | Pattern #10 |
+| 12 | When a role enum has ≥3 semantically distinct access levels, use ≥3 distinct enum values. Never alias two different access levels to the same role string. | Pattern #11 |
+| 13 | Every schema change that adds an enum value must be accompanied by an idempotent startup migration. `pnpm db:push` is not sufficient for production deployments that lack interactive TTY access. | Pattern #12 |
+| 14 | (Reserved — see Rule 12 source) | Pattern #11 |
+| 15 | When deprecating a value or feature, enumerate every client/surface that exposes it and verify removal in each explicitly. Backend rejection without client-side removal creates supervisor-facing dead options. Add per-client closure checks to the deprecation checklist. | Pattern #13 |
+| 16 | When a canonical list (enum, dropdown choices, bin types, status codes) is used across ≥2 system layers, every layer must reference the same authoritative constant. Shorthand aliases (e.g., `240L` for `240 LITRE WHEELIE BIN`) must not be introduced in any layer. Drift is detected by comparing all layer definitions against the canonical source at each tranche close-out. | Pattern #14 |
+
