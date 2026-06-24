@@ -389,3 +389,87 @@ The following rules are active for all future work on this codebase:
 | Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
 | 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
 | 5B | Partially closed | 2026-06-24 | Items 1/1b/2/3/5 delivered. Item 4 split into 4a (data backfill, pending) + 4b (code, staged). Three-tier role model implemented (3208e048). All 5 users pass behavioral trace. |
+
+---
+
+### Pattern #13 — Feature partially shipped: deprecation claimed at backend, client never updated
+
+**Discovered:** 2026-06-24, during Tranche 5B Survey App audit.
+
+**Instance:** `120 LITRE WHEELIE BIN` was deprecated in Phase A. The deprecation
+was claimed as complete: `normalizeBinType.js` rejects it at the backend, and the
+FieldScheduler mobile app was updated to the canonical 6-entry list. However, the
+Survey App (`mottainai-survey-app`) was never updated. Both `pickup_form_screen.dart`
+(v1 legacy) and `pickup_form_screen_v2.dart` (active screen, routed from
+`home_screen.dart`) still contained `'120 LITRE WHEELIE BIN'` in `_binTypes`.
+
+This is the same shape as Patterns #7–12: a feature is partially shipped, the
+incomplete portion is hidden by framing the work as "deprecated" or "fixed" without
+verifying every client surface.
+
+**Clients audited for 120L status (2026-06-24):**
+
+| Client | File | Status before fix |
+|--------|------|-------------------|
+| `mottainai-platform-backend` | `normalizeBinType.js` | ✓ Removed (Phase A) |
+| `fieldscheduler-mobile` | `pickup_submission_screen.dart` | ✓ Removed (Tranche 5B Item 5) |
+| `mottainai-admin-dashboard` | `FixedBilling.tsx` + `fixedBilling.ts` | ✓ Removed (Tranche 5B Item 5) |
+| `mottainai-survey-app` | `pickup_form_screen_v2.dart` (active) | ✗ **Still present — Phase A regression** |
+| `mottainai-survey-app` | `pickup_form_screen.dart` (v1 legacy) | ✗ **Still present — Phase A regression** |
+
+**Fix (2026-06-24):** Removed `'120 LITRE WHEELIE BIN'` from `_binTypes` in both
+`pickup_form_screen_v2.dart` and `pickup_form_screen.dart`. Both lists are now
+exactly the 6 canonical entries. Commit: `adf469c`.
+
+**Other Phase A regressions audited (2026-06-24) — all CLEAR:**
+
+| Item | What was checked | Result |
+|------|-----------------|--------|
+| Recycling Bin | `_binTypes` in both screens | Not present ✓ |
+| 660 LITRE | `_binTypes` in both screens | Not present ✓ |
+| Bag / Skip (bare) / Container / Other / sachet / 360L | `_binTypes` in both screens | Not present ✓ |
+| 18 CBM DINO BIN_ | `_binTypes` in both screens | Not present ✓ |
+| 27 CBM COMPACTOR_ | `_binTypes` in both screens | Not present ✓ |
+| Hidden email default `tinuogundiran@gmail.com` | All Dart files, all JSON/YAML | Not present ✓ |
+| Hidden email default `operations@mottainai.africa` | All Dart files, all JSON/YAML | Not present ✓ |
+
+The Survey App does not use ArcGIS Survey123 XLSForm. It is a Flutter app
+(`mottainai_survey`, v3.3.7) whose bin type list is defined in Dart source code.
+The "XLSForm" framing in the task description referred to the same Dart dropdown
+list — there is no separate `.xlsx` form file in the repository.
+
+**Rule added (Rule 15):**
+
+---
+
+## Standing Rules (Cumulative)
+
+The following rules are active for all future work on this codebase:
+
+| # | Rule | Source |
+|---|------|--------|
+| 1 | No empty catch blocks. Every catch must at minimum `console.error(e)`. | Pattern #6 |
+| 2 | Background-job pattern for endpoints that run >2s. No synchronous long-running handlers. | Phase A close-out |
+| 3 | One-shot crons must be flagged in PR review with a comment explaining why they are not recurring. | Phase A close-out |
+| 4 | Behavioral verification required for all new features. Code existence is not sufficient evidence. | Phase A close-out |
+| 5 | Role checks must log a `warn` when they deny a user whose underlying data suggests they should have had access. | Pattern #7a |
+| 6 | 404s from internal API calls must never be silently caught. Log at `error` and surface to error tracking. | Pattern #7b |
+| 7 | Token helper return types must be explicit. No `object` wrappers around raw token strings. | Pattern #4 |
+| 8 | Cache fallbacks to stale data must log a `warn` with key and staleness duration. | Pattern #2 |
+| 9 | When a check depends on a data field, write that field in every create/update path. Use the field that is actually written, not a derived alias. | Pattern #8 |
+| 10 | Scoping guards must include an admin-bypass clause. Admin-role users must always see the full dataset. | Pattern #9 |
+| 11 | Load-bearing fallbacks must be audited before removal. If >1% of records depend on the fallback, backfill the data first. | Pattern #10 |
+| 12 | When a role enum has ≥3 semantically distinct access levels, use ≥3 distinct enum values. Never alias two different access levels to the same role string. | Pattern #11 |
+| 13 | Every schema change that adds an enum value must be accompanied by an idempotent startup migration. `pnpm db:push` is not sufficient for production deployments that lack interactive TTY access. | Pattern #12 |
+| 14 | (Reserved — see Rule 12 source) | Pattern #11 |
+| 15 | When deprecating a value or feature, enumerate every client/surface that exposes it and verify removal in each explicitly. Backend rejection without client-side removal creates supervisor-facing dead options that submit and fail silently or with confusing errors. Add per-client closure checks to the deprecation checklist. | Pattern #13 |
+
+---
+
+## Tranche Close-Out Log
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
+| 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
+| 5B | Partially closed | 2026-06-24 | Items 1/1b/2/3/5 delivered. Item 4 split into 4a (data backfill, pending) + 4b (code, staged). Three-tier role model implemented (3208e048). Survey App 120L regression fixed (adf469c). Phase A regression audit: all other items CLEAR. |
