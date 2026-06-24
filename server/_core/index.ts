@@ -12,6 +12,7 @@ import zohoAuthRouter from "../routes/zoho-auth";
 import zohoWebhookRouter from "../routes/zoho-webhook";
 import { initializeScheduler, shutdownScheduler } from "../services/zohoScheduler";
 import { runSupervisorRoleMigration } from "../migrations/supervisorRole";
+import { runSystemAdminRoleMigration } from "../migrations/systemAdminRole";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -74,6 +75,7 @@ async function startServer() {
 
   // Run startup migrations (idempotent)
   await runSupervisorRoleMigration();
+  await runSystemAdminRoleMigration();
   // Initialize Zoho scheduler
   await initializeScheduler();
 
