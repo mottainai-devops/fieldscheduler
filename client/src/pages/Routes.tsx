@@ -529,6 +529,20 @@ export default function Routes() {
                         <span>One-off</span>
                       </div>
                     )}
+                    {/* Tranche 9 Item 5: Starting point display */}
+                    <div className="mt-3 pt-3 border-t border-slate-700 flex items-start gap-2 text-xs">
+                      <MapPin className="w-3 h-3 mt-0.5 text-amber-400 shrink-0" />
+                      {(routeDetails as any).startingPointLabel ? (
+                        <span className="text-slate-300">
+                          Starting from: <strong className="text-amber-400">{(routeDetails as any).startingPointLabel}</strong>
+                          {(routeDetails as any).startingPointLat != null && (routeDetails as any).startingPointLng != null && (
+                            <span className="text-slate-500"> ({Number((routeDetails as any).startingPointLat).toFixed(6)}, {Number((routeDetails as any).startingPointLng).toFixed(6)})</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-slate-500 italic">Starting from: (legacy — pre-depot system)</span>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
                 {/* Route Stops */}
