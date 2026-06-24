@@ -679,3 +679,84 @@ When Tranche 8 added `isRecurring`, `cadence`, `recurrenceStartDate`, and `recur
 | Tranche | Status | Close date | Notes |
 |---------|--------|------------|-------|
 | 8 (card chip fix) | Closed | 2026-06-24 | getAllRoutes custom SELECT was missing isRecurring/cadence/recurrenceStartDate/recurrenceEndDate. Added all four. Rebuild + PM2 restart. Trace B card chip verified live (Route #159 shows cyan RefreshCw + "Weekly"). Commit cdf06e20. Pattern #20, Rule 24. |
+
+---
+
+## Tranche 9 — Worker Depot System + Dynamic Route Starting Point
+
+**Date:** 2026-06-24
+
+### Items Delivered
+
+| Item | Description | Status |
+|------|-------------|--------|
+| 1 | Schema: `homeDepotLat`, `homeDepotLng`, `homeDepotLabel` on `workers`; `startingPointLat`, `startingPointLng`, `startingPointLabel` on `routes`. SQL migration 0017 applied directly. Rule 24 audit: `getAllRoutes` custom SELECT updated with startingPoint columns. | ✅ |
+| 2 | Workers admin UI: Home Depot sub-section with lat/lng/label fields, coupling validation (all three or none), depot badge on worker cards. | ✅ |
+| 3 | `optimizeRoute` procedure: reads worker's depot from DB, throws `PRECONDITION_FAILED` if missing (no silent HQ fallback). Frontend surfaces blocking toast with worker name. | ✅ |
+| 4 | Create Route Step 2: Starting Point section shows worker depot as default, optional custom override with lat/lng/label fields. Payload passed to `createRoute`. | ✅ |
+| 5 | Route detail panel Schedule section: "Starting from" row shows `startingPointLabel` (or lat/lng if no label). | ✅ |
+
+### Commits (pushed to `mottainai-devops/fieldscheduler`)
+
+| Commit | Description |
+|--------|-------------|
+| `b5db88a3` | `feat(tranche9-item1): add homeDepot columns to workers, startingPoint columns to routes (schema + Rule 24 audit)` |
+| `ea1723f9` | `feat(tranche9-item2): Workers admin UI — Home Depot sub-section with coupling validation` |
+| `ed5f3fc3` | `feat(tranche9-item3): optimizeRoute uses worker depot, PRECONDITION_FAILED if missing (no silent fallback)` |
+| `aa09e91a` | `feat(tranche9-item4): Create Route Step 2 — Starting Point section (depot default + custom override)` |
+| `1d528502` | `feat(tranche9-item5): Route detail panel — Starting from line in Schedule section` |
+
+### Deployment Notes
+
+- Production server: `54.194.172.107` (AWS EC2 — confirmed by resolving `app.fieldscheduler.net`)
+- SSH key: `/home/ubuntu/upload/fieldscheduler-key.pem`
+- App root: `/home/ubuntu/` (no git remote; deploy by SCP + `pnpm build` + `pm2 restart fieldscheduler`)
+- `notificationDb.ts` stub created at `server/notificationDb.ts` — was missing from production, blocking the build
+- `useAuth` import path on production: `@/_core/hooks/useAuth` (not `@/hooks/useAuth`)
+
+---
+
+## Pattern #21 — Production Server Identity Drift
+
+**Date:** 2026-06-24
+**Tranche:** 9
+
+The SSH key that previously connected to `34.74.136.106` (GCP cloud computer) was used for production deployments in earlier tranches. The actual production server is `54.194.172.107` (AWS EC2), which is what `app.fieldscheduler.net` resolves to. The GCP cloud computer is a separate machine used for APK distribution, not for running the web app.
+
+**Rule added (Rule 25):**
+
+**Rule 25 — Always confirm the production server IP before SSH/SCP.**  
+Before any production SSH/SCP operation, confirm the target IP by running `dig +short app.fieldscheduler.net` or asking the user. Never assume the connected cloud computer IP is the production web server. The cloud computer and the production server are distinct machines.
+
+---
+
+## Pattern #22 — Missing Module Blocks Build
+
+**Date:** 2026-06-24
+**Tranche:** 9
+
+`server/routers/fieldWorker.ts` contained `import * as notificationDb from "../notificationDb"`. The file `server/notificationDb.ts` was never deployed to the production server (`54.194.172.107`). The previous `dist/index.js` was compiled before this import was added, so PM2 was running stale code that did not include the import. The first rebuild after Tranche 9 changes failed with `Could not resolve "../notificationDb"`.
+
+**Fix:** Created `server/notificationDb.ts` stub that wraps the `workerNotifications` Drizzle table with a `createWorkerNotification` helper.
+
+**Rule added (Rule 26):**
+
+**Rule 26 — When adding a new import to a server router, verify the imported module exists on production before deploying.**  
+If the module does not exist on production, create it or remove the import before running `pnpm build`. A missing module will block the entire build even if the module is only used in a non-critical code path.
+
+---
+
+## Standing Rules (continued)
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 25 | Before any production SSH/SCP operation, confirm the target IP by resolving `app.fieldscheduler.net`. Never assume the cloud computer IP is the production web server. | Pattern #21 |
+| 26 | When adding a new import to a server router, verify the imported module exists on production before deploying. | Pattern #22 |
+
+---
+
+## Tranche Close-Out Log (continued)
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| 9 | Closed | 2026-06-24 | Worker depot system: homeDepot columns on workers, startingPoint columns on routes, Workers admin UI depot sub-section, optimizeRoute PRECONDITION_FAILED if no depot, Create Route starting point section, Route detail panel Starting from row. 5 commits. Pattern #21 (server identity drift), Pattern #22 (missing module blocks build), Rules 25-26. |
