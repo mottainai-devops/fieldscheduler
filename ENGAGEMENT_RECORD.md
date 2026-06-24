@@ -544,3 +544,24 @@ reading the full payload shape.
 | # | Rule | Source Pattern |
 |---|------|----------------|
 | 17 | When adding new fields to a tRPC mutation, re-read the full `mutateAsync` call site to verify every existing field name and type matches the current Zod schema. Payload drift (wrong key name, wrong type, extra null vs undefined) is silent in tRPC and will not surface as a type error if the field is `.optional()`. | Pattern #15 |
+
+---
+
+## Regression Investigation: Routes Detail Panel (Post-Tranche 6)
+
+**Reported:** Routes detail panel stuck on "Select a route to view details" for all 39 routes after Tranche 6 deployment. Owner confirmed click handler fires (highlight applies), but `routeDetails` never populates.
+
+**Investigation path:**
+1. Checked `Routes.tsx` click chain: `onClick → setSelectedRoute(route.id)` → `getRouteDetails.useQuery({ id: selectedRoute! }, { enabled: selectedRoute !== null })` — logic correct, no change in 281757fc that would break this.
+2. Checked git diff of 281757fc: only `filterAssigneeRole` state + filter logic + UI chips added. No change to `selectedRoute` state, `getRouteDetails` query, or detail panel conditional.
+3. Checked production server (`54.194.172.107`): production runs from `/home/ubuntu/field-worker-scheduler` (git head `d3eb7cb1`), a **separate codebase** from `/tmp/fieldscheduler-repo`. Tranche 6 changes were never deployed to production.
+4. PM2 error log showed repeated `[Database] Failed to upsert user: DrizzleQueryError … Data truncated for column 'role' at row 1` — `upsertUser` re-throws, propagating through the tRPC middleware chain and aborting every `protectedProcedure` call after login.
+5. Root cause: `drizzle/schema.ts` defined `users.role` as `mysqlEnum(["user","admin","field_manager"])` but the DB enum already contained `system_admin` (added by the `systemAdminRole` migration). The Drizzle type and the DB were out of sync.
+
+**Fix:** Added `"system_admin"` to `users.role` mysqlEnum in production `drizzle/schema.ts`, rebuilt, restarted PM2. Committed as `2c664ebc`.
+
+**Pattern #16 — Auth middleware re-throw blocks all protectedProcedures silently**
+When `upsertUser` (or any function called in the tRPC middleware context-building phase) throws, **every** `protectedProcedure` call fails for that session. The failure is silent from the UI perspective: the click handler fires, the query fires, the server logs "Called with routeId: X", but the procedure body never executes. The symptom looks like a frontend rendering bug but is actually a server-side auth middleware crash.
+
+**Rule 19 — Drizzle schema enums must be kept in sync with DB migrations**
+When a DB migration adds a new enum value (e.g., `ALTER TABLE … MODIFY COLUMN role ENUM(…, 'system_admin')`), the corresponding `mysqlEnum([…])` in `drizzle/schema.ts` must be updated in the same commit. A mismatch causes `WARN_DATA_TRUNCATED` on insert/update, which Drizzle surfaces as a thrown error. Because `upsertUser` re-throws, this silently breaks all authenticated tRPC calls.
