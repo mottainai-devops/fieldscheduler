@@ -2,7 +2,7 @@ import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import { clusterCustomers } from "../utils/clustering";
 import { clusterCustomersByCount } from "../utils/clusteringByCount";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import * as notificationDb from "../notificationDb";
 
 export const fieldWorkerRouter = router({
@@ -267,7 +267,7 @@ export const fieldWorkerRouter = router({
       return await fieldWorkerDb.getRoutesByWorkerId(input.workerId);
     }),
 
-  createRoute: protectedProcedure
+  createRoute: adminProcedure
     .input(z.object({
       workerId: z.number().optional(),
       vehicleId: z.number().optional(),

@@ -101,8 +101,8 @@ function Router() {
         </RequireAuth>
       </Route>
       <LayoutRoute path={"/workers"} component={Workers} requireAuth />
-      <LayoutRoute path={"/create-route"} component={CreateRoute} requireAuth />
-      <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} />
+      <LayoutRoute path={"/create-route"} component={CreateRoute} requireAdmin />
+      <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} requireAdmin />
       <LayoutRoute path={"/cluster-management"} component={ClusterManagement} />
       <LayoutRoute path={"/tracking"} component={WorkerTracking} />
       <LayoutRoute path={"/analytics"} component={Analytics} />
