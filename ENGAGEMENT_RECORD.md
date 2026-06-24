@@ -565,3 +565,26 @@ When `upsertUser` (or any function called in the tRPC middleware context-buildin
 
 **Rule 19 — Drizzle schema enums must be kept in sync with DB migrations**
 When a DB migration adds a new enum value (e.g., `ALTER TABLE … MODIFY COLUMN role ENUM(…, 'system_admin')`), the corresponding `mysqlEnum([…])` in `drizzle/schema.ts` must be updated in the same commit. A mismatch causes `WARN_DATA_TRUNCATED` on insert/update, which Drizzle surfaces as a thrown error. Because `upsertUser` re-throws, this silently breaks all authenticated tRPC calls.
+
+---
+
+## Pattern #17 — Partial Deployment / Wrong-Base Build
+
+**Date:** 2026-06-24
+**Tranche:** 6 (post-close hotfix)
+
+A hotfix commit (`2c664ebc` — Drizzle schema enum fix) was built and deployed directly on the production server without first pulling the latest `origin/main`. At the time of the hotfix, production was at `d3eb7cb1`, which predated all four Tranche 6 commits (`19922c39`, `9583714a`, `281757fc`, `50ebfaa5`). The hotfix was committed locally on the production server, creating a divergent branch. The built dist reflected only the hotfix on the old base — Tranche 6 features were silently absent from the deployed bundle.
+
+**Symptom:** The detail panel fix worked (confirming the hotfix was live), but the Filters panel, status chips, assignee role filter, recurring toggle, and Route Schedules nav removal were all missing — because those changes were on `origin/main` but not in the production working tree.
+
+**Discovery:** `git log --oneline` on the production server showed `d3eb7cb1` as the pre-hotfix base, with no Tranche 6 commits in history. `git fetch` revealed `origin/main` was 8 commits ahead.
+
+**Resolution:** `git pull --rebase origin main` on the production server (the hotfix was automatically dropped as already-upstream since the same change existed in `50ebfaa5`), followed by a clean rebuild from `50ebfaa5`.
+
+---
+
+## Standing Rules (continued)
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 21 | Hotfixes deployed to production must be built from current `origin/main`, not from a locally diverged base. Before making any change on the production server: (1) `git pull --rebase origin main`, (2) apply fix, (3) commit, push, build. Verify deployment with `git log --oneline -5` on the production server — the top commit must match `origin/main HEAD`. Building from an older base silently drops all intervening commits from the deployed bundle. | Pattern #17 |
