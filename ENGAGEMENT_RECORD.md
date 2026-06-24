@@ -301,3 +301,91 @@ The following rules are active for all future work on this codebase:
 | Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
 | 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
 | 5B | Partially closed | 2026-06-24 | Items 1/1b/2/3/5 delivered. Item 4 split into 4a (data backfill, pending) + 4b (code, staged). Dashboard 0-customers fixed (d94540ff). |
+
+---
+
+### Pattern #11 — Role enum aliasing without a third tier
+
+**Discovered:** 2026-06-24, during Dashboard 0-customers fix (Tranche 5B addendum).
+
+**Instance:** The `adminAuth.login` role mapping used a two-tier model:
+- `workers.role='field_manager'` → `users.role='admin'`
+- `workers.role='supervisor'` → `users.role='field_manager'`
+
+This collapsed two semantically distinct worker types (system admins and route
+field managers) into the same `users.role='admin'` value. When a scoping guard
+was added to bypass scoping for `role='admin'`, it bypassed scoping for ALL
+field_manager workers — including Bukola (who should be scoped to her 2,042
+customers) and adey (who should see all 7,022).
+
+**Root cause:** The two-tier model assumed `admin` meant "no scoping" and
+`field_manager` meant "scoped." But the role mapping made all field_manager
+workers into `admin` users, so the scoping guard could not distinguish them.
+
+**Fix:** Three-tier model:
+- `SYSTEM_ADMIN_WORKER_IDS = [1, 2]` → `users.role='system_admin'`, `fieldManagerId=null`
+- All other `field_manager` workers → `users.role='field_manager'`, `fieldManagerId=worker.id`
+- `adminProcedure` accepts both `system_admin` and `field_manager`
+- `getCustomers` scopes by `fieldManagerId` presence (only set for field_manager-role users)
+
+**Behavioral trace (2026-06-24, commit 3208e048):**
+
+| User | Role | fieldManagerId | customerCount | Expected | Pass |
+|------|------|----------------|---------------|----------|------|
+| adey (worker 1) | system_admin | null | 7,022 | all | ✓ |
+| info@mottainai (worker 2) | system_admin | null | 7,022 | all | ✓ |
+| Bukola (worker 8) | field_manager | 8 | 2,042 | scoped | ✓ |
+| Halleluyah (worker 7) | field_manager | 7 | 2,112 | scoped | ✓ |
+| Juwon (worker 9) | field_manager | 9 | 1,847 | scoped | ✓ |
+
+**Rule added (Rule 12):**
+
+---
+
+### Pattern #12 — Schema migration not applied to production DB
+
+**Discovered:** 2026-06-24, during three-tier role model implementation.
+
+**Instance:** `drizzle/schema.ts` was updated to include `system_admin` in the
+`users.role` enum. The code was committed and deployed. But `pnpm db:push`
+requires an interactive TTY and could not be run in the sandbox. The production
+database still had the old enum, so `adminAuth.login` failed with a MySQL error
+when trying to insert `role='system_admin'`.
+
+**Fix:** Added `runSystemAdminRoleMigration()` as an idempotent startup migration
+(same pattern as `runSupervisorRoleMigration`). The migration runs `MODIFY COLUMN`
+on every server startup, which is a no-op if the enum already contains `system_admin`.
+
+**Rule added (Rule 13):**
+
+---
+
+## Standing Rules (Cumulative)
+
+The following rules are active for all future work on this codebase:
+
+| # | Rule | Source |
+|---|------|--------|
+| 1 | No empty catch blocks. Every catch must at minimum `console.error(e)`. | Pattern #6 |
+| 2 | Background-job pattern for endpoints that run >2s. No synchronous long-running handlers. | Phase A close-out |
+| 3 | One-shot crons must be flagged in PR review with a comment explaining why they are not recurring. | Phase A close-out |
+| 4 | Behavioral verification required for all new features. Code existence is not sufficient evidence. | Phase A close-out |
+| 5 | Role checks must log a `warn` when they deny a user whose underlying data suggests they should have had access. | Pattern #7a |
+| 6 | 404s from internal API calls must never be silently caught. Log at `error` and surface to error tracking. | Pattern #7b |
+| 7 | Token helper return types must be explicit. No `object` wrappers around raw token strings. | Pattern #4 |
+| 8 | Cache fallbacks to stale data must log a `warn` with key and staleness duration. | Pattern #2 |
+| 9 | When a check depends on a data field, write that field in every create/update path. Use the field that is actually written, not a derived alias. | Pattern #8 |
+| 10 | Scoping guards must include an admin-bypass clause. Admin-role users must always see the full dataset. | Pattern #9 |
+| 11 | Load-bearing fallbacks must be audited before removal. If >1% of records depend on the fallback, backfill the data first. | Pattern #10 |
+| 12 | When a role enum has ≥3 semantically distinct access levels, use ≥3 distinct enum values. Never alias two different access levels to the same role string. | Pattern #11 |
+| 13 | Every schema change that adds an enum value must be accompanied by an idempotent startup migration. `pnpm db:push` is not sufficient for production deployments that lack interactive TTY access. | Pattern #12 |
+
+---
+
+## Tranche Close-Out Log
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| Phase A | Closed | 2026-06-23 | Recycling-bin-backfill decommissioned; normalizeBinType hard-reject confirmed |
+| 5A | Closed | 2026-06-23 | All 5 items verified. Ancillary: adminAuth role-mapping fix (d6edae67), useAuth fix (790576a3) |
+| 5B | Partially closed | 2026-06-24 | Items 1/1b/2/3/5 delivered. Item 4 split into 4a (data backfill, pending) + 4b (code, staged). Three-tier role model implemented (3208e048). All 5 users pass behavioral trace. |
