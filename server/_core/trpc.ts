@@ -27,11 +27,17 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
+// adminProcedure: accessible to system_admin and field_manager roles.
+// Three-tier model:
+//   system_admin  → full access, no data scoping
+//   field_manager → admin UI access, scoped data (fieldManagerId set)
+//   user          → no admin access
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    if (!ctx.user || ctx.user.role !== 'admin') {
+    const hasAdminAccess = ctx.user?.role === 'system_admin' || ctx.user?.role === 'field_manager';
+    if (!ctx.user || !hasAdminAccess) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
 

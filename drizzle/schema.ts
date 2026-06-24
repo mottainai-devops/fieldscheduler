@@ -16,7 +16,7 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "field_manager"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "field_manager", "system_admin"]).default("user").notNull(),
   fieldManagerId: int("fieldManagerId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

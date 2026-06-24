@@ -34,25 +34,34 @@ export const adminAuthRouter = router({
         // Create a user record in the users table if it doesn't exist
         // Use the worker's email as the openId for session purposes
         const openId = `worker-${worker.id}-${worker.email}`;
-        // Map the worker's role to the users table role so that UI role-gates work:
-        //   field_manager -> admin   (can edit routes, reschedule, view all data)
-        //   supervisor    -> field_manager (read-heavy, limited edits)
-        const usersRole: 'admin' | 'field_manager' | 'user' =
-          worker.role === 'field_manager' ? 'admin' :
-          worker.role === 'supervisor'    ? 'field_manager' :
+
+        // Three-tier role model:
+        //   system_admin  → workers who manage the entire system (no customer scoping)
+        //   field_manager → route field managers (scoped to their assigned customers)
+        //   user          → all other workers
+        //
+        // Since all route managers and system admins share workers.role='field_manager',
+        // we use an explicit allowlist to identify system admins by worker ID.
+        // Worker IDs 1 (adey adewuyi) and 2 (ADMIN / info@mottainai.africa) are system admins.
+        const SYSTEM_ADMIN_WORKER_IDS = new Set([1, 2]);
+
+        const isSystemAdmin = SYSTEM_ADMIN_WORKER_IDS.has(worker.id);
+        const usersRole: 'system_admin' | 'field_manager' | 'user' =
+          isSystemAdmin                    ? 'system_admin' :
+          worker.role === 'field_manager'  ? 'field_manager' :
+          worker.role === 'supervisor'     ? 'field_manager' :
           'user';
+
         await db.upsertUser({
           openId,
           name: worker.name || null,
           email: worker.email || null,
           loginMethod: 'email',
           role: usersRole,
-          // fieldManagerId links this session's users row to the workers table so that
-          // role-gated queries (e.g. customerRouter.getCustomers) can scope by worker.
-          // Only set for supervisor workers (users.role='field_manager') — they see only
-          // their assigned customers. field_manager workers (users.role='admin') have full
-          // access and must NOT be scoped, so fieldManagerId stays null for them.
-          fieldManagerId: worker.role === 'supervisor' ? worker.id : null,
+          // fieldManagerId: set for field_manager-role users so that scoped queries
+          // (e.g. getCustomers) can filter by assigned customers.
+          // system_admin users get null — they see all data unscoped.
+          fieldManagerId: usersRole === 'field_manager' ? worker.id : null,
         });
         
         console.log('[AdminAuth] User record created/updated for:', openId);

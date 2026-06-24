@@ -113,11 +113,12 @@ export const fieldWorkerRouter = router({
 
   // Customer operations
   getCustomers: protectedProcedure.query(async ({ ctx }) => {
-    // Scope to assigned customers only for supervisor workers.
-    // Role mapping in adminAuth.login:
-    //   workers.role='field_manager' → users.role='admin', fieldManagerId=null  (sees ALL customers)
-    //   workers.role='supervisor'    → users.role='field_manager', fieldManagerId=worker.id (scoped)
-    // fieldManagerId is only set for supervisor workers, so the simple presence check is correct.
+    // Three-tier scoping model:
+    //   system_admin  → fieldManagerId=null → sees ALL customers
+    //   field_manager → fieldManagerId=worker.id → scoped to assigned customers
+    //   user          → fieldManagerId=null → sees ALL customers (fallback)
+    // fieldManagerId is only set for field_manager-role workers in adminAuth.login,
+    // so the simple presence check correctly distinguishes scoped vs unscoped.
     const isScoped = !!ctx.user.fieldManagerId;
     if (isScoped) {
       console.log(`[getCustomers] Scoping to fieldManagerId=${ctx.user.fieldManagerId} for user ${ctx.user.email} (role=${ctx.user.role})`);
