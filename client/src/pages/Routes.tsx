@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar, Pencil, Save } from "lucide-react";
+import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar, Pencil, Save, RefreshCw } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import AppHeader from "@/components/AppHeader";
@@ -353,6 +353,17 @@ export default function Routes() {
                             </div>
                           )}
                         </div>
+                        {/* Recurring indicator */}
+                        {(route as any).isRecurring === 1 && (
+                          <div className="mt-2 flex items-center gap-1">
+                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-cyan-600/20 text-cyan-400 border border-cyan-600/30">
+                              <RefreshCw className="w-3 h-3" />
+                              {((route as any).cadence
+                                ? ((route as any).cadence.charAt(0).toUpperCase() + (route as any).cadence.slice(1))
+                                : 'Recurring')}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -475,6 +486,51 @@ export default function Routes() {
                   </CardContent>
                 </Card>
 
+                {/* Schedule section */}
+                <Card className="bg-slate-800/50 border-slate-700">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-white text-sm">Schedule</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {(routeDetails as any).isRecurring === 1 ? (
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center gap-2 text-cyan-400">
+                          <RefreshCw className="w-4 h-4" />
+                          <span className="font-medium">Recurring</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 mt-2">
+                          <div className="bg-slate-700/30 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-1">Cadence</div>
+                            <div className="text-white font-medium capitalize">
+                              {(routeDetails as any).cadence || '—'}
+                            </div>
+                          </div>
+                          <div className="bg-slate-700/30 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-1">Starts</div>
+                            <div className="text-white font-medium">
+                              {(routeDetails as any).recurrenceStartDate
+                                ? new Date((routeDetails as any).recurrenceStartDate).toLocaleDateString()
+                                : '—'}
+                            </div>
+                          </div>
+                          <div className="bg-slate-700/30 rounded-lg p-3">
+                            <div className="text-xs text-slate-400 mb-1">Ends</div>
+                            <div className="text-white font-medium">
+                              {(routeDetails as any).recurrenceEndDate
+                                ? new Date((routeDetails as any).recurrenceEndDate).toLocaleDateString()
+                                : 'No end date'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 text-sm text-slate-400">
+                        <Calendar className="w-4 h-4" />
+                        <span>One-off</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
                 {/* Route Stops */}
                 <Card className="bg-slate-800/50 border-slate-700">
                   <CardHeader>
