@@ -153,6 +153,11 @@ export const routes = mysqlTable("routes", {
   scheduledDate: varchar("scheduledDate", { length: 50 }),
   supervisorId: int("supervisorId").references(() => workers.id),
   dispatchedAt: timestamp("dispatchedAt"),
+  // Tranche 6 Item 1: recurring route fields
+  isRecurring: int("isRecurring").default(0).notNull(),
+  cadence: mysqlEnum("cadence", ["daily", "weekly", "fortnightly", "monthly"]),
+  recurrenceStartDate: varchar("recurrenceStartDate", { length: 50 }),
+  recurrenceEndDate: varchar("recurrenceEndDate", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

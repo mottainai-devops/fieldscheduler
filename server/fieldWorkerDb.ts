@@ -289,6 +289,8 @@ export async function getAllRoutes() {
       createdAt: routes.createdAt,
       updatedAt: routes.updatedAt,
       workerName: workers.name,
+      // Tranche 6 Item 3: expose worker role for assignee-role filter
+      workerRole: workers.role,
     })
     .from(routes)
     .leftJoin(workers, eq(routes.workerId, workers.id))
@@ -403,6 +405,11 @@ export async function createRoute(data: {
   scheduledDate?: string;
   customerIds?: number[];
   supervisorId?: number;
+  // Tranche 6 Item 1: recurring route fields
+  isRecurring?: number;
+  cadence?: "daily" | "weekly" | "fortnightly" | "monthly";
+  recurrenceStartDate?: string;
+  recurrenceEndDate?: string;
 }) {
   console.log('\n[DB] createRoute called with data:', JSON.stringify(data, null, 2));
   

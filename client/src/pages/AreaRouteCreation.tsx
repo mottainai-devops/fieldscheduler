@@ -27,6 +27,11 @@ export default function AreaRouteCreation() {
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>("");
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>("none");
   const [scheduledDate, setScheduledDate] = useState<string>("");
+  // Tranche 6 Item 1: recurring route state
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [cadence, setCadence] = useState<"daily" | "weekly" | "fortnightly" | "monthly">("weekly");
+  const [recurrenceStartDate, setRecurrenceStartDate] = useState<string>("");
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState<string>("");
   const [primaryFilterType, setPrimaryFilterType] = useState<'building' | 'manager'>('building');
   const [filterBuilding, setFilterBuilding] = useState<string>("none");
   const [filterFieldManager, setFilterFieldManager] = useState<string>("none");
@@ -129,12 +134,16 @@ export default function AreaRouteCreation() {
     try {
       const customerIds = selectedCustomers.map(c => c.id);
       await createRouteMutation.mutateAsync({
-        name: `Area Route - ${new Date(scheduledDate).toLocaleDateString()}`,
-        assignedWorkerId: parseInt(selectedWorkerId),
-        vehicleId: selectedVehicleId ? parseInt(selectedVehicleId) : null,
-        scheduledDate: new Date(scheduledDate),
+        workerId: parseInt(selectedWorkerId),
+        vehicleId: selectedVehicleId && selectedVehicleId !== "none" ? parseInt(selectedVehicleId) : undefined,
+        scheduledDate: scheduledDate,
         customerIds,
-        status: "pending",
+        status: "assigned" as const,
+        // Tranche 6 Item 1: recurring route fields
+        isRecurring: isRecurring ? 1 : 0,
+        cadence: isRecurring ? cadence : undefined,
+        recurrenceStartDate: isRecurring && recurrenceStartDate ? recurrenceStartDate : undefined,
+        recurrenceEndDate: isRecurring && recurrenceEndDate ? recurrenceEndDate : undefined,
       });
       toast.success("Route created successfully!");
       setLocation("/routes");
@@ -377,6 +386,74 @@ export default function AreaRouteCreation() {
                     onChange={(e) => setScheduledDate(e.target.value)}
                     className="bg-slate-700 border-slate-600 text-white"
                   />
+                </div>
+
+                {/* Tranche 6 Item 1: Recurring Route toggle */}
+                <div className="border-t border-slate-700 pt-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isRecurring}
+                      onClick={() => setIsRecurring(v => !v)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        isRecurring ? 'bg-blue-600' : 'bg-slate-600'
+                      }`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                        isRecurring ? 'translate-x-4' : 'translate-x-0.5'
+                      }`} />
+                    </button>
+                    <Label className="text-slate-300 text-xs cursor-pointer" onClick={() => setIsRecurring(v => !v)}>
+                      Recurring Route
+                    </Label>
+                    {isRecurring && (
+                      <span className="text-xs bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded">On</span>
+                    )}
+                  </div>
+
+                  {isRecurring && (
+                    <div className="space-y-2 pl-3 border-l-2 border-blue-600/40">
+                      {/* Cadence */}
+                      <div className="space-y-1">
+                        <Label className="text-slate-400 text-xs">Cadence</Label>
+                        <Select value={cadence} onValueChange={(v) => setCadence(v as typeof cadence)}>
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            <SelectItem value="daily" className="text-white">Daily</SelectItem>
+                            <SelectItem value="weekly" className="text-white">Weekly</SelectItem>
+                            <SelectItem value="fortnightly" className="text-white">Fortnightly</SelectItem>
+                            <SelectItem value="monthly" className="text-white">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Recurrence Start Date */}
+                      <div className="space-y-1">
+                        <Label className="text-slate-400 text-xs">Start Date</Label>
+                        <Input
+                          type="date"
+                          value={recurrenceStartDate}
+                          onChange={(e) => setRecurrenceStartDate(e.target.value)}
+                          className="bg-slate-700 border-slate-600 text-white h-8 text-xs"
+                        />
+                      </div>
+
+                      {/* Recurrence End Date */}
+                      <div className="space-y-1">
+                        <Label className="text-slate-400 text-xs">End Date <span className="text-slate-500">(optional)</span></Label>
+                        <Input
+                          type="date"
+                          value={recurrenceEndDate}
+                          min={recurrenceStartDate}
+                          onChange={(e) => setRecurrenceEndDate(e.target.value)}
+                          className="bg-slate-700 border-slate-600 text-white h-8 text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Create Button */}

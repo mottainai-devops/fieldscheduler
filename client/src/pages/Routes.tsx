@@ -54,6 +54,8 @@ export default function Routes() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterManager, setFilterManager] = useState("");
+  // Tranche 6 Item 3: Assignee Role filter
+  const [filterAssigneeRole, setFilterAssigneeRole] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
 
   const sevenDaysAgo = useMemo(() => {
@@ -95,16 +97,23 @@ export default function Routes() {
         if (!name.includes(filterManager.trim().toLowerCase())) return false;
       }
 
+      // Tranche 6 Item 3: Assignee Role filter
+      if (filterAssigneeRole !== "all") {
+        const role = ((route as any).workerRole || "").toLowerCase();
+        if (role !== filterAssigneeRole) return false;
+      }
+
       return true;
     });
-  }, [routes, filterStatus, filterDate, filterManager, sevenDaysAgo]);
+  }, [routes, filterStatus, filterDate, filterManager, filterAssigneeRole, sevenDaysAgo]);
 
-  const hasActiveFilters = filterStatus !== "all" || filterDate !== "" || filterManager !== "";
+  const hasActiveFilters = filterStatus !== "all" || filterDate !== "" || filterManager !== "" || filterAssigneeRole !== "all";
 
   const clearFilters = () => {
     setFilterStatus("all");
     setFilterDate("");
     setFilterManager("");
+    setFilterAssigneeRole("all");
   };
 
   const getStatusColor = (status: string) => {
@@ -192,7 +201,7 @@ export default function Routes() {
                       Filters
                       {hasActiveFilters && (
                         <span className="ml-1 bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
-                          {[filterStatus !== "all", filterDate !== "", filterManager !== ""].filter(Boolean).length}
+                          {[filterStatus !== "all", filterDate !== "", filterManager !== "", filterAssigneeRole !== "all"].filter(Boolean).length}
                         </span>
                       )}
                     </button>
@@ -262,6 +271,30 @@ export default function Routes() {
                             <X className="w-3 h-3" />
                           </button>
                         )}
+                      </div>
+                    </div>
+
+                    {/* Tranche 6 Item 3: Assignee Role filter */}
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1.5">Assignee Role</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { value: "all", label: "All" },
+                          { value: "field_manager", label: "Field Manager" },
+                          { value: "supervisor", label: "Supervisor" },
+                        ].map((opt) => (
+                          <button
+                            key={opt.value}
+                            onClick={() => setFilterAssigneeRole(opt.value)}
+                            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                              filterAssigneeRole === opt.value
+                                ? "border-blue-500 bg-blue-600/20 text-blue-300"
+                                : "border-slate-600 text-slate-400 hover:border-slate-400"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </div>

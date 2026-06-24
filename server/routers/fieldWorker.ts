@@ -285,6 +285,11 @@ export const fieldWorkerRouter = router({
       surveyAppSupervisorId: z.string().optional(),
       surveyAppSupervisorName: z.string().optional(),
       surveyAppSupervisorEmail: z.string().optional(),
+      // Tranche 6 Item 1: recurring route fields
+      isRecurring: z.number().optional(),
+      cadence: z.enum(["daily", "weekly", "fortnightly", "monthly"]).optional(),
+      recurrenceStartDate: z.string().optional(),
+      recurrenceEndDate: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       console.log('\n========== CREATE ROUTE REQUEST ==========');

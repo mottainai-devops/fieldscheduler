@@ -43,6 +43,11 @@ export default function CreateRoute() {
   const [maxClusterRadius, setMaxClusterRadius] = useState(15);
   // 5A(b): Scheduled date for the route (default today)
   const [scheduledDate, setScheduledDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  // Tranche 6 Item 1: recurring route state
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [cadence, setCadence] = useState<"daily" | "weekly" | "fortnightly" | "monthly">("weekly");
+  const [recurrenceStartDate, setRecurrenceStartDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState<string>("");
   // 5A(d): Worker conflict state
   const [workerConflicts, setWorkerConflicts] = useState<Array<{ id: number; status: string }>>([]);
 
@@ -369,6 +374,11 @@ export default function CreateRoute() {
         customerIds: selectedCustomers.filter(id => typeof id === 'number' && !isNaN(id)),
         scheduledDate: scheduledDate,  // 5A(b): use admin-selected date
         status: "assigned" as const,
+        // Tranche 6 Item 1: recurring route fields
+        isRecurring: isRecurring ? 1 : 0,
+        cadence: isRecurring ? cadence : undefined,
+        recurrenceStartDate: isRecurring ? recurrenceStartDate : undefined,
+        recurrenceEndDate: isRecurring && recurrenceEndDate ? recurrenceEndDate : undefined,
       };
       
       console.log("[CREATE ROUTE] Sending data:", routeData);
@@ -1181,7 +1191,7 @@ export default function CreateRoute() {
                 <CardDescription className="text-slate-400">Choose the date this route will be executed</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 mb-4">
                   <Label className="text-slate-300 text-sm w-32 flex-shrink-0">Scheduled Date</Label>
                   <input
                     type="date"
@@ -1191,6 +1201,75 @@ export default function CreateRoute() {
                     className="bg-slate-700 border border-slate-600 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <span className="text-slate-400 text-xs">(defaults to today)</span>
+                </div>
+
+                {/* Tranche 6 Item 1: Recurring Route toggle */}
+                <div className="border-t border-slate-700 pt-4">
+                  <div className="flex items-center gap-3 mb-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isRecurring}
+                      onClick={() => setIsRecurring(v => !v)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        isRecurring ? 'bg-blue-600' : 'bg-slate-600'
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        isRecurring ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                    <Label className="text-slate-300 text-sm cursor-pointer" onClick={() => setIsRecurring(v => !v)}>
+                      Recurring Route
+                    </Label>
+                    {isRecurring && (
+                      <span className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded">Enabled</span>
+                    )}
+                  </div>
+
+                  {isRecurring && (
+                    <div className="space-y-3 pl-4 border-l-2 border-blue-600/40">
+                      {/* Cadence */}
+                      <div className="flex items-center gap-3">
+                        <Label className="text-slate-300 text-sm w-32 flex-shrink-0">Cadence</Label>
+                        <Select value={cadence} onValueChange={(v) => setCadence(v as typeof cadence)}>
+                          <SelectTrigger className="bg-slate-700 border-slate-600 text-white w-48">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            <SelectItem value="daily" className="text-white">Daily</SelectItem>
+                            <SelectItem value="weekly" className="text-white">Weekly</SelectItem>
+                            <SelectItem value="fortnightly" className="text-white">Fortnightly</SelectItem>
+                            <SelectItem value="monthly" className="text-white">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Recurrence Start Date */}
+                      <div className="flex items-center gap-3">
+                        <Label className="text-slate-300 text-sm w-32 flex-shrink-0">Start Date</Label>
+                        <input
+                          type="date"
+                          value={recurrenceStartDate}
+                          onChange={(e) => setRecurrenceStartDate(e.target.value)}
+                          className="bg-slate-700 border border-slate-600 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+
+                      {/* Recurrence End Date */}
+                      <div className="flex items-center gap-3">
+                        <Label className="text-slate-300 text-sm w-32 flex-shrink-0">End Date</Label>
+                        <input
+                          type="date"
+                          value={recurrenceEndDate}
+                          min={recurrenceStartDate}
+                          onChange={(e) => setRecurrenceEndDate(e.target.value)}
+                          className="bg-slate-700 border border-slate-600 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="text-slate-400 text-xs">(optional)</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
