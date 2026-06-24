@@ -49,7 +49,10 @@ export const adminAuthRouter = router({
           role: usersRole,
           // fieldManagerId links this session's users row to the workers table so that
           // role-gated queries (e.g. customerRouter.getCustomers) can scope by worker.
-          fieldManagerId: worker.id,
+          // Only set for supervisor workers (users.role='field_manager') — they see only
+          // their assigned customers. field_manager workers (users.role='admin') have full
+          // access and must NOT be scoped, so fieldManagerId stays null for them.
+          fieldManagerId: worker.role === 'supervisor' ? worker.id : null,
         });
         
         console.log('[AdminAuth] User record created/updated for:', openId);

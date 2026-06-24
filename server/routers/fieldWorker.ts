@@ -113,13 +113,12 @@ export const fieldWorkerRouter = router({
 
   // Customer operations
   getCustomers: protectedProcedure.query(async ({ ctx }) => {
-    // Scope to assigned customers only for non-admin users with a fieldManagerId.
+    // Scope to assigned customers only for supervisor workers.
     // Role mapping in adminAuth.login:
-    //   workers.role='field_manager' → users.role='admin'  (full UI access, sees ALL customers)
-    //   workers.role='supervisor'    → users.role='field_manager' (scoped to their customers)
-    // So: scope only when fieldManagerId is set AND role is NOT 'admin'.
-    // Admin-role users (field_manager workers promoted to admin UI) see all customers.
-    const isScoped = ctx.user.fieldManagerId && ctx.user.role !== 'admin';
+    //   workers.role='field_manager' → users.role='admin', fieldManagerId=null  (sees ALL customers)
+    //   workers.role='supervisor'    → users.role='field_manager', fieldManagerId=worker.id (scoped)
+    // fieldManagerId is only set for supervisor workers, so the simple presence check is correct.
+    const isScoped = !!ctx.user.fieldManagerId;
     if (isScoped) {
       console.log(`[getCustomers] Scoping to fieldManagerId=${ctx.user.fieldManagerId} for user ${ctx.user.email} (role=${ctx.user.role})`);
       return await fieldWorkerDb.getCustomersByFieldManager(ctx.user.fieldManagerId);
