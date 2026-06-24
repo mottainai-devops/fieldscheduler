@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { MapPin, Users, Truck, Zap, Navigation, CheckCircle, Target, X, Save, Trash2, Settings } from "lucide-react";
+import { MapPin, Users, Truck, Zap, Navigation, CheckCircle, Target, X, Save, Trash2, Settings, AlertTriangle } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { useState, useEffect } from "react";
@@ -50,6 +51,16 @@ export default function CreateRoute() {
   const [recurrenceEndDate, setRecurrenceEndDate] = useState<string>("");
   // 5A(d): Worker conflict state
   const [workerConflicts, setWorkerConflicts] = useState<Array<{ id: number; status: string }>>([]);
+
+  // Tranche 9: Starting point state
+  // resolvedStart is set by the optimizeRoute response and persisted on route save
+  const [useCustomStart, setUseCustomStart] = useState(false);
+  const [customStartLabel, setCustomStartLabel] = useState("");
+  const [customStartLat, setCustomStartLat] = useState("");
+  const [customStartLng, setCustomStartLng] = useState("");
+  const [customStartError, setCustomStartError] = useState<string | null>(null);
+  // resolvedStart is populated after a successful optimize call
+  const [resolvedStart, setResolvedStart] = useState<{ lat: number; lng: number; label: string } | null>(null);
 
   // A3: Supervisor picker state
   // selectedSupervisor holds the resolved workers.id (set after ensureSupervisorWorker on submit)
@@ -301,13 +312,41 @@ export default function CreateRoute() {
       selectedCustomers,
     });
 
+    // Tranche 9: validate custom start if toggled on
+    if (useCustomStart) {
+      const hasLabel = customStartLabel.trim() !== "";
+      const hasLat = customStartLat.trim() !== "";
+      const hasLng = customStartLng.trim() !== "";
+      if (!hasLabel || !hasLat || !hasLng) {
+        toast.error("Custom starting point: all three fields (Label, Latitude, Longitude) are required.");
+        return;
+      }
+      const latV = parseFloat(customStartLat);
+      const lngV = parseFloat(customStartLng);
+      if (!Number.isFinite(latV) || latV < -90 || latV > 90) {
+        toast.error("Custom starting point: Latitude must be between -90 and 90.");
+        return;
+      }
+      if (!Number.isFinite(lngV) || lngV < -180 || lngV > 180) {
+        toast.error("Custom starting point: Longitude must be between -180 and 180.");
+        return;
+      }
+    }
+
     setOptimizing(true);
     
     try {
-      // Call the ArcGIS optimization API
-      const result = await optimizeRouteMutation.mutateAsync({
+      // Call the OSRM optimization
+      const optimizePayload: any = {
         customerIds: selectedCustomers,
-      });
+        workerId: selectedWorker ?? undefined,
+      };
+      if (useCustomStart && customStartLat && customStartLng) {
+        optimizePayload.customStartLat = parseFloat(customStartLat);
+        optimizePayload.customStartLng = parseFloat(customStartLng);
+        optimizePayload.customStartLabel = customStartLabel.trim() || undefined;
+      }
+      const result = await optimizeRouteMutation.mutateAsync(optimizePayload);
 
       console.log("[OPTIMIZE] result", result);
 
@@ -329,12 +368,27 @@ export default function CreateRoute() {
         estimatedDuration,
         efficiencyScore: Math.max(50, Math.min(99, Math.round((result.stops.length / 10) * 10))),
       });
+
+      // Tranche 9: capture resolved starting point for display and persistence
+      if (result.startingPointLat != null && result.startingPointLng != null) {
+        setResolvedStart({
+          lat: result.startingPointLat,
+          lng: result.startingPointLng,
+          label: result.startingPointLabel || 'Starting Point',
+        });
+      }
       
       setStep(3);
       toast.success("Route optimized successfully!");
     } catch (error: any) {
       console.error("Route optimization error:", error);
-      toast.error(`Optimization failed: ${error?.message || "Unknown error"}`);
+      // Tranche 9: surface PRECONDITION_FAILED as a clear blocking message
+      const msg = error?.message || "Unknown error";
+      if (msg.includes('no valid home depot') || error?.data?.code === 'PRECONDITION_FAILED') {
+        toast.error(`Cannot optimize route: ${msg}`, { duration: 8000 });
+      } else {
+        toast.error(`Optimization failed: ${msg}`);
+      }
     } finally {
       setOptimizing(false);
     }
@@ -379,6 +433,10 @@ export default function CreateRoute() {
         cadence: isRecurring ? cadence : undefined,
         recurrenceStartDate: isRecurring ? recurrenceStartDate : undefined,
         recurrenceEndDate: isRecurring && recurrenceEndDate ? recurrenceEndDate : undefined,
+        // Tranche 9: persist the actual starting point used for this route
+        startingPointLat: resolvedStart?.lat ?? undefined,
+        startingPointLng: resolvedStart?.lng ?? undefined,
+        startingPointLabel: resolvedStart?.label ?? undefined,
       };
       
       console.log("[CREATE ROUTE] Sending data:", routeData);
@@ -1130,6 +1188,18 @@ export default function CreateRoute() {
                     
                     <div className="text-xs text-slate-400 space-y-1">
                       <div>Shift: {worker.shiftStart} - {worker.shiftEnd}</div>
+                      {/* Tranche 9: depot indicator on worker card */}
+                      {(worker as any).homeDepotLabel ? (
+                        <div className="flex items-center gap-1 text-amber-400">
+                          <MapPin className="w-3 h-3" />
+                          <span className="truncate">{(worker as any).homeDepotLabel}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 text-red-400">
+                          <AlertTriangle className="w-3 h-3" />
+                          <span className="italic">No depot — optimization will fail</span>
+                        </div>
+                      )}
                       {worker.skills && (() => {
                         try {
                           const skills = typeof worker.skills === 'string' ? JSON.parse(worker.skills) : worker.skills;
@@ -1151,7 +1221,107 @@ export default function CreateRoute() {
                 ))}
               </div>
               
-              <div className="flex justify-between">
+              {/* Tranche 9 Item 4: Starting Point section */}
+              <div className="mt-6 border border-slate-600 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-amber-400" />
+                    <span className="text-sm font-medium text-amber-400">Starting Point</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">{useCustomStart ? 'Custom coordinates' : "Worker's depot"}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={useCustomStart}
+                      onClick={() => { setUseCustomStart(v => !v); setCustomStartError(null); }}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                        useCustomStart ? 'bg-amber-500' : 'bg-slate-600'
+                      }`}
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        useCustomStart ? 'translate-x-5' : 'translate-x-1'
+                      }`} />
+                    </button>
+                    <span className="text-xs text-slate-400">Override</span>
+                  </div>
+                </div>
+
+                {!useCustomStart && (
+                  <div className="text-xs">
+                    {selectedWorker ? (() => {
+                      const w = fieldManagers.find((fm: any) => fm.id === selectedWorker) as any;
+                      if (!w) return null;
+                      if (w.homeDepotLabel && w.homeDepotLat != null && w.homeDepotLng != null) {
+                        return (
+                          <div className="flex items-center gap-2 text-green-400 bg-green-900/20 border border-green-700/40 rounded px-3 py-2">
+                            <MapPin className="w-3 h-3 shrink-0" />
+                            <span>Starting from: <strong>{w.homeDepotLabel}</strong> ({Number(w.homeDepotLat).toFixed(6)}, {Number(w.homeDepotLng).toFixed(6)})</span>
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div className="flex items-start gap-2 text-red-300 bg-red-900/20 border border-red-700/40 rounded px-3 py-2">
+                            <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>
+                              Cannot optimize route. Worker <strong>{w.name}</strong> has no depot set.
+                              Go to <strong>Workers admin → edit {w.name} → set Home Depot</strong>, then return here.
+                            </span>
+                          </div>
+                        );
+                      }
+                    })() : (
+                      <div className="text-slate-500 italic">Select a field manager above to see their depot.</div>
+                    )}
+                  </div>
+                )}
+
+                {useCustomStart && (
+                  <div className="space-y-2">
+                    <div className="grid gap-1">
+                      <Label className="text-slate-300 text-xs">Depot Label</Label>
+                      <Input
+                        value={customStartLabel}
+                        onChange={(e) => { setCustomStartLabel(e.target.value); setCustomStartError(null); }}
+                        placeholder="e.g. Test Asokoro Abuja"
+                        className="bg-slate-700 border-slate-600 text-white text-sm h-8"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="grid gap-1">
+                        <Label className="text-slate-300 text-xs">Latitude (-90 to 90)</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          value={customStartLat}
+                          onChange={(e) => { setCustomStartLat(e.target.value); setCustomStartError(null); }}
+                          placeholder="9.0579"
+                          className="bg-slate-700 border-slate-600 text-white text-sm h-8"
+                        />
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-slate-300 text-xs">Longitude (-180 to 180)</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          value={customStartLng}
+                          onChange={(e) => { setCustomStartLng(e.target.value); setCustomStartError(null); }}
+                          placeholder="7.4951"
+                          className="bg-slate-700 border-slate-600 text-white text-sm h-8"
+                        />
+                      </div>
+                    </div>
+                    {customStartError && (
+                      <div className="flex items-start gap-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-300">
+                        <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                        {customStartError}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-between mt-4">
                 <Button variant="outline" onClick={() => setStep(1)} className="border-slate-600">
                   Back
                 </Button>
