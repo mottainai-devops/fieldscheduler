@@ -19,7 +19,6 @@ import {
   ClipboardCheck,
   Wrench,
   Zap,
-  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AdminNotificationBell from "./AdminNotificationBell";
@@ -72,7 +71,6 @@ const navigationGroups: NavGroup[] = [
     icon: Route,
     items: [
       { label: "Routes", href: "/routes", icon: Route },
-      { label: "Route Schedules", href: "/route-schedules", icon: CalendarDays },
       { label: "Create Route", href: "/create-route", icon: Route },
       { label: "Area Route Creation", href: "/area-route-creation", icon: Route },
       { label: "Tag-Based Routes", href: "/tag-based-route-creation", icon: Route },
