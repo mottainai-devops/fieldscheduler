@@ -4,17 +4,41 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, Mail, Phone, Clock, Plus, Edit, Trash2 } from "lucide-react";
+import { Users, Mail, Phone, Clock, Plus, Edit, Trash2, MapPin, AlertTriangle } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import AppHeader from "@/components/AppHeader";
 import { useState } from "react";
 import { toast } from "sonner";
+
+// ─── Home Depot coupling validation ─────────────────────────────────────────
+// Returns an error string if the three depot fields are partially filled.
+function validateDepot(label: string, lat: string, lng: string): string | null {
+  const hasLabel = label.trim() !== "";
+  const hasLat = lat.trim() !== "";
+  const hasLng = lng.trim() !== "";
+  const anySet = hasLabel || hasLat || hasLng;
+  const allSet = hasLabel && hasLat && hasLng;
+  if (anySet && !allSet) {
+    return "Home Depot: all three fields (Label, Latitude, Longitude) must be set together, or all left blank.";
+  }
+  if (hasLat) {
+    const v = parseFloat(lat);
+    if (!Number.isFinite(v) || v < -90 || v > 90) return "Home Depot Latitude must be a number between -90 and 90.";
+  }
+  if (hasLng) {
+    const v = parseFloat(lng);
+    if (!Number.isFinite(v) || v < -180 || v > 180) return "Home Depot Longitude must be a number between -180 and 180.";
+  }
+  return null;
+}
 
 export default function Workers() {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState<any>(null);
+
+  // Core fields
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -26,22 +50,28 @@ export default function Workers() {
   const [workerRole, setWorkerRole] = useState<"field_manager" | "supervisor">("field_manager");
   const [preferredWebhookType, setPreferredWebhookType] = useState<"payt" | "monthly" | "">("payt");
 
+  // Home Depot fields (Tranche 9)
+  const [depotLabel, setDepotLabel] = useState("");
+  const [depotLat, setDepotLat] = useState("");
+  const [depotLng, setDepotLng] = useState("");
+  const [depotError, setDepotError] = useState<string | null>(null);
+
   const { data: workers = [], isLoading } = trpc.fieldWorker.getWorkers.useQuery();
   const utils = trpc.useUtils();
+
+  const resetForm = () => {
+    setName(""); setEmail(""); setPhone(""); setSkills("");
+    setStatus("active"); setShiftStart("08:00"); setShiftEnd("17:00");
+    setPin(""); setWorkerRole("field_manager"); setPreferredWebhookType("payt");
+    setDepotLabel(""); setDepotLat(""); setDepotLng(""); setDepotError(null);
+  };
+
   const createWorkerMutation = trpc.fieldWorker.createWorker.useMutation({
     onSuccess: () => {
       toast.success("Worker created successfully");
       utils.fieldWorker.getWorkers.invalidate();
       setOpen(false);
-      // Reset form
-      setName("");
-      setEmail("");
-      setPhone("");
-      setSkills("");
-      setStatus("active");
-      setShiftStart("08:00");
-      setShiftEnd("17:00");
-      setPin("");
+      resetForm();
     },
     onError: (error) => {
       toast.error(`Failed to create worker: ${error.message}`);
@@ -72,12 +102,21 @@ export default function Workers() {
     },
   });
 
+  const buildDepotPayload = () => {
+    if (!depotLabel.trim() && !depotLat.trim() && !depotLng.trim()) return {};
+    return {
+      homeDepotLabel: depotLabel.trim(),
+      homeDepotLat: parseFloat(depotLat),
+      homeDepotLng: parseFloat(depotLng),
+    };
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) {
-      toast.error("Worker name is required");
-      return;
-    }
+    if (!name.trim()) { toast.error("Worker name is required"); return; }
+    const depotErr = validateDepot(depotLabel, depotLat, depotLng);
+    if (depotErr) { setDepotError(depotErr); return; }
+    setDepotError(null);
 
     createWorkerMutation.mutate({
       name,
@@ -90,6 +129,7 @@ export default function Workers() {
       shiftEnd,
       role: workerRole,
       preferredWebhookType: preferredWebhookType || undefined,
+      ...buildDepotPayload(),
     } as any);
   };
 
@@ -102,18 +142,28 @@ export default function Workers() {
     setStatus(worker.status);
     setShiftStart(worker.shiftStart);
     setShiftEnd(worker.shiftEnd);
-    setPin(""); // Don't pre-fill PIN for security
+    setPin("");
     setWorkerRole(worker.role || "field_manager");
     setPreferredWebhookType(worker.preferredWebhookType || "payt");
+    // Prefill depot fields
+    setDepotLabel(worker.homeDepotLabel || "");
+    setDepotLat(worker.homeDepotLat != null ? String(worker.homeDepotLat) : "");
+    setDepotLng(worker.homeDepotLng != null ? String(worker.homeDepotLng) : "");
+    setDepotError(null);
     setEditOpen(true);
   };
 
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedWorker || !name.trim()) {
-      toast.error("Worker name is required");
-      return;
-    }
+    if (!selectedWorker || !name.trim()) { toast.error("Worker name is required"); return; }
+    const depotErr = validateDepot(depotLabel, depotLat, depotLng);
+    if (depotErr) { setDepotError(depotErr); return; }
+    setDepotError(null);
+
+    // If all depot fields are blank, explicitly clear them
+    const depotPayload = (!depotLabel.trim() && !depotLat.trim() && !depotLng.trim())
+      ? { homeDepotLabel: null, homeDepotLat: null, homeDepotLng: null }
+      : buildDepotPayload();
 
     updateWorkerMutation.mutate({
       id: selectedWorker.id,
@@ -127,6 +177,7 @@ export default function Workers() {
       shiftEnd,
       role: workerRole,
       preferredWebhookType: preferredWebhookType || undefined,
+      ...depotPayload,
     } as any);
   };
 
@@ -149,6 +200,63 @@ export default function Workers() {
     }
   };
 
+  // ─── Home Depot sub-section (reused in both create and edit dialogs) ────────
+  const HomeDepotSection = () => (
+    <div className="mt-2 border border-slate-600 rounded-lg p-3 space-y-3">
+      <div className="flex items-center gap-2">
+        <MapPin className="w-4 h-4 text-amber-400" />
+        <span className="text-sm font-medium text-amber-400">Home Depot</span>
+      </div>
+      <p className="text-xs text-slate-400">
+        The starting location for routes assigned to this worker. Required for route
+        optimization — optimization will fail without it.
+      </p>
+      <div className="grid gap-2">
+        <Label className="text-slate-300 text-xs">Depot Label</Label>
+        <Input
+          value={depotLabel}
+          onChange={(e) => { setDepotLabel(e.target.value); setDepotError(null); }}
+          placeholder="e.g. Cocoa House Ibadan"
+          className="bg-slate-700 border-slate-600 text-white text-sm"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-2">
+          <Label className="text-slate-300 text-xs">Latitude (-90 to 90)</Label>
+          <Input
+            type="number"
+            step="any"
+            min={-90}
+            max={90}
+            value={depotLat}
+            onChange={(e) => { setDepotLat(e.target.value); setDepotError(null); }}
+            placeholder="7.387868"
+            className="bg-slate-700 border-slate-600 text-white text-sm"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label className="text-slate-300 text-xs">Longitude (-180 to 180)</Label>
+          <Input
+            type="number"
+            step="any"
+            min={-180}
+            max={180}
+            value={depotLng}
+            onChange={(e) => { setDepotLng(e.target.value); setDepotError(null); }}
+            placeholder="3.879259"
+            className="bg-slate-700 border-slate-600 text-white text-sm"
+          />
+        </div>
+      </div>
+      {depotError && (
+        <div className="flex items-start gap-2 p-2 bg-red-900/30 border border-red-700 rounded text-xs text-red-300">
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+          {depotError}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-900">
       <AppHeader title="Workers" subtitle="Manage field workers and assignments" />
@@ -159,14 +267,14 @@ export default function Workers() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-white">Field Workers ({workers.length})</CardTitle>
-              <Dialog open={open} onOpenChange={setOpen}>
+              <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetForm(); }}>
                 <DialogTrigger asChild>
                   <Button className="bg-blue-600 hover:bg-blue-700">
                     <Plus className="w-4 h-4 mr-2" />
                     Create Worker
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="bg-slate-800 border-slate-700 text-white">
+                <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
                   <form onSubmit={handleSubmit}>
                     <DialogHeader>
                       <DialogTitle className="text-white">Create New Worker</DialogTitle>
@@ -292,6 +400,8 @@ export default function Workers() {
                           <p className="text-xs text-slate-500">Only admins can change this after it is set.</p>
                         </div>
                       )}
+                      {/* Tranche 9: Home Depot sub-section */}
+                      <HomeDepotSection />
                     </div>
                     <DialogFooter>
                       <Button
@@ -369,7 +479,7 @@ export default function Workers() {
                         </Button>
                       </div>
                     </div>
-                    
+
                     <div className="space-y-2 text-sm">
                       {worker.email && (
                         <div className="flex items-center gap-2 text-slate-400">
@@ -377,24 +487,34 @@ export default function Workers() {
                           <span className="truncate">{worker.email}</span>
                         </div>
                       )}
-                      
                       {worker.phone && (
                         <div className="flex items-center gap-2 text-slate-400">
                           <Phone className="w-3 h-3" />
                           <span>{worker.phone}</span>
                         </div>
                       )}
-                      
                       <div className="flex items-center gap-2 text-slate-400">
                         <Clock className="w-3 h-3" />
                         <span>{worker.shiftStart} - {worker.shiftEnd}</span>
                       </div>
+                      {/* Tranche 9: depot indicator on card */}
+                      {(worker as any).homeDepotLabel ? (
+                        <div className="flex items-center gap-2 text-amber-400">
+                          <MapPin className="w-3 h-3" />
+                          <span className="text-xs truncate">{(worker as any).homeDepotLabel}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-slate-500">
+                          <MapPin className="w-3 h-3" />
+                          <span className="text-xs italic">No depot set</span>
+                        </div>
+                      )}
                     </div>
-                    
+
                     {worker.skills && (
                       <div className="mt-3 pt-3 border-t border-slate-600">
                         <div className="flex flex-wrap gap-1">
-                          {worker.skills.split(',').map((skill: string, index: number) => skill.trim()).filter(Boolean).map((skill: string, index: number) => (
+                          {worker.skills.split(',').map((skill: string) => skill.trim()).filter(Boolean).map((skill: string, index: number) => (
                             <span
                               key={index}
                               className="text-xs px-2 py-1 bg-blue-600/20 text-blue-400 rounded"
@@ -413,8 +533,8 @@ export default function Workers() {
         </Card>
 
         {/* Edit Worker Dialog */}
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <Dialog open={editOpen} onOpenChange={(v) => { setEditOpen(v); if (!v) resetForm(); }}>
+          <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
             <form onSubmit={handleUpdate}>
               <DialogHeader>
                 <DialogTitle className="text-white">Edit Worker</DialogTitle>
@@ -533,6 +653,8 @@ export default function Workers() {
                   </Select>
                   <p className="text-xs text-slate-500">Admin-only field. Supervisor's billing type preference.</p>
                 </div>
+                {/* Tranche 9: Home Depot sub-section */}
+                <HomeDepotSection />
               </div>
               <DialogFooter>
                 <Button
@@ -586,4 +708,3 @@ export default function Workers() {
     </div>
   );
 }
-
