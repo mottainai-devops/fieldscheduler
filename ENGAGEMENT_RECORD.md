@@ -643,3 +643,39 @@ The recurring schedule display feature (Tranche 8) added a Schedule section to t
 |---------|--------|------------|-------|
 | 7 | Closed | 2026-06-24 | Routes detail panel regression: ER_BAD_FIELD_ERROR from isRecurring/cadence columns missing in production DB. Fixed via direct ALTER TABLE migration. Pattern #18, Rule 22. |
 | 8 | Closed | 2026-06-24 | Recurring schedule display added to Routes detail panel (Schedule card: One-off / Recurring with cadence+start+end grid) and route list cards (cyan RefreshCw chip). Commit 3f0b12a0. Trace A (one-off) verified live. Trace B (recurring) pending first recurring route creation. Trace C (detail panel renders) verified live. Pattern #19, Rule 23. |
+
+---
+
+## Pattern #20 — Custom SELECT Omission: JOIN-Augmented Queries Miss New Columns
+**Date:** 2026-06-24
+**Tranche:** 8 (card chip fix)
+
+`getAllRoutes()` in `fieldWorkerDb.ts` was refactored in Tranche 6 to use a custom `db.select({ ... })` with an explicit column list and a `LEFT JOIN` on the `workers` table (to expose `workerName` and `workerRole`). This replaced the original `db.select().from(routes)` (SELECT *).
+
+When Tranche 8 added `isRecurring`, `cadence`, `recurrenceStartDate`, and `recurrenceEndDate` to the Drizzle schema and to `getRouteById` (which still uses SELECT *), the four columns were **not added** to the `getAllRoutes` custom SELECT. The route list items therefore had `isRecurring: undefined`, causing the card chip condition `(route as any).isRecurring === 1` to evaluate to `false` for all routes — including Route #159 which had `isRecurring = 1` in the DB.
+
+**Contrast:** `getRouteById` uses `db.select().from(routes)` (SELECT *), so it automatically picked up the new columns. The detail panel worked correctly. Only the list view was broken.
+
+**Symptom:** Route #159 card showed no recurring chip despite `isRecurring = 1` in DB and the detail panel showing the Recurring badge correctly.
+
+**Discovery:** Diffing `getAllRoutes` custom SELECT columns against the Drizzle schema revealed the four missing columns.
+
+**Resolution:** Added `isRecurring`, `cadence`, `recurrenceStartDate`, `recurrenceEndDate` to the `getAllRoutes` SELECT object. Rebuild + PM2 restart. Card chip immediately appeared.
+
+**Why this is distinct from Pattern #18:** Pattern #18 was a DB-schema mismatch (columns missing from MySQL). Pattern #20 is a query-shape mismatch (columns present in DB and Drizzle schema, but omitted from a custom SELECT). Both produce `undefined` on the returned object, but the diagnosis and fix differ.
+
+---
+
+## Standing Rules (continued)
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 24 | Whenever a new column is added to the Drizzle schema, audit **every** custom `db.select({ ... })` call that touches the affected table. Custom SELECTs with explicit column lists do not automatically include new columns — they must be manually updated. Functions using `db.select().from(table)` (SELECT *) are safe. | Pattern #20 |
+
+---
+
+## Tranche Close-Out Log (continued)
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| 8 (card chip fix) | Closed | 2026-06-24 | getAllRoutes custom SELECT was missing isRecurring/cadence/recurrenceStartDate/recurrenceEndDate. Added all four. Rebuild + PM2 restart. Trace B card chip verified live (Route #159 shows cyan RefreshCw + "Weekly"). Commit cdf06e20. Pattern #20, Rule 24. |
