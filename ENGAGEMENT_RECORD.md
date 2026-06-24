@@ -512,3 +512,35 @@ migrated. Committed `ac370a5` to `mottainai-admin-dashboard` main.
 | 15 | When deprecating a value or feature, enumerate every client/surface that exposes it and verify removal in each explicitly. Backend rejection without client-side removal creates supervisor-facing dead options. Add per-client closure checks to the deprecation checklist. | Pattern #13 |
 | 16 | When a canonical list (enum, dropdown choices, bin types, status codes) is used across ≥2 system layers, every layer must reference the same authoritative constant. Shorthand aliases (e.g., `240L` for `240 LITRE WHEELIE BIN`) must not be introduced in any layer. Drift is detected by comparing all layer definitions against the canonical source at each tranche close-out. | Pattern #14 |
 
+
+---
+
+## Tranche Close-Out Log (continued)
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| 6 | Closed | 2026-06-24 | All 4 items delivered. Item 2: Route Schedules nav removed, test schedule wiped (19922c39). Item 4: RequireAdmin gate on /create-route and /area-route-creation, adminProcedure on createRoute (9583714a). Item 1: recurring route toggle (isRecurring/cadence/recurrenceStartDate/recurrenceEndDate) on both Create Route flows; DB schema + tRPC Zod schema + DB helper updated; AreaRouteCreation payload shape corrected (281757fc). Item 3: getAllRoutes now returns workerRole; Assignee Role chip-filter (All/Field Manager/Supervisor) added to Routes.tsx filter panel (281757fc). |
+
+---
+
+### Pattern #15 — Mutation payload field-name drift between UI and backend contract
+**Discovered:** 2026-06-24, during Tranche 6 Item 1 implementation.
+**Instance:** `AreaRouteCreation.tsx` was calling `createRoute` with
+`assignedWorkerId` (not `workerId`), `vehicleId: null` (not `undefined`), and
+`scheduledDate: new Date(scheduledDate)` (a Date object, not a string). The
+backend Zod schema expected `workerId: z.number().optional()`,
+`vehicleId: z.number().optional()`, and `scheduledDate: z.string().optional()`.
+The mismatch was silent: tRPC stripped unrecognised keys and coerced the Date
+to undefined, so routes were created without a worker assignment or scheduled
+date. The bug was only discovered when the recurring-field extension required
+reading the full payload shape.
+**Fix:** Corrected all three field names/types in the `mutateAsync` call.
+**Rule added (Rule 17):**
+
+---
+
+## Standing Rules (continued)
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 17 | When adding new fields to a tRPC mutation, re-read the full `mutateAsync` call site to verify every existing field name and type matches the current Zod schema. Payload drift (wrong key name, wrong type, extra null vs undefined) is silent in tRPC and will not surface as a type error if the field is `.optional()`. | Pattern #15 |
