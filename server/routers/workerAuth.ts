@@ -82,6 +82,21 @@ export const workerAuthRouter = router({
       return await fieldWorkerDb.getWorkerByEmail(input.email);
     }),
 
+  // Get worker by phone number (for phone+PIN login screen)
+  getByPhone: publicProcedure
+    .input(z.object({ phone: z.string().min(7) }))
+    .query(async ({ input }) => {
+      const worker = await fieldWorkerDb.getWorkerByPhone(input.phone);
+      if (!worker) return null;
+      // Return only safe fields — never return pin
+      return {
+        id: worker.id,
+        name: worker.name,
+        phone: worker.phone,
+        role: (worker as any).role ?? 'field_manager',
+      };
+    }),
+
   // Logout (no-op, just for symmetry)
   logout: publicProcedure.mutation(async () => {
     return { success: true };

@@ -1,4 +1,4 @@
-import { eq, desc, and, sql, or, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, or, inArray, like } from "drizzle-orm";
 import { getDb } from "./db";
 import { workers, vehicles, customers, routes, routeCustomers, workerLocations } from "../drizzle/schema";
 
@@ -20,6 +20,22 @@ export async function getWorkerByEmail(email: string) {
   const db = await getDb();
   if (!db) return null;
   const result = await db.select().from(workers).where(eq(workers.email, email)).limit(1);
+  return result[0] || null;
+}
+
+export async function getWorkerByPhone(phone: string) {
+  const db = await getDb();
+  if (!db) return null;
+  // Normalise: strip spaces and leading zeros for flexible matching
+  const normalised = phone.replace(/\s+/g, '').replace(/^0+/, '');
+  const result = await db.select().from(workers)
+    .where(
+      or(
+        eq(workers.phone, phone),
+        like(workers.phone, `%${normalised}`),
+      )
+    )
+    .limit(1);
   return result[0] || null;
 }
 
