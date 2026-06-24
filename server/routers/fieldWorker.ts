@@ -290,6 +290,10 @@ export const fieldWorkerRouter = router({
       cadence: z.enum(["daily", "weekly", "fortnightly", "monthly"]).optional(),
       recurrenceStartDate: z.string().optional(),
       recurrenceEndDate: z.string().optional(),
+      // Tranche 9: starting point fields
+      startingPointLat: z.number().optional(),
+      startingPointLng: z.number().optional(),
+      startingPointLabel: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       console.log('\n========== CREATE ROUTE REQUEST ==========');
@@ -576,35 +580,85 @@ export const fieldWorkerRouter = router({
       );
     }),
 
-  // Route optimization using ArcGIS
+  // Route optimization using OSRM
+  // Tranche 9: accepts optional workerId (to read depot) and optional custom override coords.
+  // If workerId is provided and worker has no valid depot, throws PRECONDITION_FAILED.
+  // If customStartLat/Lng/Label are provided, they override the worker depot.
+  // No silent fallback — explicit failure is the contract.
   optimizeRoute: protectedProcedure
     .input(z.object({
       customerIds: z.array(z.number()),
+      workerId: z.number().optional(),
+      // Per-route override (Item 4)
+      customStartLat: z.number().optional(),
+      customStartLng: z.number().optional(),
+      customStartLabel: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       const { optimizeRouteWithMottainai } = await import("../services/mottainaiRouteOptimization");
+      const { TRPCError } = await import("@trpc/server");
 
-      // Get customer details with coordinates
+      // ── Resolve starting point ─────────────────────────────────────────────
+      let startingPoint: { latitude: number; longitude: number; name: string };
+      let resolvedStartLabel: string;
+
+      const hasCustomOverride =
+        input.customStartLat !== undefined &&
+        input.customStartLng !== undefined &&
+        Number.isFinite(input.customStartLat) &&
+        Number.isFinite(input.customStartLng);
+
+      if (hasCustomOverride) {
+        // Custom per-route override takes precedence
+        startingPoint = {
+          latitude: input.customStartLat!,
+          longitude: input.customStartLng!,
+          name: input.customStartLabel || 'Custom Starting Point',
+        };
+        resolvedStartLabel = input.customStartLabel || 'Custom Starting Point';
+      } else if (input.workerId) {
+        // Read worker's home depot — no silent fallback
+        const worker = await fieldWorkerDb.getWorkerById(input.workerId);
+        if (!worker) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `Worker ${input.workerId} not found`,
+          });
+        }
+        const lat = (worker as any).homeDepotLat != null ? parseFloat(String((worker as any).homeDepotLat)) : NaN;
+        const lng = (worker as any).homeDepotLng != null ? parseFloat(String((worker as any).homeDepotLng)) : NaN;
+        const label = (worker as any).homeDepotLabel;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || !label) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: `Worker ${worker.name} has no valid home depot set. Set the worker's depot via Workers admin before optimizing routes. (homeDepotLat: ${(worker as any).homeDepotLat}, homeDepotLng: ${(worker as any).homeDepotLng}, homeDepotLabel: ${label})`,
+          });
+        }
+        startingPoint = { latitude: lat, longitude: lng, name: label };
+        resolvedStartLabel = label;
+      } else {
+        // No worker and no custom override — explicit failure
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Cannot optimize route: no worker selected and no custom starting point provided. Select a worker or provide custom starting coordinates.',
+        });
+      }
+
+      // ── Get and validate customer coordinates ─────────────────────────────
       const customersData = await Promise.all(
         input.customerIds.map(id => fieldWorkerDb.getCustomerById(id))
       );
 
-      // Filter out null customers and those without coordinates
       const validCustomers = customersData.filter(
-        c => c && c.latitude && c.longitude
+        c => c &&
+          Number.isFinite(parseFloat(c.latitude as string)) &&
+          Number.isFinite(parseFloat(c.longitude as string))
       ) as Array<{ id: number; latitude: string; longitude: string; name: string; address: string }>;
 
       if (validCustomers.length < 2) {
-        throw new Error("At least 2 customers with valid coordinates required");
+        throw new Error('At least 2 customers with valid coordinates required');
       }
 
-      // Use the first customer as the starting point (field worker's first stop)
-      const [first, ...rest] = validCustomers;
-      const startingPoint = {
-        latitude: parseFloat(first.latitude),
-        longitude: parseFloat(first.longitude),
-        name: first.name || first.address,
-      };
       const customers = validCustomers.map(c => ({
         id: c.id,
         latitude: parseFloat(c.latitude),
@@ -612,14 +666,13 @@ export const fieldWorkerRouter = router({
         name: c.name || c.address,
       }));
 
-      // Call Mottainai OSRM-based optimization (no API key required)
+      // ── Call OSRM optimization ─────────────────────────────────────────────
       const result = await optimizeRouteWithMottainai({ startingPoint, customers });
 
       if (!result.success) {
-        throw new Error(result.message || "Route optimization failed");
+        throw new Error(result.message || 'Route optimization failed');
       }
 
-      // Map the optimized sequence back to customers
       const optimizedStops = result.optimizedOrder.map(opt => {
         const customer = validCustomers.find(c => c.id === opt.customerId);
         return {
@@ -635,6 +688,10 @@ export const fieldWorkerRouter = router({
         stops: optimizedStops,
         totalDistance: result.summary.totalDistance,
         totalTime: result.summary.totalDuration,
+        // Pass resolved starting point back so frontend can display and persist it
+        startingPointLat: startingPoint.latitude,
+        startingPointLng: startingPoint.longitude,
+        startingPointLabel: resolvedStartLabel,
       };
     }),
 });

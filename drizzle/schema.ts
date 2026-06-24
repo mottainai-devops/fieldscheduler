@@ -64,6 +64,10 @@ export const workers = mysqlTable("workers", {
   currentLatitude: varchar("currentLatitude", { length: 50 }),
   currentLongitude: varchar("currentLongitude", { length: 50 }),
   lastLocationUpdate: timestamp("lastLocationUpdate"),
+  // Tranche 9: worker home depot — the starting location for route optimization
+  homeDepotLat: decimal("homeDepotLat", { precision: 10, scale: 7 }),
+  homeDepotLng: decimal("homeDepotLng", { precision: 10, scale: 7 }),
+  homeDepotLabel: varchar("homeDepotLabel", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -158,6 +162,10 @@ export const routes = mysqlTable("routes", {
   cadence: mysqlEnum("cadence", ["daily", "weekly", "fortnightly", "monthly"]),
   recurrenceStartDate: varchar("recurrenceStartDate", { length: 50 }),
   recurrenceEndDate: varchar("recurrenceEndDate", { length: 50 }),
+  // Tranche 9: actual starting point used for optimization (persisted at route creation)
+  startingPointLat: decimal("startingPointLat", { precision: 10, scale: 7 }),
+  startingPointLng: decimal("startingPointLng", { precision: 10, scale: 7 }),
+  startingPointLabel: varchar("startingPointLabel", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

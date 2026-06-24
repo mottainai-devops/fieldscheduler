@@ -109,6 +109,10 @@ export async function createWorker(data: {
   role?: "field_manager" | "supervisor";
   preferredWebhookType?: "payt" | "monthly" | null;
   surveyAppUserId?: string;
+  // Tranche 9: home depot
+  homeDepotLat?: number | null;
+  homeDepotLng?: number | null;
+  homeDepotLabel?: string | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -142,6 +146,10 @@ export async function updateWorker(id: number, data: {
   role?: "field_manager" | "supervisor";
   preferredWebhookType?: "payt" | "monthly" | null;
   surveyAppUserId?: string;
+  // Tranche 9: home depot
+  homeDepotLat?: number | null;
+  homeDepotLng?: number | null;
+  homeDepotLabel?: string | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -294,6 +302,10 @@ export async function getAllRoutes() {
       cadence: routes.cadence,
       recurrenceStartDate: routes.recurrenceStartDate,
       recurrenceEndDate: routes.recurrenceEndDate,
+      // Tranche 9: starting point columns (Rule 24 — explicit custom SELECT)
+      startingPointLat: routes.startingPointLat,
+      startingPointLng: routes.startingPointLng,
+      startingPointLabel: routes.startingPointLabel,
       // Tranche 6 Item 3: expose worker role for assignee-role filter
       workerRole: workers.role,
     })
@@ -415,6 +427,10 @@ export async function createRoute(data: {
   cadence?: "daily" | "weekly" | "fortnightly" | "monthly";
   recurrenceStartDate?: string;
   recurrenceEndDate?: string;
+  // Tranche 9: starting point fields
+  startingPointLat?: number;
+  startingPointLng?: number;
+  startingPointLabel?: string;
 }) {
   console.log('\n[DB] createRoute called with data:', JSON.stringify(data, null, 2));
   
