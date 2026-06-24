@@ -588,3 +588,29 @@ A hotfix commit (`2c664ebc` — Drizzle schema enum fix) was built and deployed 
 | # | Rule | Source Pattern |
 |---|------|----------------|
 | 21 | Hotfixes deployed to production must be built from current `origin/main`, not from a locally diverged base. Before making any change on the production server: (1) `git pull --rebase origin main`, (2) apply fix, (3) commit, push, build. Verify deployment with `git log --oneline -5` on the production server — the top commit must match `origin/main HEAD`. Building from an older base silently drops all intervening commits from the deployed bundle. | Pattern #17 |
+
+---
+
+## Pattern #18 — Schema-Ahead-of-DB: Drizzle SELECT * Fails Silently on Missing Columns
+**Date:** 2026-06-24
+**Tranche:** 7 (post-Tranche-6 regression investigation)
+
+The Tranche 6 build added `isRecurring`, `cadence`, `recurrenceStartDate`, and `recurrenceEndDate` to the `routes` Drizzle schema (`drizzle/schema.ts`). The `pnpm build` compiled these columns into the dist. However, `pnpm db:push` was never run on production, so the four columns did not exist in the production MySQL `routes` table.
+
+`getRouteById` uses `db.select().from(routes)` — a Drizzle `SELECT *` that expands to every column defined in the schema. When the query executed, MySQL returned `ER_BAD_FIELD_ERROR: Unknown column 'isRecurring' in 'field list'`. This error was **not caught** in `getRouteById` (no try/catch), so it propagated up through `getRouteDetails` and was caught by the tRPC procedure as an internal server error. The procedure returned a 500 with no visible log entry between `[getRouteDetails] Called` and the next request — the `[getRouteDetails] Route:` log never appeared.
+
+**Symptom:** Every authenticated click on a route card produced `[getRouteDetails] Called with routeId: N` in PM2 stdout, but no `Route:` or `Returning result` log. The detail panel stayed on "Select a route to view details". The error log showed no new entries (the ER_BAD_FIELD_ERROR was swallowed by the tRPC error handler and not re-logged).
+
+**Discovery:** Diffing the Drizzle schema columns against `SHOW COLUMNS FROM routes` on production revealed the four missing columns. Confirmed by extracting the `routes = mysqlTable(...)` definition from `dist/index.js` and comparing against the DB.
+
+**Resolution:** Direct `ALTER TABLE routes ADD COLUMN ...` migration for all four columns. No rebuild required — the dist was already correct. PM2 restart to clear any connection pool state.
+
+**Why this is distinct from Pattern #16:** Pattern #16 was a middleware-level failure (auth re-throw blocking all procedures). Pattern #18 is a data-layer failure (schema-DB mismatch causing a silent query error inside a specific procedure). Both produce the same symptom (procedure logs `Called` but never completes), but the diagnosis path and fix are different.
+
+---
+
+## Standing Rules (continued)
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 22 | When a new build introduces Drizzle schema changes (new columns, new tables, new enums), `pnpm db:push` MUST be run on production **before** or **immediately after** the new dist is deployed. A schema-ahead-of-DB state causes `SELECT *` queries to fail with `ER_BAD_FIELD_ERROR` — silently from the procedure's perspective, since tRPC catches and swallows the error without re-logging it. Verify by running `SHOW COLUMNS FROM <table>` and diffing against the schema definition in the dist. | Pattern #18 |
