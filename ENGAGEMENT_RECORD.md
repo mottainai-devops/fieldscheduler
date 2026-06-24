@@ -614,3 +614,32 @@ The Tranche 6 build added `isRecurring`, `cadence`, `recurrenceStartDate`, and `
 | # | Rule | Source Pattern |
 |---|------|----------------|
 | 22 | When a new build introduces Drizzle schema changes (new columns, new tables, new enums), `pnpm db:push` MUST be run on production **before** or **immediately after** the new dist is deployed. A schema-ahead-of-DB state causes `SELECT *` queries to fail with `ER_BAD_FIELD_ERROR` — silently from the procedure's perspective, since tRPC catches and swallows the error without re-logging it. Verify by running `SHOW COLUMNS FROM <table>` and diffing against the schema definition in the dist. | Pattern #18 |
+
+---
+
+## Pattern #19 — New-Column Display Requires New Data to Verify the Non-Default State
+**Date:** 2026-06-24
+**Tranche:** 8
+
+The recurring schedule display feature (Tranche 8) added a Schedule section to the Routes detail panel and a recurring chip to route list cards. The "one-off" path (default state, `isRecurring = 0`) was immediately verifiable against all 39 existing routes. The "recurring" path (`isRecurring = 1`) requires at least one route created through the updated Create Route UI — no such route exists in production yet, because all 39 routes predate the Tranche 6 recurring toggle.
+
+**Symptom of incorrect verification:** Marking Trace B ("recurring route shows cyan chip + cadence/start/end grid") as verified when no recurring route exists in the DB. The UI code is correct but the data state has not been exercised.
+
+**Rule added (Rule 23):**
+
+---
+
+## Standing Rules (continued)
+
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 23 | After adding display logic for a new DB column, explicitly identify which behavioral traces require new data to verify and which can be verified against existing data. Do not mark a trace as "verified" if it depends on data that does not yet exist in production. Record it as "pending first [entity] creation" with the exact creation steps needed to trigger it. | Pattern #19 |
+
+---
+
+## Tranche Close-Out Log (continued)
+
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| 7 | Closed | 2026-06-24 | Routes detail panel regression: ER_BAD_FIELD_ERROR from isRecurring/cadence columns missing in production DB. Fixed via direct ALTER TABLE migration. Pattern #18, Rule 22. |
+| 8 | Closed | 2026-06-24 | Recurring schedule display added to Routes detail panel (Schedule card: One-off / Recurring with cadence+start+end grid) and route list cards (cyan RefreshCw chip). Commit 3f0b12a0. Trace A (one-off) verified live. Trace B (recurring) pending first recurring route creation. Trace C (detail panel renders) verified live. Pattern #19, Rule 23. |
