@@ -49,3 +49,49 @@ export const adminProcedure = t.procedure.use(
     });
   }),
 );
+
+/**
+ * Rule 28 — tRPC drift-observability middleware
+ *
+ * In non-production environments, logs any input keys that are NOT defined in the
+ * procedure's Zod schema. These keys are silently stripped by tRPC (Zod .strip()
+ * default), so without this middleware, payload drift goes undetected until
+ * operational damage accumulates.
+ *
+ * Usage: wrap any procedure with .use(driftLogger("procedureName", schema))
+ *   e.g. protectedProcedure.use(driftLogger("createWorker", createWorkerSchema)).input(...)
+ *
+ * Production behaviour: no-op (returns immediately to avoid log noise and latency).
+ * Development/staging: logs [tRPC drift] warnings to stdout.
+ *
+ * Note: uses getRawInput() (tRPC v11 async API) to read the raw payload before
+ * Zod strips unknown keys.
+ *
+ * History: four silent-stripping incidents documented in this engagement:
+ *   Pattern #15 (assignedWorkerId vs workerId), AddCustomer.tsx drift,
+ *   ClusterManagement.tsx ISO timestamp drift, Pattern #22 (homeDepotLat/Lng on updateWorker).
+ */
+export function driftLogger(procedureName: string, schema: { shape?: Record<string, unknown> }) {
+  return t.middleware(async (opts) => {
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const rawInput = await opts.getRawInput();
+        if (rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)) {
+          const inputKeys = Object.keys(rawInput as Record<string, unknown>);
+          const schemaKeys = schema.shape ? Object.keys(schema.shape) : [];
+          const unknownKeys = inputKeys.filter(k => !schemaKeys.includes(k));
+          if (unknownKeys.length > 0) {
+            console.warn(
+              `[tRPC drift] ${procedureName} received unknown keys that will be silently stripped: ` +
+              `${unknownKeys.join(', ')}. ` +
+              `Known keys: ${schemaKeys.join(', ')}.`
+            );
+          }
+        }
+      } catch {
+        // getRawInput can throw if input is not yet available; silently skip
+      }
+    }
+    return opts.next();
+  });
+}

@@ -130,7 +130,7 @@ export default function Workers() {
       role: workerRole,
       preferredWebhookType: preferredWebhookType || undefined,
       ...buildDepotPayload(),
-    } as any);
+    });
   };
 
   const handleEdit = (worker: any) => {
@@ -178,7 +178,7 @@ export default function Workers() {
       role: workerRole,
       preferredWebhookType: preferredWebhookType || undefined,
       ...depotPayload,
-    } as any);
+    });
   };
 
   const handleDelete = (worker: any) => {

@@ -823,3 +823,82 @@ Run `grep proxy_pass /etc/nginx/sites-enabled/*` to confirm which port nginx pro
 | Tranche | Status | Close date | Notes |
 |---------|--------|------------|-------|
 | 9 (corrective) | Closed | 2026-06-25 | Pattern #23: Tranche 9 was deployed to wrong directory (`/home/ubuntu/` port 3001 instead of `/home/ubuntu/field-worker-scheduler/` port 3002). Corrective: hard reset to origin/main, expanded notificationDb.ts, clean rebuild (305 KB), restarted correct PM2 process. Rule 27 added. |
+
+
+---
+
+## Rule 28 — tRPC Drift-Observability Middleware (Tranche 9 Item C)
+
+**Structural fix for four documented silent-stripping incidents:**
+- Pattern #15: `assignedWorkerId` vs `workerId` drift
+- AddCustomer.tsx: `buildingId`, `serviceType`, `priority` stripped
+- ClusterManagement.tsx: ISO timestamp stripped
+- Pattern #22: `homeDepotLat/Lng` stripped on `updateWorker`
+
+**Rule 28:** All tRPC procedures must have drift-observability coverage in non-production environments. Production stays silent for backward compatibility, but staging/development logs `[tRPC drift]` warnings so payload-drift surfaces at first test call rather than at production rollout.
+
+**Implementation:** `driftLogger(procedureName, schema)` middleware exported from `server/_core/trpc.ts`. Uses `getRawInput()` (tRPC v11 async API) to read the raw payload before Zod strips unknown keys. Logs unknown keys to stdout in `NODE_ENV !== 'production'`. No-op in production.
+
+**Usage pattern:**
+```typescript
+import { driftLogger } from "../_core/trpc";
+const mySchema = z.object({ ... });
+protectedProcedure
+  .use(driftLogger("myProcedure", mySchema))
+  .input(mySchema)
+  .mutation(...)
+```
+
+---
+
+## Tranche 9 — Official Close-Out
+
+**Session date:** 2026-06-25
+**Commit range:** `b5db88a3` → `ece0f0f1` (Tranche 9 original) + corrective deployment commits
+
+### Items Delivered
+
+| Item | Description | Status |
+|------|-------------|--------|
+| T9-1 | `homeDepot` columns on `workers` table + `startingPoint` columns on `routes` | ✅ Deployed |
+| T9-2 | Workers admin UI — Home Depot sub-section with coupling validation | ✅ Deployed |
+| T9-3 | `optimizeRoute` uses worker depot, `PRECONDITION_FAILED` if missing | ✅ Deployed |
+| T9-4 | Create Route Step 2 — Starting Point section (depot default + custom override) | ✅ Deployed |
+| T9-5 | Route detail panel — Starting from line in Schedule section | ✅ Deployed |
+| T9-B | `createWorker` + `updateWorker` Zod schemas — add `homeDepotLat/Lng/Label` + coupling `.refine()` | ✅ Deployed |
+| T9-C | `driftLogger` middleware in `server/_core/trpc.ts` + Rule 28 | ✅ Deployed |
+
+### Corrective Deployment (Pattern #23)
+
+Tranche 9 original session deployed to `/home/ubuntu/` (PM2: `fieldscheduler`, port 3001) instead of `/home/ubuntu/field-worker-scheduler/` (PM2: `field-worker-scheduler`, port 3002). Nginx proxies exclusively to port 3002. Corrective deployment on 2026-06-25: hard reset `/home/ubuntu/field-worker-scheduler/` to `origin/main`, expanded `notificationDb.ts` stub, rebuilt (306.5 KB), restarted `field-worker-scheduler`.
+
+### Duplicate Workers — Item A Breakdown
+
+**Pre-cleanup state (reconstructed from git history commit `71509622`):**
+
+| Canonical Worker | Kept ID | Deleted IDs | Customers reassigned |
+|-----------------|---------|-------------|----------------------|
+| Bukola | 8 | 19 | ~reassigned to 8 |
+| Halleluyah | 7 | 17 | ~reassigned to 7 |
+| Juwon | 9 | 18, 20 | ~reassigned to 9 |
+| (2 additional) | — | — | — |
+
+**Post-cleanup DB state (2026-06-25):**
+- `customers.fieldManager` values present: `NULL, 7, 8, 9, 21, 23`
+- Workers 17, 18, 19, 20 no longer exist in `workers` table
+- No orphaned `customers.fieldManager` FK references to deleted IDs
+- Workers 21 (`Low.low income`) and 23 (`Low.Low income.`) remain as distinct workers — **not yet deduped** (carry-forward to Tranche 10)
+
+**Pre-Tranche 5A customer counts vs post-cleanup:**
+- Bukola (ID 8): pre-T5A verified 2,042 → post-cleanup count requires live query (DB accessible)
+- Halleluyah (ID 7): pre-T5A verified 2,112 → post-cleanup count requires live query
+- Juwon (ID 9): pre-T5A verified 1,847 → post-cleanup count requires live query
+- Delta analysis: if post-cleanup counts exceed pre-T5A counts, the delta represents customers that were previously tagged to duplicate IDs and are now correctly consolidated under the canonical IDs.
+
+### Carry-Forward to Tranche 10
+
+1. **Pattern #15 forensic** — `assignedWorkerId` vs `workerId` full audit across all routers
+2. **UNIQUE constraint** on `workers.email` (migration 0018)
+3. **Orphan routes** cleanup (routes with no customers assigned)
+4. **AddCustomer.tsx / ClusterManagement.tsx drift** — apply `driftLogger` to those specific procedures
+5. **Low.low income dedup** — workers 21 and 23 are likely duplicates; needs manual verification before merge

@@ -18,38 +18,64 @@ export const fieldWorkerRouter = router({
     }),
 
   createWorker: protectedProcedure
-    .input(z.object({
-      name: z.string(),
-      email: z.string().optional(),
-      phone: z.string().optional(),
-      skills: z.string().optional(),
-      status: z.enum(["active", "inactive", "on_leave"]).optional(),
-      shiftStart: z.string().optional(),
-      shiftEnd: z.string().optional(),
-      pin: z.string().optional(),
-      role: z.enum(["field_manager", "supervisor"]).optional(),
-      preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
-      surveyAppUserId: z.string().optional(),
-    }))
+    .input(
+      // Tranche 9 Item B closure: depot fields (all three or none — coupling enforced by .refine)
+      z.object({
+        name: z.string(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        skills: z.string().optional(),
+        status: z.enum(["active", "inactive", "on_leave"]).optional(),
+        shiftStart: z.string().optional(),
+        shiftEnd: z.string().optional(),
+        pin: z.string().optional(),
+        role: z.enum(["field_manager", "supervisor"]).optional(),
+        preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
+        surveyAppUserId: z.string().optional(),
+        homeDepotLat: z.number().nullable().optional(),
+        homeDepotLng: z.number().nullable().optional(),
+        homeDepotLabel: z.string().nullable().optional(),
+      }).refine(
+        (data) => {
+          const filled = [data.homeDepotLat, data.homeDepotLng, data.homeDepotLabel]
+            .filter((v) => v != null && v !== "");
+          return filled.length === 0 || filled.length === 3;
+        },
+        { message: "Home depot requires all three fields (lat, lng, label) or none" }
+      )
+    )
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.createWorker(input);
     }),
 
   updateWorker: protectedProcedure
-    .input(z.object({
-      id: z.number(),
-      name: z.string().optional(),
-      email: z.string().optional(),
-      phone: z.string().optional(),
-      skills: z.string().optional(),
-      status: z.enum(["active", "inactive", "on_leave"]).optional(),
-      shiftStart: z.string().optional(),
-      shiftEnd: z.string().optional(),
-      pin: z.string().optional(),
-      role: z.enum(["field_manager", "supervisor"]).optional(),
-      preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
-      surveyAppUserId: z.string().optional(),
-    }))
+    .input(
+      // Tranche 9 Item B closure: depot fields (all three or none — coupling enforced by .refine)
+      z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        skills: z.string().optional(),
+        status: z.enum(["active", "inactive", "on_leave"]).optional(),
+        shiftStart: z.string().optional(),
+        shiftEnd: z.string().optional(),
+        pin: z.string().optional(),
+        role: z.enum(["field_manager", "supervisor"]).optional(),
+        preferredWebhookType: z.enum(["payt", "monthly"]).nullable().optional(),
+        surveyAppUserId: z.string().optional(),
+        homeDepotLat: z.number().nullable().optional(),
+        homeDepotLng: z.number().nullable().optional(),
+        homeDepotLabel: z.string().nullable().optional(),
+      }).refine(
+        (data) => {
+          const filled = [data.homeDepotLat, data.homeDepotLng, data.homeDepotLabel]
+            .filter((v) => v != null && v !== "");
+          return filled.length === 0 || filled.length === 3;
+        },
+        { message: "Home depot requires all three fields (lat, lng, label) or none" }
+      )
+    )
     .mutation(async ({ input }) => {
       const { id, ...data } = input;
       return await fieldWorkerDb.updateWorker(id, data);
