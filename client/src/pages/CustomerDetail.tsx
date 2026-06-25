@@ -76,6 +76,11 @@ export default function CustomerDetail() {
     { enabled: !!customerId }
   );
 
+  const { data: customerNotes } = trpc.customer.getCustomerNotes.useQuery(
+    { customerId: customerId! },
+    { enabled: !!customerId }
+  );
+
   if (!customerId || !customer) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
