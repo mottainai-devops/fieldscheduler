@@ -760,3 +760,66 @@ If the module does not exist on production, create it or remove the import befor
 | Tranche | Status | Close date | Notes |
 |---------|--------|------------|-------|
 | 9 | Closed | 2026-06-24 | Worker depot system: homeDepot columns on workers, startingPoint columns on routes, Workers admin UI depot sub-section, optimizeRoute PRECONDITION_FAILED if no depot, Create Route starting point section, Route detail panel Starting from row. 5 commits. Pattern #21 (server identity drift), Pattern #22 (missing module blocks build), Rules 25-26. |
+
+---
+## Pattern #23 — Wrong Deployment Directory (Tranche 9 Corrective Action)
+**Date:** 2026-06-25
+**Tranche:** 9 (post-close corrective)
+
+### What Happened
+
+During the Tranche 9 deployment session, code was deployed to `/home/ubuntu/` and the PM2 process `fieldscheduler` (port 3001) was restarted. However, nginx at `app.fieldscheduler.net` proxies **exclusively to port 3002**, which is served by the `field-worker-scheduler` PM2 process running from `/home/ubuntu/field-worker-scheduler/`. The Tranche 9 ENGAGEMENT_RECORD entry incorrectly recorded the app root as `/home/ubuntu/`.
+
+As a result, live traffic at `app.fieldscheduler.net` continued to serve the **Tranche 8 build** (git HEAD `0ee99258`) for the entire period between the Tranche 9 session (2026-06-24) and this corrective deployment (2026-06-25).
+
+### Forensic Evidence
+
+| Signal | Value | Conclusion |
+|--------|-------|------------|
+| nginx `proxy_pass` | `http://localhost:3002` | Points to `field-worker-scheduler`, not `fieldscheduler` |
+| `/home/ubuntu/dist/index.js` size at time of Tranche 9 | 190 KB | Stripped build — missing compliance, payments, calendar, notifications routers |
+| `/home/ubuntu/field-worker-scheduler` git HEAD before fix | `0ee99258` | Tranche 8 complete — Tranche 9 commits never landed here |
+| `fieldscheduler` PM2 process birth | 2026-06-19 | Created alongside GitHub Actions setup, not the nginx target |
+| `field-worker-scheduler` PM2 process | port 3002 | The nginx target — running Tranche 8 code during Tranche 9 window |
+
+### Root Cause
+
+Two PM2 processes exist on `54.194.172.107`:
+1. `field-worker-scheduler` (port 3002) — the **nginx-proxied production process** running from `/home/ubuntu/field-worker-scheduler/`
+2. `fieldscheduler` (port 3001) — a **scratch/staging process** running from `/home/ubuntu/` (the original pre-engagement app directory, not served by nginx)
+
+The Tranche 9 session targeted `fieldscheduler` (port 3001) instead of `field-worker-scheduler` (port 3002). Additionally, the `notificationDb.ts` stub created during Tranche 9 only exported `createWorkerNotification`. The full set of functions required by `workerNotificationsRouter.ts`, `adminNotificationsRouter.ts`, and `compliance.ts` was missing, causing `import-is-undefined` build warnings.
+
+### Corrective Actions Taken (2026-06-25)
+
+1. **Hard reset** `/home/ubuntu/field-worker-scheduler/` to `origin/main` (commit `6b3d6775`), bringing in all five Tranche 9 commits.
+2. **Schema migration** verified: all six homeDepot/startingPoint columns already existed (the migration script from the wrong deployment had already run against the shared database).
+3. **Expanded `server/notificationDb.ts`** with the full set of exports: `createWorkerNotification`, `getWorkerNotifications`, `getUnreadWorkerNotifications`, `markWorkerNotificationRead`, `markAllWorkerNotificationsRead`, `createAdminNotification`, `getAllAdminNotifications`, `getUnreadAdminNotifications`, `markAdminNotificationRead`, `markAllAdminNotificationsRead`.
+4. **Rebuilt** `dist/index.js` from the full Tranche 9 source — clean build, no `import-is-undefined` warnings, 305 KB output.
+5. **Restarted** `field-worker-scheduler` PM2 process — confirmed `Server running on http://localhost:3002/`.
+
+### Rule Added (Rule 27)
+
+**Rule 27 — Before any production restart, confirm the PM2 process name and port match the nginx proxy target.**
+Run `grep proxy_pass /etc/nginx/sites-enabled/*` to confirm which port nginx proxies to, then run `pm2 list` to confirm which process name binds that port. Never restart a PM2 process without first verifying it is the nginx-proxied process. The production server has two PM2 processes; only `field-worker-scheduler` (port 3002) is served by nginx.
+
+### Corrective Deployment Notes (authoritative, supersedes Tranche 9 Deployment Notes)
+
+- **Production server:** `54.194.172.107` (AWS EC2)
+- **SSH key:** `/home/ubuntu/upload/fieldscheduler-key.pem`
+- **App root (correct):** `/home/ubuntu/field-worker-scheduler/` (git remote: `mottainai-devops/fieldscheduler`)
+- **PM2 process name (correct):** `field-worker-scheduler` (port 3002)
+- **Deploy method:** `git pull origin main` in `/home/ubuntu/field-worker-scheduler/`, then `pnpm build`, then `pm2 restart field-worker-scheduler`
+- **Scratch directory (do not deploy to):** `/home/ubuntu/` — PM2 process `fieldscheduler` (port 3001), not served by nginx
+
+---
+## Standing Rules (continued)
+| # | Rule | Source Pattern |
+|---|------|----------------|
+| 27 | Before any production restart, confirm the PM2 process name and port match the nginx proxy target. Run `grep proxy_pass /etc/nginx/sites-enabled/*` and `pm2 list` to verify. | Pattern #23 |
+
+---
+## Tranche Close-Out Log (continued)
+| Tranche | Status | Close date | Notes |
+|---------|--------|------------|-------|
+| 9 (corrective) | Closed | 2026-06-25 | Pattern #23: Tranche 9 was deployed to wrong directory (`/home/ubuntu/` port 3001 instead of `/home/ubuntu/field-worker-scheduler/` port 3002). Corrective: hard reset to origin/main, expanded notificationDb.ts, clean rebuild (305 KB), restarted correct PM2 process. Rule 27 added. |
