@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import { clusterCustomers } from "../utils/clustering";
 import { clusterCustomersByCount } from "../utils/clusteringByCount";
-import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, router, driftLogger } from "../_core/trpc";
 import * as notificationDb from "../notificationDb";
 
 export const fieldWorkerRouter = router({
@@ -46,7 +46,18 @@ export const fieldWorkerRouter = router({
       )
     )
     .mutation(async ({ input }) => {
-      return await fieldWorkerDb.createWorker(input);
+      try {
+        return await fieldWorkerDb.createWorker(input);
+      } catch (e: any) {
+        // MySQL ER_DUP_ENTRY for workers_email_unique constraint
+        if (e?.code === 'ER_DUP_ENTRY' && e?.message?.includes('workers_email_unique')) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: `A worker with email "${input.email}" already exists`,
+          });
+        }
+        throw e;
+      }
     }),
 
   updateWorker: protectedProcedure
@@ -79,7 +90,17 @@ export const fieldWorkerRouter = router({
     )
     .mutation(async ({ input }) => {
       const { id, ...data } = input;
-      return await fieldWorkerDb.updateWorker(id, data);
+      try {
+        return await fieldWorkerDb.updateWorker(id, data);
+      } catch (e: any) {
+        if (e?.code === 'ER_DUP_ENTRY' && e?.message?.includes('workers_email_unique')) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: `A worker with email "${data.email}" already exists`,
+          });
+        }
+        throw e;
+      }
     }),
 
   /**
@@ -171,7 +192,16 @@ export const fieldWorkerRouter = router({
     return await fieldWorkerDb.getAllCustomers();
   }),
 
+  // Tranche 11 Item 4: driftLogger applied — catches AddCustomer.tsx payload drift
   createCustomer: protectedProcedure
+    .use(driftLogger('createCustomer', {
+      shape: {
+        name: true, email: true, phone: true, address: true, customermaf: true,
+        fieldManager: true, latitude: true, longitude: true, serviceType: true,
+        priority: true, buildingId: true, zohoContactId: true, coordinateSource: true,
+        isMainBuilding: true, mainBuildingCustomerId: true,
+      }
+    }))
     .input(z.object({
       name: z.string(),
       email: z.string().optional(),
@@ -431,44 +461,52 @@ export const fieldWorkerRouter = router({
     }),
 
   // Clustering operations
+  // Tranche 11 Item 1+4: customerIds filter pass-through + driftLogger applied
   getCustomerClusters: protectedProcedure
+    .use(driftLogger('getCustomerClusters', {
+      shape: { clusterDistance: true, minClusterSize: true, maxClusterRadius: true, customerIds: true }
+    }))
     .input(z.object({
       clusterDistance: z.number().default(5),
       minClusterSize: z.number().default(3),
       maxClusterRadius: z.number().default(10),
-      customerIds: z.array(z.number()),
+      customerIds: z.array(z.number()).optional(),
     }))
     .query(async ({ input }) => {
       try {
-        const customers = await fieldWorkerDb.getCustomersByIds(input.customerIds);
+        const customers = input.customerIds && input.customerIds.length > 0
+          ? await fieldWorkerDb.getCustomersByIds(input.customerIds)
+          : await fieldWorkerDb.getAllCustomers();
         const clusters = clusterCustomers(customers, input.clusterDistance, input.minClusterSize);
         return clusters || [];
       } catch (error) {
-        console.error("Error clustering customers:", error);
         throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Distance clustering failed. Please try again.",
-          cause: error,
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Clustering failed: ' + (error instanceof Error ? error.message : String(error)),
         });
       }
     }),
 
+  // Tranche 11 Item 1+4: customerIds filter pass-through + driftLogger applied
   getCustomerClustersByCount: protectedProcedure
+    .use(driftLogger('getCustomerClustersByCount', {
+      shape: { customersPerCluster: true, customerIds: true }
+    }))
     .input(z.object({
       customersPerCluster: z.number().default(5),
-      customerIds: z.array(z.number()),
+      customerIds: z.array(z.number()).optional(),
     }))
     .query(async ({ input }) => {
       try {
-        const customers = await fieldWorkerDb.getCustomersByIds(input.customerIds);
+        const customers = input.customerIds && input.customerIds.length > 0
+          ? await fieldWorkerDb.getCustomersByIds(input.customerIds)
+          : await fieldWorkerDb.getAllCustomers();
         const clusters = clusterCustomersByCount(customers, input.customersPerCluster);
         return clusters || [];
       } catch (error) {
-        console.error("Error clustering customers by count:", error);
         throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Count-based clustering failed. Please try again.",
-          cause: error,
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Clustering by count failed: ' + (error instanceof Error ? error.message : String(error)),
         });
       }
     }),

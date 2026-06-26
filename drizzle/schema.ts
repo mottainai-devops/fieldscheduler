@@ -48,7 +48,8 @@ export type InsertAdminUser = typeof adminUsers.$inferInsert;
 export const workers = mysqlTable("workers", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 320 }),
+  // Tranche 11: unique constraint added after full duplicate worker cleanup
+  email: varchar("email", { length: 320 }).unique(),
   phone: varchar("phone", { length: 50 }),
   pin: varchar("pin", { length: 255 }),
   skills: text("skills"),
