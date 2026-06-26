@@ -470,13 +470,11 @@ export const fieldWorkerRouter = router({
       clusterDistance: z.number().default(5),
       minClusterSize: z.number().default(3),
       maxClusterRadius: z.number().default(10),
-      customerIds: z.array(z.number()).optional(),
+      customerIds: z.array(z.number()),
     }))
     .query(async ({ input }) => {
       try {
-        const customers = input.customerIds && input.customerIds.length > 0
-          ? await fieldWorkerDb.getCustomersByIds(input.customerIds)
-          : await fieldWorkerDb.getAllCustomers();
+        const customers = await fieldWorkerDb.getCustomersByIds(input.customerIds);
         const clusters = clusterCustomers(customers, input.clusterDistance, input.minClusterSize);
         return clusters || [];
       } catch (error) {
@@ -494,13 +492,11 @@ export const fieldWorkerRouter = router({
     }))
     .input(z.object({
       customersPerCluster: z.number().default(5),
-      customerIds: z.array(z.number()).optional(),
+      customerIds: z.array(z.number()),
     }))
     .query(async ({ input }) => {
       try {
-        const customers = input.customerIds && input.customerIds.length > 0
-          ? await fieldWorkerDb.getCustomersByIds(input.customerIds)
-          : await fieldWorkerDb.getAllCustomers();
+        const customers = await fieldWorkerDb.getCustomersByIds(input.customerIds);
         const clusters = clusterCustomersByCount(customers, input.customersPerCluster);
         return clusters || [];
       } catch (error) {

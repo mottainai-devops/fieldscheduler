@@ -99,7 +99,7 @@ export default function CreateRoute() {
   const { data: clustersByDistanceRaw = [], isLoading: loadingDistance } = trpc.fieldWorker.getCustomerClusters.useQuery(
     { clusterDistance: clusterDistance, customerIds: filteredCustomerIds },
     { 
-      enabled: selectionMode === 'cluster' && clusterMode === 'distance',
+      enabled: selectionMode === 'cluster' && clusterMode === 'distance' && filteredCustomerIds.length > 0,
       retry: false,
       refetchOnWindowFocus: false,
       onError: (err: any) => {
@@ -110,7 +110,7 @@ export default function CreateRoute() {
   const { data: clustersByCountRaw = [], isLoading: loadingCount } = trpc.fieldWorker.getCustomerClustersByCount.useQuery(
     { customersPerCluster, customerIds: filteredCustomerIds },
     { 
-      enabled: selectionMode === 'cluster' && clusterMode === 'count',
+      enabled: selectionMode === 'cluster' && clusterMode === 'count' && filteredCustomerIds.length > 0,
       retry: false,
       refetchOnWindowFocus: false,
       onError: (err: any) => {
