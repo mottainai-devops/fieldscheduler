@@ -1094,3 +1094,105 @@ Both clustering procedures also received the `customerIds: z.array(z.number()).o
 2. **Greedy NN spatial index** if customer set grows beyond 5,000
 3. **Orphan routes cleanup** (18 December 2025 test routes with 0 customers)
 4. **Post-dedup customer redistribution** — 259 freed customers need field manager assignment
+
+---
+
+## Tranche 11 Follow-up Items (Post-Close)
+
+### Pattern #26 — Zoho Sync Name-Only Dedup Key Causes Duplicate Workers
+
+**Observed:** Workers 29–34 were created by `sync-zoho-data.mjs` on 2026-06-26. The script uses:
+
+```sql
+INSERT INTO workers (name) VALUES ('${name}') ON DUPLICATE KEY UPDATE name='${name}'
+```
+
+The `ON DUPLICATE KEY` clause relies on a `UNIQUE` constraint on `workers.name`. However, Zoho Books stores "Field Manager" as a free-text custom field, so the same real person can appear as `"Low.low income"`, `"Low low income"`, and `"Low.Low income."` — three distinct strings, each creating a new worker row.
+
+**Root cause:** The Zoho sync script uses the raw Zoho field value as the dedup key without normalisation (trim, lowercase, punctuation removal). Any capitalisation or punctuation variation in the Zoho field creates a duplicate worker.
+
+**Impact:** Workers 29–34 were created as duplicates of workers 7 (Halleluyah), 8 (Bukola), 9 (Juwon), and 21 (Low.low income). 259 customers were assigned to these ghost workers and became unassigned after cleanup.
+
+**Rule added (Rule 31):** The `sync-zoho-data.mjs` script must be updated to normalise worker names before using them as dedup keys (trim, lowercase, collapse internal whitespace, strip trailing punctuation). Until that fix is applied, the script must **not** insert new worker rows — worker creation is an admin-only operation through the Workers UI. The sync script's responsibility is customer data only.
+
+---
+
+### Pattern #27 — Optional-with-Fallback Anti-Pattern in Required Filter Parameters
+
+**Observed (T10 Item 1 / T11 Item B):** The `getCustomerClusters` and `getCustomerClustersByCount` procedures were given `customerIds: z.array(z.number()).optional()` with a silent fallback to `getAllCustomers()`:
+
+```ts
+// ❌ Anti-pattern: optional with silent fallback
+const customers = input.customerIds && input.customerIds.length > 0
+  ? await fieldWorkerDb.getCustomersByIds(input.customerIds)
+  : await fieldWorkerDb.getAllCustomers();  // silently queries 7,863 rows
+```
+
+This is a recurrence of Pattern #22 (silent fallback). If `customerIds` is omitted or empty, the procedure silently queries the entire customer table (7,863 rows) instead of the filtered set, returning meaningless clusters and causing performance degradation.
+
+**Root cause:** The T10 fix made `customerIds` optional "for safety" without recognising that the clustering procedures are only ever called from `CreateRoute.tsx`, which always has a `filteredCustomerIds` list. The optional fallback masked the real bug (missing `enabled` guard on the client side).
+
+**Fix applied (T11 Item B, commit `0559e647`):**
+- `customerIds` changed to `z.array(z.number())` (required) in both procedures.
+- `getAllCustomers()` fallback removed — always calls `getCustomersByIds(input.customerIds)`.
+- `CreateRoute.tsx`: both `useQuery` calls now have `enabled: ... && filteredCustomerIds.length > 0` guard to prevent empty-array calls.
+
+**Rule added (Rule 32):** Filter parameters that are semantically required (the procedure has no meaningful behaviour without them) must be declared as `z.array(z.number())` or `z.string()`, not `.optional()`. If the caller might legitimately omit the parameter, the procedure must throw `TRPCError({ code: 'BAD_REQUEST' })` rather than falling back to a broader query. The `enabled` guard belongs on the client, not in the server procedure body.
+
+---
+
+### Pattern #28 — Clustering Query Fires on Empty Filter Set
+
+**Observed:** Before the T11 Item B fix, the clustering `useQuery` calls in `CreateRoute.tsx` had `enabled: selectionMode === 'cluster' && clusterMode === 'distance'` but no guard on `filteredCustomerIds.length`. When the user opened the clustering panel before any customers loaded (or with a filter that matched zero customers), the query fired with an empty `customerIds: []` array. The server received an empty array and (under the old optional schema) fell back to `getAllCustomers()`, returning clusters for all 7,863 customers — a completely wrong result with no error surfaced.
+
+**Root cause:** The `enabled` guard only checked UI state (panel open, mode selected) but not data readiness (non-empty customer list). This is a client-side analogue of Pattern #22: the query fires before its required input is available.
+
+**Fix applied (T11 Item B, commit `0559e647`):**
+```ts
+// ✅ Correct: guard on data readiness
+enabled: selectionMode === 'cluster' && clusterMode === 'distance' && filteredCustomerIds.length > 0
+```
+
+**Rule added (Rule 33):** Every `useQuery` call that passes a list as input must include `listName.length > 0` in its `enabled` condition. A query that fires with an empty list is almost always a logic error — either the data has not loaded yet, or the filter produced no results. In either case, the query should not fire; the UI should show an empty state instead.
+
+---
+
+### Tranche 11 Follow-up Item A — Zoho Sync Audit (No Code Change)
+
+**Finding:** Workers 29–34 were created by `sync-zoho-data.mjs` on 2026-06-26 08:32 UTC. The Zoho Books "Field Manager" custom field contained free-text variants of existing worker names. The script's `ON DUPLICATE KEY UPDATE name=name` clause only deduplicates on exact string match, so each capitalisation/punctuation variant created a new row.
+
+**Current customer distribution after all T11 cleanups:**
+
+| `fieldManager` | Count |
+|----------------|-------|
+| NULL (unassigned) | 728 |
+| 7 — Halleluyah | 2,452 |
+| 8 — Bukola | 2,326 |
+| 9 — Juwon | 2,357 |
+| **Total** | **7,863** |
+
+The 728 NULL pool includes the 259 customers freed from the T11 cleanup plus pre-existing unassigned customers.
+
+---
+
+### Production State After Tranche 11 Follow-up
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD | `0559e647` |
+| `dist/index.js` size | 308 KB |
+| Server | `http://localhost:3002/` — online |
+| Workers in DB | 16 (all unique emails) |
+| `customerIds` in clustering schemas | Required (`z.array(z.number())`) |
+| `getAllCustomers()` fallback in clustering | Removed |
+| `enabled` guard in CreateRoute.tsx | `filteredCustomerIds.length > 0` added to both queries |
+
+---
+
+### Carry-Forward to Tranche 12 (Updated)
+
+1. **`sync-zoho-data.mjs` dedup fix** — normalise worker names or skip worker insertion entirely (Rule 31). **Priority: High** — next Zoho sync will recreate duplicate workers if not fixed.
+2. **259 freed customers** need field manager reassignment (728 NULL pool).
+3. **`assignedWorkerId` vs `workerId` full audit** (Pattern #15 forensic — deferred from T9, T10, T11).
+4. **Greedy NN spatial index** if customer set grows beyond 5,000.
+5. **Orphan routes cleanup** (18 December 2025 test routes with 0 customers).
