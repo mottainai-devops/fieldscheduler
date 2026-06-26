@@ -73,7 +73,7 @@ export default function CreateRoute() {
 
   const { data: customers = [] } = trpc.fieldWorker.getCustomers.useQuery();
   const { data: clustersByDistanceRaw = [], isLoading: loadingDistance } = trpc.fieldWorker.getCustomerClusters.useQuery(
-    { maxDistance: clusterDistance },
+    { clusterDistance: clusterDistance },
     { 
       enabled: selectionMode === 'cluster' && clusterMode === 'distance',
       retry: false,
