@@ -996,3 +996,101 @@ Coordinate quality is not the cause of clustering bugs. All 67 AFT-200 customers
 
 **Rule 29 — Hook Dependency Declaration Order:** Before adding any `useQuery`/`useMutation` hook that depends on a derived value, verify the derived value is declared as a `useMemo` or `useState` hook placed above the new hook in the component. Inline `let`/`const` computations in the render body below a hook call are in the temporal dead zone at hook execution time and will throw `ReferenceError` at runtime.
 
+
+
+---
+
+## Tranche 11 — Post-T10 Cleanup and Hardening
+
+**Session date:** 2026-06-26 (evening)
+**Commit:** `ab56f851`
+**Branch:** `main` — `mottainai-devops/fieldscheduler`
+
+### Items Completed
+
+#### Item 1 — Post-Cleanup Customer Counts (Workers 7, 8, 9)
+
+Live DB query confirmed post-cleanup counts for the three canonical workers:
+
+| Worker ID | Name | Post-Cleanup Count | Pre-T5A Count | Delta |
+|-----------|------|--------------------|---------------|-------|
+| 7 | Halleluyah | 2,112 | 2,112 | 0 |
+| 8 | Bukola | 2,042 | 2,042 | 0 |
+| 9 | Juwon | 1,847 | 1,847 | 0 |
+
+Zero delta confirms the Tranche 7/8 dedup correctly preserved all customer assignments — no customers were lost or orphaned during the cleanup of workers 17, 18, 19, 20.
+
+#### Item 3 — Low.low Income Dedup (Workers 21, 23, 29–34)
+
+Two waves of duplicate workers were identified and deleted:
+
+**Wave 1 (2026-06-23):** Workers 21 (`Low.low income`) and 23 (`Low.Low income.`) — created 6 seconds apart. 245 customers freed (241 from worker 21, 4 from worker 23).
+
+**Wave 2 (2026-06-26):** Workers 29–34 — six test workers created during the Tranche 9/10 corrective deployment session when the `add-test-workers` script was re-run:
+- Worker 29: Halleluyah duplicate (0 customers)
+- Worker 30: Juwon duplicate (0 customers)
+- Worker 31: Bukola duplicate (0 customers)
+- Worker 32: Low.low income (0 customers)
+- Worker 33: Low low income (14 customers freed)
+- Worker 34: Low.Low income. (0 customers)
+
+Total freed: 259 customers. Post-cleanup email uniqueness check: CLEAR — all 16 remaining workers have distinct emails.
+
+#### Item 2 — UNIQUE Constraint on `workers.email` (Migration 0018)
+
+Pre-flight email uniqueness check passed (0 duplicates). Migration applied:
+
+```sql
+ALTER TABLE workers ADD CONSTRAINT workers_email_unique UNIQUE (email);
+```
+
+Drizzle schema updated: `email: varchar('email', { length: 255 }).unique()`.
+
+Error surfacing added to `createWorker` and `updateWorker`: MySQL `ER_DUP_ENTRY` (errno 1062) is now caught and re-thrown as `TRPCError(CONFLICT, 'A worker with this email already exists.')`.
+
+#### Item 4 — driftLogger Activation
+
+`driftLogger` (exported from `server/_core/trpc.ts` since Tranche 9 Item C) is now applied to three procedures:
+
+| Procedure | Router | Purpose |
+|-----------|--------|---------|
+| `createCustomer` | `fieldWorkerRouter` | Catches AddCustomer.tsx payload drift |
+| `getCustomerClusters` | `fieldWorkerRouter` | Catches clustering input drift |
+| `getCustomerClustersByCount` | `fieldWorkerRouter` | Catches clustering input drift |
+
+Both clustering procedures also received the `customerIds: z.array(z.number()).optional()` field (completing the Tranche 10 Item 1 fix that was applied to `createRoute` but missed the clustering procedures themselves).
+
+---
+
+### Pattern #25 — Rebase Conflict from Parallel Edits to the Same Procedure
+
+**Observed:** When `git pull --rebase` was run to sync the local repo with `origin/main`, a merge conflict appeared in `server/routers/fieldWorker.ts` at the `getCustomerClusters` and `getCustomerClustersByCount` procedures. The conflict was between the T10 version (which had `customerIds: z.array(z.number())` — required, not optional — and used `getCustomersByIds()` unconditionally) and the T11 version (which made `customerIds` optional with a fallback to `getAllCustomers()`).
+
+**Root cause:** The T10 commit (`b3c3290c`) and the T11 local commit (`ecba42ae`) both edited the same procedure bodies. The T10 version was stricter (required customerIds), while T11 was more defensive (optional with fallback). The correct resolution is T11's version — optional customerIds with fallback — because the clustering page can be opened without pre-selecting customers.
+
+**Resolution:** Took T11's version for both procedures. The `optional()` + fallback pattern is the canonical approach for filter pass-through in this codebase.
+
+**Rule 30:** When editing procedures that were modified in a recent commit, always `git pull --rebase` before starting local edits to avoid conflict resolution overhead. If a conflict does occur and both sides have valid logic, prefer the more defensive version (optional fields with fallback) over the stricter version (required fields).
+
+---
+
+### Production State After Tranche 11
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD | `ab56f851` |
+| `dist/index.js` size | 309 KB |
+| Server | `http://localhost:3002/` — online |
+| Workers in DB | 16 (all unique emails) |
+| `workers_email_unique` constraint | Applied |
+| `driftLogger` active on | `createCustomer`, `getCustomerClusters`, `getCustomerClustersByCount` |
+| Freed customers (T11 dedup) | 259 |
+
+---
+
+### Carry-Forward to Tranche 12
+
+1. **`assignedWorkerId` vs `workerId` full audit** (Pattern #15 forensic — deferred from T9, T10, T11)
+2. **Greedy NN spatial index** if customer set grows beyond 5,000
+3. **Orphan routes cleanup** (18 December 2025 test routes with 0 customers)
+4. **Post-dedup customer redistribution** — 259 freed customers need field manager assignment
