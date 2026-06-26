@@ -16,7 +16,7 @@ import CustomerDetail from "./pages/CustomerDetail";
 import Routes from "./pages/Routes";
 import Workers from "./pages/Workers";
 import CreateRoute from "./pages/CreateRoute";
-import AreaRouteCreation from "./pages/AreaRouteCreation";
+// [DEPRECATED T10] import AreaRouteCreation from "./pages/AreaRouteCreation";
 import ClusterManagement from "./pages/ClusterManagement";
 import WorkerTracking from "./pages/WorkerTracking";
 import Analytics from "./pages/Analytics";
@@ -102,7 +102,7 @@ function Router() {
       </Route>
       <LayoutRoute path={"/workers"} component={Workers} requireAuth />
       <LayoutRoute path={"/create-route"} component={CreateRoute} requireAdmin />
-      <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} requireAdmin />
+      {/* [DEPRECATED T10] <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} requireAdmin /> */}
       <LayoutRoute path={"/cluster-management"} component={ClusterManagement} />
       <LayoutRoute path={"/tracking"} component={WorkerTracking} />
       <LayoutRoute path={"/analytics"} component={Analytics} />
