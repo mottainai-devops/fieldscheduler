@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import { clusterCustomers } from "../utils/clustering";
 import { clusterCustomersByCount } from "../utils/clusteringByCount";
@@ -435,30 +436,40 @@ export const fieldWorkerRouter = router({
       clusterDistance: z.number().default(5),
       minClusterSize: z.number().default(3),
       maxClusterRadius: z.number().default(10),
+      customerIds: z.array(z.number()),
     }))
     .query(async ({ input }) => {
       try {
-        const customers = await fieldWorkerDb.getAllCustomers();
+        const customers = await fieldWorkerDb.getCustomersByIds(input.customerIds);
         const clusters = clusterCustomers(customers, input.clusterDistance, input.minClusterSize);
         return clusters || [];
       } catch (error) {
         console.error("Error clustering customers:", error);
-        return [];
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Distance clustering failed. Please try again.",
+          cause: error,
+        });
       }
     }),
 
   getCustomerClustersByCount: protectedProcedure
     .input(z.object({
       customersPerCluster: z.number().default(5),
+      customerIds: z.array(z.number()),
     }))
     .query(async ({ input }) => {
       try {
-        const customers = await fieldWorkerDb.getAllCustomers();
+        const customers = await fieldWorkerDb.getCustomersByIds(input.customerIds);
         const clusters = clusterCustomersByCount(customers, input.customersPerCluster);
         return clusters || [];
       } catch (error) {
         console.error("Error clustering customers by count:", error);
-        return [];
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Count-based clustering failed. Please try again.",
+          cause: error,
+        });
       }
     }),
 

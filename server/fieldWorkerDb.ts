@@ -187,6 +187,14 @@ export async function getAllCustomers() {
   return await db.select().from(customers).orderBy(desc(customers.createdAt));
 }
 
+export async function getCustomersByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db || ids.length === 0) return [];
+  return await db.select().from(customers)
+    .where(inArray(customers.id, ids))
+    .orderBy(desc(customers.createdAt));
+}
+
 export async function getCustomersByFieldManager(fieldManagerId: number) {
   const db = await getDb();
   if (!db) return [];
@@ -740,13 +748,6 @@ export async function updateRoute(id: number, data: {
   
   await db.update(routes).set(data as any).where(eq(routes.id, id));
   return await getRouteById(id);
-}
-
-// Get customers by IDs
-export async function getCustomersByIds(ids: number[]) {
-  const db = await getDb();
-  if (!db) return [];
-  return await db.select().from(customers).where(inArray(customers.id, ids));
 }
 
 // Update customer

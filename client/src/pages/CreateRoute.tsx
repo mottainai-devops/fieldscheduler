@@ -4,7 +4,7 @@ import { MapPin, Users, Truck, Zap, Navigation, CheckCircle, Target, X, Save, Tr
 import { Input } from "@/components/ui/input";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -72,20 +72,50 @@ export default function CreateRoute() {
   const [supervisorLotWarning, setSupervisorLotWarning] = useState<string | null>(null);
 
   const { data: customers = [] } = trpc.fieldWorker.getCustomers.useQuery();
+
+  // Compute filteredCustomers early (as a stable memo) so clustering queries can pass the ID list
+  const filteredCustomers = useMemo(() => {
+    let result = asArray(customers);
+    if (selectedFieldManager) {
+      result = result.filter((c: any) => c.fieldManager?.toString() === selectedFieldManager);
+    }
+    if (selectedMAF) {
+      result = result.filter((c: any) => c.customermaf === selectedMAF);
+    }
+    if (selectedCustomerType) {
+      result = result.filter((c: any) => c.customerType === selectedCustomerType);
+    }
+    if (selectedRouteStatus) {
+      result = result.filter((c: any) => c.routeAssignmentStatus === selectedRouteStatus);
+    }
+    if (searchQuery) {
+      result = result.filter((c: any) => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+    return result;
+  }, [customers, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, searchQuery]);
+
+  const filteredCustomerIds = useMemo(() => filteredCustomers.map((c: any) => c.id), [filteredCustomers]);
+
   const { data: clustersByDistanceRaw = [], isLoading: loadingDistance } = trpc.fieldWorker.getCustomerClusters.useQuery(
-    { clusterDistance: clusterDistance },
+    { clusterDistance: clusterDistance, customerIds: filteredCustomerIds },
     { 
       enabled: selectionMode === 'cluster' && clusterMode === 'distance',
       retry: false,
-      refetchOnWindowFocus: false
+      refetchOnWindowFocus: false,
+      onError: (err: any) => {
+        toast.error(`Distance clustering failed: ${err.message ?? 'Unknown error'}`);
+      },
     }
   );
   const { data: clustersByCountRaw = [], isLoading: loadingCount } = trpc.fieldWorker.getCustomerClustersByCount.useQuery(
-    { customersPerCluster },
+    { customersPerCluster, customerIds: filteredCustomerIds },
     { 
       enabled: selectionMode === 'cluster' && clusterMode === 'count',
       retry: false,
-      refetchOnWindowFocus: false
+      refetchOnWindowFocus: false,
+      onError: (err: any) => {
+        toast.error(`Count clustering failed: ${err.message ?? 'Unknown error'}`);
+      },
     }
   );
   const clustersByDistance = asArray(clustersByDistanceRaw);
@@ -192,43 +222,7 @@ export default function CreateRoute() {
   const createRouteMutation = trpc.fieldWorker.createRoute.useMutation();
   const optimizeRouteMutation = trpc.fieldWorker.optimizeRoute.useMutation();
 
-  // Filter customers with hierarchical filtering
-  let filteredCustomers = asArray(customers);
-  
-  // 1. Field Manager filter (primary)
-  if (selectedFieldManager) {
-    filteredCustomers = filteredCustomers.filter(
-      customer => customer.fieldManager?.toString() === selectedFieldManager
-    );
-  }
-  
-  // 2. MAF filter (secondary, filtered by selected manager)
-  if (selectedMAF) {
-    filteredCustomers = filteredCustomers.filter(
-      customer => customer.customermaf === selectedMAF
-    );
-  }
-  
-  // 3. Customer Type filter (tertiary)
-  if (selectedCustomerType) {
-    filteredCustomers = filteredCustomers.filter(
-      customer => customer.customerType === selectedCustomerType
-    );
-  }
-  
-  // 4. Route Assignment Status filter (quaternary)
-  if (selectedRouteStatus) {
-    filteredCustomers = filteredCustomers.filter(
-      customer => customer.routeAssignmentStatus === selectedRouteStatus
-    );
-  }
-  
-  // Apply search filter
-  if (searchQuery) {
-    filteredCustomers = filteredCustomers.filter(
-      customer => customer.name?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }
+  // filteredCustomers is now computed as a useMemo above the clustering queries
   
   // Get unique field managers
   const uniqueFieldManagers = Array.from(
@@ -962,10 +956,28 @@ export default function CreateRoute() {
                       );
                     })}
 
-                    {asArray(clusters).length === 0 && (
+                    {asArray(clusters).length === 0 && !loadingDistance && !loadingCount && (
                       <div className="text-center py-12 text-slate-400">
                         <Target className="w-12 h-12 mx-auto mb-3 text-slate-600" />
-                        <p>No clusters found with current radius. Try increasing the distance.</p>
+                        {clusterMode === 'distance' ? (
+                          <>
+                            <p className="font-medium">No clusters found for the current radius.</p>
+                            <p className="text-sm mt-1">
+                              {filteredCustomers.length === 0
+                                ? 'Apply a Field Manager or MAF filter first to select a customer subset.'
+                                : `Try increasing the Distance Radius (currently ${clusterDistance} km) or reducing the Minimum Cluster Size.`}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-medium">No clusters found.</p>
+                            <p className="text-sm mt-1">
+                              {filteredCustomers.length === 0
+                                ? 'Apply a Field Manager or MAF filter first to select a customer subset.'
+                                : `${filteredCustomers.length} customer${filteredCustomers.length === 1 ? '' : 's'} filtered — try reducing Customers per Cluster (currently ${customersPerCluster}).`}
+                            </p>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
