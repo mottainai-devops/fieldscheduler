@@ -1196,3 +1196,103 @@ The 728 NULL pool includes the 259 customers freed from the T11 cleanup plus pre
 3. **`assignedWorkerId` vs `workerId` full audit** (Pattern #15 forensic — deferred from T9, T10, T11).
 4. **Greedy NN spatial index** if customer set grows beyond 5,000.
 5. **Orphan routes cleanup** (18 December 2025 test routes with 0 customers).
+test
+
+---
+
+## Tranche 12 — Zoho Sync Hardening + Orphan Routes Cleanup
+
+**Date:** 2026-06-27
+**Commits:** `ced36be9` (scripts/sync-zoho-data.mjs)
+**Items completed:** Item 1 (sync hardening), Item 4 (orphan routes)
+**Items deferred:** Item 2 (removed — see process note below), Item 3 (unassigned dashboard chip — pending owner confirmation)
+
+---
+
+### Item 1 — Zoho Sync Script Hardening (Option A Implemented)
+
+**Pre-flight finding:** The worker INSERT block in `sync-zoho-data.mjs` was wrapped in a `try/catch` that caught errors and continued, logging `Failed to insert name` to stderr while printing `Field managers inserted` regardless. This is a Pattern #7 recurrence: the sync reports success even when every worker insert fails.
+
+**Additional finding:** The `ON DUPLICATE KEY UPDATE name=name` clause requires a `UNIQUE` constraint on `workers.name` to trigger deduplication. No such constraint exists — the DB has `UNIQUE` on `email` and `surveyAppUserId`, but not on `name`. The clause was therefore a no-op: every sync run performed a plain `INSERT`, creating a new row for every distinct name string seen in Zoho. This is the root cause of the workers 29–34 duplicate creation documented in T11 Item A (Pattern #26).
+
+The `workers_email_unique` constraint (added T11) does not interact with this INSERT because the INSERT only sets `name` — the `email` column defaults to `NULL`, and `NULL` values do not conflict in a UNIQUE constraint.
+
+**Fix applied (Option A — remove worker INSERT block entirely):**
+
+Workers are managed exclusively through the FieldScheduler admin UI. Zoho's free-text "Field Manager" field is not a reliable worker identifier. The sync script no longer creates or modifies worker rows.
+
+Changes to `sync-zoho-data.mjs` (commit `ced36be9`, deployed to `/home/ubuntu/sync-zoho-data.mjs`):
+- **Removed:** the `for (const name of fieldManagers) { db.execute(INSERT INTO workers ...) }` block
+- **Changed:** `workerMap` now queries `SELECT id, name FROM workers` (all existing workers) instead of querying only the names just inserted
+- **Added:** unmatched-name warning — logs any Zoho field manager strings that don't match an existing worker, so ops can see which Zoho-side names need attention in Zoho Books
+- **Added:** per-run summary line: `N assigned, M unassigned` in the inserted-customers log
+
+**Behavioral trace (verified against production DB):**
+
+| Zoho name | Resolution | Result |
+|-----------|-----------|--------|
+| `"Halleluyah"` | `workerMap["Halleluyah"]` = 7 | assigned |
+| `"Bukola"` | `workerMap["Bukola"]` = 8 | assigned |
+| `"Juwon"` | `workerMap["Juwon"]` = 9 | assigned |
+| `"Low.low income"` | no match | unassigned (NULL) |
+| `"Low low income"` | no match | unassigned (NULL) |
+| `"halleluyah"` (lowercase) | no match | unassigned (NULL) |
+
+Post-sync distribution unchanged: 7,135 assigned, 728 unassigned. The fix preserves all existing assignments and eliminates the duplicate-worker creation class of bug permanently.
+
+---
+
+### Item 4 — Orphan Routes Cleanup
+
+**Pre-deletion safety check:**
+- December 2025 routes found: IDs 128–140 (13 routes total)
+- Zero-customer orphans: IDs 128–134 (7 routes, all `workerId=7`, `scheduledDate=2025-12-08`, `status=assigned`)
+- Routes 135–140 had customers (2–27 each) and were **not deleted**
+- `routeCustomers` entries for orphan IDs 128–134: 0 (confirmed)
+- `routeInstances` entries for orphan IDs: 0
+- `workerNotifications` referencing orphan IDs: 0
+- `routeSchedules` with those IDs: 0
+
+**Deletion executed:**
+- `DELETE FROM routeCustomers WHERE routeId IN (128,129,130,131,132,133,134)` — 0 rows
+- `DELETE FROM routes WHERE id IN (128,129,130,131,132,133,134)` — 7 rows
+
+**Post-deletion verification:**
+- Routes count: 45 → 38
+- Orphan IDs still present: 0
+- No FK violations — all dependent tables were empty for these route IDs
+
+---
+
+### Process Observation — Zoho as Source of Truth for Customer Assignment
+
+**Context:** T12 originally included Item 2 (bulk-assign UI in FieldScheduler for the 728 unassigned customers). Before implementation, owner clarified that customer-to-field-manager assignment is performed manually in Zoho Books, not in FieldScheduler. The unassigned pool is a deliberate staging area for customers who haven't been linked in Zoho yet.
+
+**Observation:** Building the bulk-assign UI would have created two sources of truth for the same data — FieldScheduler and Zoho Books — which is the opposite of the intended architecture. FieldScheduler reads assignment state from Zoho; it does not author it.
+
+**Standing principle:** Before building features that interact with operational workflows (assignment, routing, dispatch), confirm with owner where the canonical workflow lives. Mottainai uses Zoho Books as the source of truth for customer-to-field-manager assignment; FieldScheduler reads this state but does not author it. Future features should respect this boundary unless owner explicitly asks to move the workflow.
+
+---
+
+### Production State After Tranche 12
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub) | `ced36be9` |
+| PM2 `field-worker-scheduler` | online, port 3002 |
+| `sync-zoho-data.mjs` | Worker INSERT block removed (Option A) |
+| Worker rows created by next sync | 0 (workers managed via admin UI only) |
+| Routes count | 38 (orphan IDs 128–134 deleted) |
+| Customer distribution | 7,135 assigned / 728 unassigned |
+
+---
+
+### Carry-Forward to Tranche 13
+
+1. **Item 3 (unassigned dashboard chip)** — deferred pending owner confirmation
+2. **Pattern #15 forensic** (`assignedWorkerId` vs `workerId` full audit) — separate focused session
+3. **Greedy NN spatial index** — only needed if single-MAF filter sets grow beyond 5,000 customers
+4. **Tranche 5C centralized canonical constants** — engineering refactor, low urgency
+5. **27CBM-DINO tariff DB update** — ops 30-second UI action
+6. **Lasika06 Fixed Billing activation** — ops + engineering coordinated
+7. **15,800 historical backlog recovery decision** — business decision
