@@ -902,3 +902,97 @@ Tranche 9 original session deployed to `/home/ubuntu/` (PM2: `fieldscheduler`, p
 3. **Orphan routes** cleanup (routes with no customers assigned)
 4. **AddCustomer.tsx / ClusterManagement.tsx drift** — apply `driftLogger` to those specific procedures
 5. **Low.low income dedup** — workers 21 and 23 are likely duplicates; needs manual verification before merge
+
+
+---
+
+## Tranche 10 — Cluster Selection Defect Fix (2026-06-26)
+
+### Commits
+
+| Hash | Description |
+|------|-------------|
+| `4c4ee3d0` | fix(clustering): Item 2 — rename maxDistance → clusterDistance in CreateRoute.tsx |
+| `8a621ab0` | fix(clustering): Items 1–5 — filter pass-through, greedy NN, TRPCError throws, per-mode empty states |
+| `e9550e97` | feat(deprecation): remove Area Route Creation nav item, route, and Routes.tsx button |
+| `fe60b8b9` | fix(CustomerDetail): add missing customerNotes useQuery hook |
+
+### Items Fixed
+
+**Item 1 — Filter Pass-Through (Root Cause of 6,338 vs 67 bug)**
+- Added `customerIds: z.array(z.number())` to both `getCustomerClusters` and `getCustomerClustersByCount` Zod schemas in `server/routers/fieldWorker.ts`.
+- Added `getCustomersByIds(ids: number[])` to `server/fieldWorkerDb.ts` using `inArray(customers.id, ids)` (removed duplicate at line 754).
+- Replaced `getAllCustomers()` with `getCustomersByIds(input.customerIds)` in both procedures.
+- Converted `filteredCustomers` from an inline `let` block to a `useMemo` hook in `CreateRoute.tsx`, placed before the clustering `useQuery` calls to avoid temporal dead zone. Added `filteredCustomerIds` memo for stable array reference.
+
+**Item 2 — Field Name Alignment**
+- Renamed `maxDistance` → `clusterDistance` in the `getCustomerClusters` query payload in `CreateRoute.tsx` (server schema had already been renamed in commit `4c4ee3d0`).
+
+**Item 3 — Algorithm Replacement (Root Cause of 0-cluster bug)**
+- Replaced K-means implementation in `server/utils/clusteringByCount.ts` with greedy nearest-neighbor algorithm.
+- New algorithm: seed on southernmost unassigned customer (deterministic), greedily pull nearest unassigned until `customersPerCluster` reached, repeat. Handles `n < k` correctly (returns single cluster). O(n²), acceptable for n ≤ 10,000.
+
+**Item 4 — Per-Mode Empty-State Messages**
+- Replaced single generic "No clusters found with current radius. Try increasing the distance." message with conditional per-mode messages that include current parameter values and actionable guidance.
+- Distance mode: shows current `clusterDistance` km and suggests increasing radius or reducing minimum cluster size.
+- Count mode: shows current filtered customer count and suggests reducing `customersPerCluster`.
+- Both modes: if `filteredCustomers.length === 0`, prompts user to apply Field Manager or MAF filter first.
+
+**Item 5 — Silent Catch Replacement**
+- Replaced `catch (error) { console.error(...); return []; }` blocks in both clustering procedures with `throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "...", cause: error })`.
+- Added `onError: (err) => toast.error(...)` handlers to both clustering `useQuery` calls in `CreateRoute.tsx`.
+- Added `import { TRPCError } from "@trpc/server"` at top of `fieldWorker.ts` (removed dynamic import at line 627).
+
+### Task 2 — Clustering Performance Baseline
+
+Measured on sandbox Node.js 22.13.0 with deterministic synthetic Ibadan-area coordinates:
+
+| Customer Set | Distance Mode | Distance Clusters | Count Mode (Greedy NN) | Count Clusters |
+|-------------|--------------|-------------------|----------------------|----------------|
+| 67 | 1 ms | 16 | 3 ms | 7 |
+| 500 | 8 ms | 57 | 30 ms | 50 |
+| 1,000 | 10 ms | 60 | 92 ms | 100 |
+
+Both algorithms are well within interactive latency (<100 ms) for all realistic customer set sizes (≤ 1,000). The greedy NN algorithm is O(n²) — at 10,000 customers it would take ~9 seconds; if that scale is reached, a spatial index (k-d tree) should be introduced.
+
+### Task 3 — Area Route Creation Deprecation
+
+Safety conditions verified before removal:
+- 0 routes with `workerAssigned IS NOT NULL AND scheduledDate IS NOT NULL AND customers > 0` created via area selection
+- 18 zero-customer routes from December 2025 are test artifacts (efficiencyScore = 50, totalDistance = 0)
+- No active field manager dependency on area-creation routes
+
+Three touch points removed (code preserved with `[DEPRECATED T10]` markers in `App.tsx`):
+1. `SidebarNavigation.tsx` — nav item removed
+2. `App.tsx` — import and `<LayoutRoute>` commented out
+3. `Routes.tsx` — "Create Route (Area Selection)" button removed
+
+### Task 1 — Coordinate Data Quality Audit
+
+| Metric | Count | % |
+|--------|-------|---|
+| Total customers | 7,863 | — |
+| Null/empty coordinates | 1,510 | 19.2% |
+| Valid coordinates | 6,353 | 80.8% |
+| AFT-200 / Worker 8 subset | 67 | 100% valid |
+
+Coordinate quality is not the cause of clustering bugs. All 67 AFT-200 customers have valid in-range coordinates (lat 7.3834–7.3908, lng 3.8194–3.8362, Ibadan area).
+
+---
+
+## Pattern #24 — Temporal Dead Zone in React Hook Dependencies
+
+**Observed:** `filteredCustomers` was declared as a `let` block in the render body (line 220) but referenced in `useQuery` hook calls at lines 75–88. In JavaScript `let`/`const`, the variable is in the temporal dead zone until its declaration line — the hook calls would throw `ReferenceError: Cannot access 'filteredCustomers' before initialization` at runtime.
+
+**Root cause:** The clustering `useQuery` hooks were added in a later session without checking where `filteredCustomers` was declared. The hooks were placed above the declaration.
+
+**Fix:** Convert `filteredCustomers` to a `useMemo` hook placed before the clustering queries. Add a separate `filteredCustomerIds` memo for the stable ID array reference (avoids the Common Pitfall: unstable array references causing infinite re-fetches).
+
+**Rule 29:** When adding a `useQuery` or `useMutation` hook that depends on a derived value, always verify the derived value is declared as a `useMemo` or `useState` hook above the new hook call — never as an inline `let`/`const` in the render body below it.
+
+---
+
+## Rule 29
+
+**Rule 29 — Hook Dependency Declaration Order:** Before adding any `useQuery`/`useMutation` hook that depends on a derived value, verify the derived value is declared as a `useMemo` or `useState` hook placed above the new hook in the component. Inline `let`/`const` computations in the render body below a hook call are in the temporal dead zone at hook execution time and will throw `ReferenceError` at runtime.
+
