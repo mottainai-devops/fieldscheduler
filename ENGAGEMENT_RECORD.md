@@ -1604,6 +1604,8 @@ createRoute previously always wrote status=assigned regardless of whether a supe
 | Item 4 — pending_assignment | Route #167 created with No supervisor + Bukola as field manager. DB: status='pending_assignment', supervisorId=NULL, workerId=8. | ✅ Confirmed live |
 | Item 5 — Pending Assignments page | Route #167 visible on /pending-assignments. Assign dialog opens. Grouped picker shows Full Coverage (71) with green badges. | ✅ Confirmed live |
 
+**CreateRoute.tsx audit note (post-close):** During T15 verification, commits `7a88bf23` (incorrect fix) and `800df185` (revert) were applied and immediately cancelled. Net diff of `CreateRoute.tsx` between `a2677d13` and `597bb16d` is empty — the file is identical to its pre-T15-followup state. The Optimize Route button gate ("at least one of supervisor OR field manager") was correct throughout. T15 Item 4 was fully implemented at the server layer in `1a14012a`; no UI change was needed or landed.
+
 ### Carry-Forward to Tranche 16
 
 1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15)
