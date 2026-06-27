@@ -1557,6 +1557,12 @@ FK impact: Route id=165 (supervisorId=14) and its 3 routeCustomers rows deleted 
 
 ### New Patterns and Rules
 
+**Pattern #43 — Translation Error Between Owner UI Observation and Actual Gate Identification**
+When an owner reports a UI behavior at the gate level (button blocked, couldn't proceed, validation refused), the descriptive label they assign to the cause may not match the actual gate the code enforces. Without specific behavioral detail — which step, what was selected, what was attempted, what specifically refused — the response chain may operate on the assumed cause and adapt to the wrong target. T15 Item 4 follow-up is the canonical instance: owner reported "couldn't proceed without supervisor"; actual gate was "field manager required"; the back-and-forth produced a self-cancelling commit pair (`7a88bf23` → `800df185`) before the misunderstanding was caught. The code was correct throughout; the diagnosis was not.
+**Rule added (Rule 48):** When an owner reports a UI behavior, request the specific action sequence before proposing engineering work: which step, what was selected (including what was deliberately NOT selected), what was attempted, what specifically refused to allow it. Only after the actual gate is identified should diagnosis or fix be drafted. Do not take the owner's named cause as ground truth without verifying it matches the code's gate.
+
+---
+
 **Pattern #42 — Supervisor Picker UX Parity Not Maintained Across All Entry Points**
 The lot-coverage grouped supervisor picker (Full Coverage / Partial Coverage / No Lot Access) was implemented in CreateRoute but not ported to PendingAssignments. When the pending_assignment workflow was added in T15, the assign dialog used a plain flat list, losing the coverage grouping that helps admins identify the correct supervisor quickly.
 **Rule added (Rule 47):** Any UI component that presents a supervisor selection list must use the lot-coverage grouped picker pattern (checkSupervisorLotAccess, three groups, green/red badges). Adding a new supervisor picker entry point without this grouping is a regression.
