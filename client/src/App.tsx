@@ -52,6 +52,8 @@ import ReportBuilderPage from "./pages/ReportBuilderPage";
 import ScheduledReportsPage from "./pages/ScheduledReportsPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequireAuth from "./components/RequireAuth";
+import RequireFieldManager from "./components/RequireFieldManager";
+import RequireAdmin from "./components/RequireAdmin";
 import InactivityLogout from "./components/InactivityLogout";
 
 
@@ -72,51 +74,61 @@ function Router() {
           </MainLayout>
         </RequireAuth>
       </Route>
+      {/* T14 Item 4: fieldManager tier — customers accessible to all admin-tier roles */}
       <Route path={"/customers"}>
-        <RequireAuth>
+        <RequireFieldManager>
           <MainLayout>
             <Customers />
           </MainLayout>
-        </RequireAuth>
+        </RequireFieldManager>
       </Route>
+      {/* T14 Item 4: admin tier — adding customers is admin-tier */}
       <Route path={"/customers/new"}>
-        <RequireAuth>
+        <RequireAdmin>
           <MainLayout>
             <AddCustomer />
           </MainLayout>
-        </RequireAuth>
+        </RequireAdmin>
       </Route>
+      {/* T14 Item 4: fieldManager tier — customer detail accessible to all admin-tier roles */}
       <Route path={"/customers/:id"}>
-        <RequireAuth>
+        <RequireFieldManager>
           <MainLayout>
             <CustomerDetail />
           </MainLayout>
-        </RequireAuth>
+        </RequireFieldManager>
       </Route>
+      {/* T14 Item 4: fieldManager tier — routes accessible to all admin-tier roles */}
       <Route path={"/routes"}>
-        <RequireAuth>
+        <RequireFieldManager>
           <MainLayout>
             <Routes />
           </MainLayout>
-        </RequireAuth>
+        </RequireFieldManager>
       </Route>
-      <LayoutRoute path={"/workers"} component={Workers} requireAdmin />
-      <LayoutRoute path={"/create-route"} component={CreateRoute} requireAdmin />
+      {/* T14 Item 4: superadmin only — worker management is highest-privilege */}
+      <LayoutRoute path={"/workers"} component={Workers} requireSuperadmin />
+      {/* T14 Item 4: fieldManagerProcedure tier — route creation is field operation */}
+      <LayoutRoute path={"/create-route"} component={CreateRoute} requireFieldManager />
       {/* [DEPRECATED T10] <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} requireAdmin /> */}
       <LayoutRoute path={"/cluster-management"} component={ClusterManagement} />
       <LayoutRoute path={"/tracking"} component={WorkerTracking} />
-      <LayoutRoute path={"/analytics"} component={Analytics} />
-      <LayoutRoute path={"/zoho"} component={ZohoIntegration} />
+      {/* T14 Item 4: fieldManager tier — analytics accessible to all admin-tier roles */}
+      <LayoutRoute path={"/analytics"} component={Analytics} requireFieldManager />
+      {/* T14 Item 4: superadmin only — Zoho integration is system-level */}
+      <LayoutRoute path={"/zoho"} component={ZohoIntegration} requireSuperadmin />
       <Route path={"/zoho/authorize"} component={ZohoAuthorization} />
       <Route path={"/zoho/callback"} component={ZohoCallback} />
       <Route path={"/zoho/token-generator"} component={ZohoTokenGenerator} />
       <LayoutRoute path={"/zoho/sync-history"} component={SyncHistoryDashboard} />
       <LayoutRoute path={"/building-groups"} component={BuildingGroups} />
       <LayoutRoute path={"/compliance"} component={Compliance} />
+      {/* T14 Item 4: admin tier — MAF tagging is admin-tier (superadmin + admin) */}
       <LayoutRoute path={"/field-manager-tagging"} component={FieldManagerTagging} requireAdmin />
       <LayoutRoute path={"/dynamic-customer-filtering"} component={DynamicCustomerFiltering} />
       <LayoutRoute path={"/tag-based-route-creation"} component={TagBasedRouteCreation} />
-      <LayoutRoute path={"/field-manager-admin"} component={FieldManagerAdminDashboard} />
+      {/* T14 Item 4: superadmin only — field manager admin is system-level */}
+      <LayoutRoute path={"/field-manager-admin"} component={FieldManagerAdminDashboard} requireSuperadmin />
       <LayoutRoute path={"/real-time-tracking"} component={RealTimeTracking} />
       <LayoutRoute path={"/performance-dashboard"} component={PerformanceDashboard} />
       <LayoutRoute path={"/geofencing-alerts"} component={GeofencingAlerts} />
@@ -126,10 +138,14 @@ function Router() {
       <Route path={"/clusters"} component={() => { window.location.href = "/cluster-management"; return null; }} />
       <Route path={"/add-customer"} component={() => { window.location.href = "/customers/new"; return null; }} />
       <Route path={"/filter"} component={() => { window.location.href = "/dynamic-customer-filtering"; return null; }} />
-      <LayoutRoute path={"/financial-dashboard"} component={FinancialDashboard} requireAdmin />
-      <LayoutRoute path={"/report-builder"} component={ReportBuilderPage} requireAuth />
-      <LayoutRoute path={"/scheduled-reports"} component={ScheduledReportsPage} requireAuth />
-      <LayoutRoute path={"/route-schedules"} component={RouteSchedules} requireAuth />
+      {/* T14 Item 4: superadmin only — financial dashboard is highest-privilege */}
+      <LayoutRoute path={"/financial-dashboard"} component={FinancialDashboard} requireSuperadmin />
+      {/* T14 Item 4: admin tier — report builder is admin-tier */}
+      <LayoutRoute path={"/report-builder"} component={ReportBuilderPage} requireAdmin />
+      {/* T14 Item 4: admin tier — scheduled reports is admin-tier */}
+      <LayoutRoute path={"/scheduled-reports"} component={ScheduledReportsPage} requireAdmin />
+      {/* T14 Item 4: fieldManager tier — route schedules accessible to all admin-tier roles */}
+      <LayoutRoute path={"/route-schedules"} component={RouteSchedules} requireFieldManager />
 
       <Route path={"/worker-mobile"} component={WorkerMobile} />
       <Route path={"/worker-mobile/routes"} component={WorkerMobile} />

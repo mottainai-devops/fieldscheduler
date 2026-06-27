@@ -22,26 +22,36 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AdminNotificationBell from "./AdminNotificationBell";
+import { trpc } from "@/lib/trpc";
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  /** Minimum role tier required to see this nav item (T14 Item 4) */
+  minRole?: "fieldManager" | "admin" | "superadmin";
 }
 
 interface NavGroup {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   items: NavItem[];
+  /** Minimum role tier required to see this group header (T14 Item 4) */
+  minRole?: "fieldManager" | "admin" | "superadmin";
 }
 
+/**
+ * T14 Item 4: Role-based sidebar filtering.
+ * minRole hierarchy: superadmin > admin > fieldManager > (any authenticated)
+ * Items with no minRole are visible to all authenticated users.
+ */
 const navigationGroups: NavGroup[] = [
   {
     title: "Dashboard & Analytics",
     icon: LayoutDashboard,
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { label: "Analytics", href: "/analytics", icon: BarChart3 },
+      { label: "Analytics", href: "/analytics", icon: BarChart3, minRole: "fieldManager" },
       { label: "Performance", href: "/performance-dashboard", icon: BarChart3 },
       { label: "Route Analytics", href: "/route-analytics-dashboard", icon: BarChart3 },
     ],
@@ -50,9 +60,9 @@ const navigationGroups: NavGroup[] = [
     title: "Field Operations",
     icon: Users,
     items: [
-      { label: "Workers", href: "/workers", icon: Users },
-      { label: "Field Manager Admin", href: "/field-manager-admin", icon: UserCog },
-      { label: "Field Manager Tagging", href: "/field-manager-tagging", icon: UserCog },
+      { label: "Workers", href: "/workers", icon: Users, minRole: "superadmin" },
+      { label: "Field Manager Admin", href: "/field-manager-admin", icon: UserCog, minRole: "superadmin" },
+      { label: "Field Manager Tagging", href: "/field-manager-tagging", icon: UserCog, minRole: "admin" },
       { label: "Manager Dashboard", href: "/manager", icon: UserCog },
     ],
   },
@@ -60,8 +70,8 @@ const navigationGroups: NavGroup[] = [
     title: "Customer Management",
     icon: Building2,
     items: [
-      { label: "Customers", href: "/customers", icon: Building2 },
-      { label: "Add Customer", href: "/add-customer", icon: Building2 },
+      { label: "Customers", href: "/customers", icon: Building2, minRole: "fieldManager" },
+      { label: "Add Customer", href: "/add-customer", icon: Building2, minRole: "admin" },
       { label: "Building Groups", href: "/building-groups", icon: Building2 },
       { label: "Customer Filtering", href: "/dynamic-customer-filtering", icon: Building2 },
     ],
@@ -70,11 +80,12 @@ const navigationGroups: NavGroup[] = [
     title: "Route Management",
     icon: Route,
     items: [
-      { label: "Routes", href: "/routes", icon: Route },
-      { label: "Create Route", href: "/create-route", icon: Route },
+      { label: "Routes", href: "/routes", icon: Route, minRole: "fieldManager" },
+      { label: "Create Route", href: "/create-route", icon: Route, minRole: "fieldManager" },
       { label: "Tag-Based Routes", href: "/tag-based-route-creation", icon: Route },
       { label: "Route Optimization", href: "/route-optimization", icon: Navigation },
       { label: "Clusters", href: "/clusters", icon: Route },
+      { label: "Route Schedules", href: "/route-schedules", icon: Route, minRole: "fieldManager" },
     ],
   },
   {
@@ -105,15 +116,43 @@ const navigationGroups: NavGroup[] = [
   {
     title: "Integrations",
     icon: Link2,
+    minRole: "admin",
     items: [
-      { label: "Zoho", href: "/zoho", icon: Zap },
-      { label: "Sync History", href: "/sync-history-dashboard", icon: Zap },
-      { label: "Financial Dashboard", href: "/financial-dashboard", icon: BarChart3 },
-      { label: "Report Builder", href: "/report-builder", icon: BarChart3 },
-      { label: "Scheduled Reports", href: "/scheduled-reports", icon: BarChart3 },
+      { label: "Zoho", href: "/zoho", icon: Zap, minRole: "superadmin" },
+      { label: "Sync History", href: "/sync-history-dashboard", icon: Zap, minRole: "superadmin" },
+      { label: "Financial Dashboard", href: "/financial-dashboard", icon: BarChart3, minRole: "superadmin" },
+      { label: "Report Builder", href: "/report-builder", icon: BarChart3, minRole: "admin" },
+      { label: "Scheduled Reports", href: "/scheduled-reports", icon: BarChart3, minRole: "admin" },
     ],
   },
 ];
+
+/** Returns true if the user's role meets or exceeds the required minimum tier */
+function meetsMinRole(
+  userRole: string | undefined,
+  minRole: "fieldManager" | "admin" | "superadmin" | undefined
+): boolean {
+  if (!minRole) return true; // No restriction
+  if (!userRole) return false;
+
+  const tierRank: Record<string, number> = {
+    superadmin: 4,
+    admin: 3,
+    field_manager: 2,
+    supervisor: 1,
+    user: 0,
+  };
+
+  const minTierRank: Record<string, number> = {
+    superadmin: 4,
+    admin: 3,
+    fieldManager: 2,
+  };
+
+  const userRank = tierRank[userRole] ?? 0;
+  const requiredRank = minTierRank[minRole] ?? 0;
+  return userRank >= requiredRank;
+}
 
 export default function SidebarNavigation() {
   const [isCollapsed, setIsCollapsed] = useState(() => {
@@ -125,6 +164,8 @@ export default function SidebarNavigation() {
     return saved ? new Set(JSON.parse(saved)) : new Set(["Dashboard & Analytics"]);
   });
   const [location] = useLocation();
+  const { data: worker } = trpc.auth.me.useQuery();
+  const userRole = worker?.role;
 
   const toggleSidebar = () => {
     const newState = !isCollapsed;
@@ -144,6 +185,15 @@ export default function SidebarNavigation() {
   };
 
   const isActive = (href: string) => location === href;
+
+  // Filter groups and items by role
+  const visibleGroups = navigationGroups
+    .filter(group => meetsMinRole(userRole, group.minRole))
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => meetsMinRole(userRole, item.minRole)),
+    }))
+    .filter(group => group.items.length > 0);
 
   return (
     <div
@@ -177,7 +227,7 @@ export default function SidebarNavigation() {
 
       {/* Navigation */}
       <div className="flex-1 overflow-y-auto py-4 px-2">
-        {navigationGroups.map((group) => {
+        {visibleGroups.map((group) => {
           const isExpanded = expandedGroups.has(group.title);
           const GroupIcon = group.icon;
 
