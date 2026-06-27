@@ -1296,3 +1296,109 @@ Post-sync distribution unchanged: 7,135 assigned, 728 unassigned. The fix preser
 5. **27CBM-DINO tariff DB update** — ops 30-second UI action
 6. **Lasika06 Fixed Billing activation** — ops + engineering coordinated
 7. **15,800 historical backlog recovery decision** — business decision
+
+
+---
+
+## Tranche 13 — Pickup Outcome Hardening, Routing Reasons, and Read Path
+
+**Date:** 2026-06-27
+
+### Items Delivered
+
+| Item | Description | Status |
+|------|-------------|--------|
+| 3 | Delete all 38 test routes (pre-deletion safety check, 3-step cascade: customerVisitNotes → routeCustomers → routes) | Complete |
+| 4 | Fix ghost-row coupling — `markCustomerComplete` and `markCustomerIncomplete` now write `completionType` atomically | Complete |
+| 5 | Add `skipReason`/`skipNote` to `routeCustomers`; remove `customerVisitNotes` free-text write from `skipCustomer`; `SKIP_REASONS` to `shared/const.ts` | Complete |
+| 1 | `routingReason`/`routingReasonNote` schema on `routes` + `routeCustomers`; DB migration; Zod schemas; `ROUTING_REASONS` to `shared/const.ts`; `driftLogger` | Complete |
+| 2 | Auto-fill rules: recurring → `regular` locked; one-off → required; `other` → 10+ char note required | Complete |
+| 6 | Create Route UI: Routing Reason card in Step 3; `StopCard` component; per-stop override; validation gate | Complete |
+| 7 | Route detail: `routingReason` badge on route header card | Complete |
+| 8 | Route detail: per-stop `routingReason` badge, `skipReason` badge, `skipNote` | Complete |
+| 9 | `lastRoutingReason` correlated subquery on `getAllCustomers`/`getCustomersByFieldManager`; Routing Reason filter dropdown in Customers.tsx | Complete |
+| 10a | Dashboard "Never Routed" chip (5-column stats grid, navigates to `/customers?routeStatus=untreated`) | Complete |
+| 10b | Customers filter: "(No field manager set)" and "(No MAF)" options | Complete |
+| 11 | Skip analytics section in Analytics.tsx: 30-day distribution, per-worker pattern, `other` free-text review; `getSkipAnalytics` tRPC procedure | Complete |
+
+### Pre-Tranche Forensic Findings (Pickup Outcome Audit)
+
+- `routeCustomers.completion_type` is backend-enforced (not supervisor-selected). Three values: `picked`, `skipped`, `not_attempted` (default).
+- `routeScheduleCustomers.skipReason` is an 8-value enum, Zod-validated, nullable.
+- Ghost rows: 2 rows had `completedAt` set but `completionType = 'not_attempted'` — caused by `markCustomerComplete` not writing `completionType`. Fixed in Item 4.
+- At tranche open: 9 `picked` rows (test data, routes 147/149/151/156), 0 `skipped` rows, 0 `routeScheduleCustomers` rows. System was in pre-operational state.
+
+### Item 3 Pre-Deletion Safety Check Findings
+
+- `customerVisitNotes.routeId` is a FK to `routes.id`. The 2 historical skip notes referenced routes in the delete set. Deletion order: `customerVisitNotes` → `routeCustomers` → `routes`.
+- 9 `picked` stops across 4 routes (all test data, same supervisor id 14, 5-day window). Owner confirmed all 38 routes are test artifacts. Option A (delete all) selected.
+
+### Item 5 Architectural Decision
+
+The `customerVisitNotes` free-text write path is removed from `skipCustomer` for new skips. The 2 historical free-text rows remain as audit artifacts of the pre-structured period. The new structured `skipReason`/`skipNote` columns on `routeCustomers` are the canonical source for skip analytics going forward. This prevents future audits from having to deduplicate across two tables.
+
+### Schema Drift Correction (T13 Close-out)
+
+During T13 close-out, `drizzle/schema.ts` was found to be missing `routingReason`/`routingReasonNote` on both `routes` and `routeCustomers` tables (the columns existed in the production DB but were never added to the schema file). Fixed in the Item 9 commit (`69101916`).
+
+---
+
+### Pattern #29 — `markCustomerComplete` Missing Atomic Write
+
+**Context:** `markCustomerComplete` set `completedAt` but did not set `completionType`. `markCustomerIncomplete` reset `completedAt` but did not reset `completionType`. Result: 2 ghost rows with `completedAt` set and `completionType = 'not_attempted'`.
+
+**Rule added (Rule 34):** Any procedure that writes a timestamp field that is semantically coupled to a state enum (e.g., `completedAt` ↔ `completionType`, `pickedAt` ↔ `completionType`) must write both fields in the same UPDATE statement. Partial writes to coupled fields are a data integrity bug, not a performance optimisation.
+
+---
+
+### Pattern #30 — `customerVisitNotes` Free-Text as Parallel Write Path
+
+**Context:** `skipCustomer` wrote a structured `skipReason` to `routeCustomers` AND a free-text "SKIP — Reason: X" row to `customerVisitNotes`. This created two sources of truth for the same event, requiring deduplication in any future analytics query.
+
+**Rule added (Rule 35):** When a structured column is added to replace a free-text write path, the free-text write must be removed from the same commit. Leaving both paths active creates a deduplication burden that compounds with every new write. Historical rows in the free-text table are preserved as audit artifacts; new writes go only to the structured column.
+
+---
+
+### Pattern #31 — Schema File Not Updated After DB Migration
+
+**Context:** The T13 Item 1 DB migration added `routingReason`/`routingReasonNote` to `routes` and `routeCustomers` in the production DB, but the corresponding Drizzle schema file (`drizzle/schema.ts`) was not updated in the same commit. The schema file diverged from the DB for the duration of T13, causing Drizzle ORM to be unaware of the new columns.
+
+**Rule added (Rule 36):** Every DB migration script must be accompanied by a corresponding `drizzle/schema.ts` update in the same commit. The schema file is the single source of truth for the ORM; if it diverges from the DB, queries that reference the new columns will fail at the TypeScript layer. The pattern "run migration, update schema later" is not acceptable.
+
+---
+
+### Pattern #32 — Derived Field Requires Explicit Select Shape
+
+**Context:** Adding `lastRoutingReason` (a correlated subquery) to `getAllCustomers` required switching from `db.select().from(customers)` (implicit `*`) to an explicit `db.select({ ... }).from(customers)` with each column named. If any column is omitted from the explicit select, it silently disappears from the return type.
+
+**Rule added (Rule 37):** When adding a derived/computed field (subquery, expression, JOIN column) to an existing query, enumerate all columns explicitly in the select shape. Do not rely on `db.select()` (implicit `*`) and then add one extra field — Drizzle ORM does not support mixing `*` with named fields. Enumerate all columns from the base table first, then add the derived field. After the change, verify the return type includes all previously available columns.
+
+---
+
+### Production State After Tranche 13
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub + production) | `69101916` |
+| Build size | 312.1 KB |
+| PM2 `field-worker-scheduler` | online, port 3002 |
+| Routes | 0 (all 38 test routes deleted) |
+| Customers | 7,863 |
+| `routeCustomers.skipReason` | Structured column live |
+| `routeCustomers.routingReason` | Column live |
+| `routes.routingReason` | Column live |
+| `drizzle/schema.ts` | In sync with production DB |
+| `getCustomers` | Returns `lastRoutingReason` derived field |
+| Customers filter | 5 filters: Field Manager, MAF, Customer Type, Route Status, Routing Reason |
+| Dashboard | 5-stat grid with "Never Routed" chip |
+
+---
+
+### Carry-Forward to Tranche 14
+
+1. **Independent verification remediation (Steps 1–8)** — 8 items from the IV report, covering G1/G2/G3 (schema enum extensions + UNIQUE constraint), B4 (supervisor login audit log), H4 (schedule-branch skip write), B1/B2 (role gate), and others.
+2. **Pattern #15 forensic** — `assignedWorkerId` vs `workerId` full audit (deferred from T9–T13).
+3. **`sync-zoho-data.mjs` name normalisation** — `workerMap` lookup needs trim/lowercase/collapse for Zoho name variants (Rule 31 carry-forward).
+4. **Item 3 (unassigned dashboard chip)** — deferred pending owner confirmation (originally T12 Item 3).
+5. **27CBM-DINO tariff DB update** — ops action.
+6. **Lasika06 Fixed Billing activation** — ops + engineering coordinated.
