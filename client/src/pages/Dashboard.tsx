@@ -36,9 +36,9 @@ export default function Dashboard() {
         {hasError ? (
           <ErrorState error={hasError} onRetry={handleRetry} />
         ) : isLoading ? (
-          <CardSkeleton count={4} />
+          <CardSkeleton count={5} />
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
           <Card className="bg-slate-800/50 border-slate-700">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-slate-400">Total Customers</CardTitle>

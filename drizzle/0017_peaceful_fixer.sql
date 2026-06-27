@@ -1,0 +1,9 @@
+ALTER TABLE `routeCustomers` ADD `skipReason` enum('no_access','customer_request','customer_not_present','safety_concern','bin_not_out','permanent_moved','permanent_closed','other');--> statement-breakpoint
+ALTER TABLE `routeCustomers` ADD `skipNote` text;--> statement-breakpoint
+ALTER TABLE `routes` ADD `startingPointLat` decimal(10,7);--> statement-breakpoint
+ALTER TABLE `routes` ADD `startingPointLng` decimal(10,7);--> statement-breakpoint
+ALTER TABLE `routes` ADD `startingPointLabel` varchar(255);--> statement-breakpoint
+ALTER TABLE `workers` ADD `homeDepotLat` decimal(10,7);--> statement-breakpoint
+ALTER TABLE `workers` ADD `homeDepotLng` decimal(10,7);--> statement-breakpoint
+ALTER TABLE `workers` ADD `homeDepotLabel` varchar(255);--> statement-breakpoint
+ALTER TABLE `workers` ADD CONSTRAINT `workers_email_unique` UNIQUE(`email`);

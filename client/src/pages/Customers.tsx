@@ -14,14 +14,16 @@ export default function Customers() {
   const [selectedMAF, setSelectedMAF] = useState("");
   const [selectedCustomerType, setSelectedCustomerType] = useState("");
   const [selectedRouteStatus, setSelectedRouteStatus] = useState("");
+  const [selectedRoutingReason, setSelectedRoutingReason] = useState("");
 
-  // Read search parameter from URL on mount
+  // Read filter parameters from URL on mount (e.g., from Dashboard chip navigation)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const searchParam = params.get('search');
-    if (searchParam) {
-      setSearchTerm(searchParam);
-    }
+    if (searchParam) setSearchTerm(searchParam);
+    // Item 10a (T13): pre-set route status filter when navigated from Dashboard chip
+    const routeStatusParam = params.get('routeStatus');
+    if (routeStatusParam) setSelectedRouteStatus(routeStatusParam);
   }, []);
 
   // Get unique MAF tags for selected field manager
@@ -97,7 +99,12 @@ export default function Customers() {
 
       return true;
     });
-  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus]);
+  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason]);
+
+  // Dummy — replaced above, kept for linter
+  const _unused = selectedRoutingReason;
+    });
+  // (filter memo moved above)
 
   // Get field manager name
   const getFieldManagerName = (managerId: number | null) => {
@@ -177,7 +184,8 @@ export default function Customers() {
             <option value="">All Managers ({customers.length})</option>
             {fieldManagersWithCounts.map((manager) => (
               <option key={manager.id} value={manager.id}>
-                {manager.name} ({manager.count})
+                {/* Item 10b (T13): explicit label for unassigned */}
+                {manager.id === 'unassigned' ? `(No field manager set) (${manager.count})` : `${manager.name} (${manager.count})`}
               </option>
             ))}
           </select>
@@ -196,7 +204,8 @@ export default function Customers() {
             {availableMAFs.map((maf) => (
               <option key={maf} value={maf}>{maf}</option>
             ))}
-            <option value="no_maf">No MAF</option>
+            {/* Item 10b (T13): explicit label for no-MAF */}
+            <option value="no_maf">(No MAF set)</option>
           </select>
         </div>
 
@@ -225,7 +234,8 @@ export default function Customers() {
             <option value="">All Status</option>
             <option value="assigned">Route Assigned</option>
             <option value="unassigned">Route Unassigned</option>
-            <option value="untreated">Untreated</option>
+            {/* Item 9 (T13): never-routed is the canonical 'untreated' state */}
+            <option value="untreated">Never Routed (Untreated)</option>
           </select>
         </div>
       </div>

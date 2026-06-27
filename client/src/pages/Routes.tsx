@@ -1,7 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar, Pencil, Save, RefreshCw } from "lucide-react";
+import { MapPin, Navigation, Clock, CheckCircle, AlertCircle, Zap, Target, Filter, X, Calendar, Pencil, Save, RefreshCw, Tag, SkipForward } from "lucide-react";
+import { ROUTING_REASONS } from '../../../shared/const';
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import AppHeader from "@/components/AppHeader";
@@ -439,10 +440,19 @@ export default function Routes() {
                           )}
                         </div>
                       </div>
-                      <span className={`px-3 py-1 rounded flex items-center gap-2 ${getStatusColor(routeDetails.status)}`}>
-                        {getStatusIcon(routeDetails.status)}
-                        {routeDetails.status}
-                      </span>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className={`px-3 py-1 rounded flex items-center gap-2 ${getStatusColor(routeDetails.status)}`}>
+                          {getStatusIcon(routeDetails.status)}
+                          {routeDetails.status}
+                        </span>
+                        {/* Item 7 (T13): route-level routing reason badge */}
+                        {(routeDetails as any).routingReason && (
+                          <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-600/20 text-indigo-300 text-xs">
+                            <Tag className="w-3 h-3" />
+                            {ROUTING_REASONS.find(r => r.value === (routeDetails as any).routingReason)?.label ?? (routeDetails as any).routingReason}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -548,16 +558,37 @@ export default function Routes() {
                     {routeDetails.customers && routeDetails.customers.length > 0 ? (
                       <div className="space-y-2 max-h-[400px] overflow-y-auto">
                         {routeDetails.customers.map((customer, index) => (
-                          <div key={customer.id} className="flex items-center gap-3 p-3 bg-slate-700/30 rounded-lg">
-                            <span className="w-6 h-6 bg-blue-600/20 text-blue-400 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0">
-                              {index + 1}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-medium text-sm text-white truncate">{customer.name}</h4>
-                              <p className="text-xs text-slate-400 truncate">{customer.address}</p>
+                          <div key={customer.id} className="p-3 bg-slate-700/30 rounded-lg">
+                            <div className="flex items-center gap-3">
+                              <span className="w-6 h-6 bg-blue-600/20 text-blue-400 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0">
+                                {index + 1}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-medium text-sm text-white truncate">{customer.name}</h4>
+                                <p className="text-xs text-slate-400 truncate">{customer.address}</p>
+                              </div>
+                              {/* Item 8 (T13): per-stop routing reason badge */}
+                              {(customer as any).routingReason && (
+                                <span className="text-xs px-2 py-0.5 rounded bg-indigo-600/20 text-indigo-300 flex-shrink-0">
+                                  {ROUTING_REASONS.find(r => r.value === (customer as any).routingReason)?.label ?? (customer as any).routingReason}
+                                </span>
+                              )}
+                              {/* Completion status */}
+                              {(customer as any).completionType === 'picked' ? (
+                                <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
+                              ) : (customer as any).completionType === 'skipped' ? (
+                                <SkipForward className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                              ) : null}
                             </div>
-                            {customer.completedAt && (
-                              <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
+                            {/* Skip reason row */}
+                            {(customer as any).skipReason && (
+                              <div className="mt-1.5 pl-9 flex items-center gap-1.5">
+                                <SkipForward className="w-3 h-3 text-amber-400 flex-shrink-0" />
+                                <span className="text-xs text-amber-300">
+                                  {(customer as any).skipReason.replace(/_/g, ' ')}
+                                  {(customer as any).skipNote ? ` — ${(customer as any).skipNote}` : ''}
+                                </span>
+                              </div>
                             )}
                           </div>
                         ))}
