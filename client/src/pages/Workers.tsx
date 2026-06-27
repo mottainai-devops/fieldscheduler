@@ -47,7 +47,10 @@ export default function Workers() {
   const [shiftStart, setShiftStart] = useState("08:00");
   const [shiftEnd, setShiftEnd] = useState("17:00");
   const [pin, setPin] = useState("");
-  const [workerRole, setWorkerRole] = useState<"field_manager" | "supervisor">("field_manager");
+  // T14 Item 5: supervisor creation removed from this UI.
+  // Supervisors are managed exclusively in Mottainai Admin Dashboard (admin.kowope.xyz).
+  // This UI only creates Field Manager workers.
+  const [workerRole, setWorkerRole] = useState<"field_manager">("field_manager");
   const [preferredWebhookType, setPreferredWebhookType] = useState<"payt" | "monthly" | "">("payt");
 
   // Home Depot fields (Tranche 9)
@@ -375,31 +378,18 @@ export default function Workers() {
                       </div>
                       <div className="grid gap-2">
                         <Label className="text-slate-300">Role</Label>
+                        {/* T14 Item 5: Only 'Field Manager' is available here.
+                             Supervisor creation is managed in Mottainai Admin Dashboard (admin.kowope.xyz). */}
                         <Select value={workerRole} onValueChange={(v: any) => setWorkerRole(v)}>
                           <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="bg-slate-700 border-slate-600">
                             <SelectItem value="field_manager">Field Manager</SelectItem>
-                            <SelectItem value="supervisor">Supervisor</SelectItem>
                           </SelectContent>
                         </Select>
+                        <p className="text-xs text-slate-500">To create a Supervisor, use Mottainai Admin Dashboard.</p>
                       </div>
-                      {workerRole === 'supervisor' && (
-                        <div className="grid gap-2">
-                          <Label className="text-slate-300">Billing Type (Webhook Preference)</Label>
-                          <Select value={preferredWebhookType || 'payt'} onValueChange={(v: any) => setPreferredWebhookType(v)}>
-                            <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="bg-slate-700 border-slate-600">
-                              <SelectItem value="payt">PAYT (Pay As You Throw)</SelectItem>
-                              <SelectItem value="monthly">Monthly Billing</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-slate-500">Only admins can change this after it is set.</p>
-                        </div>
-                      )}
                       {/* Tranche 9: Home Depot sub-section */}
                       <HomeDepotSection />
                     </div>
@@ -535,6 +525,36 @@ export default function Workers() {
         {/* Edit Worker Dialog */}
         <Dialog open={editOpen} onOpenChange={(v) => { setEditOpen(v); if (!v) resetForm(); }}>
           <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+            {/* T14 Item 5c: Supervisor workers are read-only in this UI */}
+            {selectedWorker && (selectedWorker as any).role === 'supervisor' ? (
+              <div className="p-6">
+                <DialogHeader>
+                  <DialogTitle className="text-white">Worker Details (Read-Only)</DialogTitle>
+                  <DialogDescription className="text-slate-400">
+                    {selectedWorker.name}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="mt-4 p-4 bg-amber-900/20 border border-amber-700/40 rounded-lg">
+                  <p className="text-amber-300 text-sm font-medium">Managed in Mottainai Admin Dashboard</p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    This worker is a Supervisor and is managed exclusively at admin.kowope.xyz.
+                    Changes to supervisor accounts must be made there.
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-3 text-sm">
+                  <div><span className="text-slate-400">Name:</span> <span className="text-white">{selectedWorker.name}</span></div>
+                  <div><span className="text-slate-400">Email:</span> <span className="text-white">{(selectedWorker as any).email || '—'}</span></div>
+                  <div><span className="text-slate-400">Phone:</span> <span className="text-white">{(selectedWorker as any).phone || '—'}</span></div>
+                  <div><span className="text-slate-400">Status:</span> <span className="text-white">{selectedWorker.status}</span></div>
+                  <div><span className="text-slate-400">Role:</span> <span className="text-purple-400">Supervisor</span></div>
+                </div>
+                <DialogFooter className="mt-6">
+                  <Button type="button" variant="outline" onClick={() => setEditOpen(false)} className="border-slate-600">
+                    Close
+                  </Button>
+                </DialogFooter>
+              </div>
+            ) : (
             <form onSubmit={handleUpdate}>
               <DialogHeader>
                 <DialogTitle className="text-white">Edit Worker</DialogTitle>
@@ -628,6 +648,8 @@ export default function Workers() {
                     />
                   </div>
                 </div>
+                {/* T14 Item 5: Only 'Field Manager' available in edit dialog.
+                     Supervisor workers show read-only view (handled above). */}
                 <div className="grid gap-2">
                   <Label className="text-slate-300">Role</Label>
                   <Select value={workerRole} onValueChange={(v: any) => setWorkerRole(v)}>
@@ -636,22 +658,8 @@ export default function Workers() {
                     </SelectTrigger>
                     <SelectContent className="bg-slate-700 border-slate-600">
                       <SelectItem value="field_manager">Field Manager</SelectItem>
-                      <SelectItem value="supervisor">Supervisor</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label className="text-slate-300">Billing Type (Webhook Preference)</Label>
-                  <Select value={preferredWebhookType || 'payt'} onValueChange={(v: any) => setPreferredWebhookType(v)}>
-                    <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-slate-700 border-slate-600">
-                      <SelectItem value="payt">PAYT (Pay As You Throw)</SelectItem>
-                      <SelectItem value="monthly">Monthly Billing</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-slate-500">Admin-only field. Supervisor's billing type preference.</p>
                 </div>
                 {/* Tranche 9: Home Depot sub-section */}
                 <HomeDepotSection />
@@ -674,6 +682,7 @@ export default function Workers() {
                 </Button>
               </DialogFooter>
             </form>
+            )}
           </DialogContent>
         </Dialog>
 
