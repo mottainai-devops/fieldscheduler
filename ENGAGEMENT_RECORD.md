@@ -1521,3 +1521,80 @@ T14 was triggered by an independent verification (IV) report identifying the fol
 5. **`ADMIN_WORKER_IDS` population** — owner to identify which worker IDs should be `admin` tier and update `adminAuth.ts`
 6. **Security debt procedures** — 6 public write procedures with in-handler auth gaps (Condition 2 from T14) deferred to T15
 7. **Scoped financial access for field managers** — `getMyFinancialMetrics` procedure (T15 candidate noted in financialRouter.ts)
+
+---
+
+## Tranche 15 — Supervisor Lifecycle + Pending Assignment Workflow
+
+**Session date:** 2026-06-27
+**GitHub commits:** `14308eda` (Item 3) → `1a14012a` (Items 4+5)
+**Production server:** `54.194.172.107`
+
+### Items Completed
+
+| Item | Description | Commit | Status |
+|---|---|---|---|
+| **Item 1** | FK audit + delete all 9 supervisor records from production DB | (DB-only) | Done |
+| **Item 2** | Workers UI read-only guard for supervisor records | T14 Item 5c (already shipped) | Confirmed |
+| **Item 3** | Populate ADMIN_WORKER_IDS with Wale (id=10) and Alaba (id=27) | `14308eda` | Deployed |
+| **Item 4** | createRoute writes pending_assignment when no supervisor provided | `1a14012a` | Deployed |
+| **Item 5** | getPendingAssignmentRoutes + assignSupervisorToRoute + /pending-assignments page | `1a14012a` | Deployed |
+
+### Pre-T15 Forensic Findings
+
+All 9 supervisor records deleted. Classifications:
+- id=11 tanto: test account
+- id=13 Kunle Akande: valid supervisor (will auto-provision on mobile login)
+- id=14 Adey: owner mobile shadow record (duplicate identity)
+- id=15 Jumoke Kikiowo: valid supervisor (will auto-provision on mobile login)
+- id=16 AFT Okuleye & Sons: company entity modelled as supervisor
+- id=24 Olawale: valid supervisor (will auto-provision on mobile login)
+- id=25 Cherry Picker Test User: explicit test artifact
+- id=26 Kelani: valid person, no surveyAppUserId (cannot use mobile yet)
+- id=28 Dalco Ventures: company entity modelled as supervisor
+
+FK impact: Route id=165 (supervisorId=14) and its 3 routeCustomers rows deleted per owner instruction.
+
+### New Patterns and Rules
+
+**Pattern #38 — Supervisor Records Must Not Be Created Manually**
+All 9 supervisor records were created manually, bypassing ensureSupervisorWorker and creating orphaned records with missing surveyAppUserId values.
+**Rule added (Rule 43):** Supervisor workers rows must only be created via ensureSupervisorWorker in workerAuth.supervisorLogin. Manual creation via Workers UI is blocked (T14 Item 5).
+
+**Pattern #39 — Company Entities Must Not Be Modelled as Supervisor Workers**
+Workers id=16 and id=28 were company names entered as supervisor records.
+**Rule added (Rule 44):** The workers table is for individual human workers only. Company/vendor entities belong in a separate vendors or companies table (T16+ candidate).
+
+**Pattern #40 — ADMIN_WORKER_IDS Must Be Explicitly Populated**
+ADMIN_WORKER_IDS was empty from T14 through start of T15. Workers not in SUPERADMIN_WORKER_IDS or ADMIN_WORKER_IDS defaulted to field_manager role.
+**Rule added (Rule 45):** When a worker is promoted to admin tier, their workers.id must be added to ADMIN_WORKER_IDS in the same session.
+
+**Pattern #41 — createRoute Status Must Reflect Supervisor Assignment State**
+createRoute previously always wrote status=assigned regardless of whether a supervisor was provided.
+**Rule added (Rule 46):** Route status at creation must reflect actual assignment state: pending_assignment (no supervisor) or assigned (supervisor resolved). Transition pending_assignment -> assigned is performed by assignSupervisorToRoute.
+
+### Production State After Tranche 15
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub + production) | `1a14012a` |
+| Production server | `54.194.172.107` (key: fieldscheduler-key-new.pem) |
+| PM2 field-worker-scheduler | online, port 3002 |
+| users.role enum | ('user', 'admin', 'field_manager', 'superadmin', 'supervisor') |
+| routes.status enum | ('pending', 'pending_assignment', 'optimized', 'assigned', 'in_progress', 'completed', 'cancelled') |
+| SUPERADMIN_WORKER_IDS | {1, 2} |
+| ADMIN_WORKER_IDS | {10, 27} (Wale Onibudo + Alaba) |
+| Supervisor records in DB | 0 (all deleted; auto-provision on mobile login) |
+| createRoute default status | pending_assignment (no supervisor) or assigned (supervisor resolved) |
+| /pending-assignments page | Live — admin tier, 30s auto-refresh, supervisor picker |
+| getPendingAssignmentRoutes | adminProcedure |
+| assignSupervisorToRoute | adminProcedure |
+
+### Carry-Forward to Tranche 16
+
+1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15)
+2. Pattern #15 forensic — assignedWorkerId vs workerId full audit (deferred from T9-T15)
+3. sync-zoho-data.mjs name normalisation — workerMap lookup needs trim/lowercase/collapse (Rule 31 carry-forward)
+4. Scoped financial access for field managers — getMyFinancialMetrics procedure (T16 candidate)
+5. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
+6. Kelani (id=26 deleted) — valid supervisor with no surveyAppUserId; needs Survey App account before mobile use
