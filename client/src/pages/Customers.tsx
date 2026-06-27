@@ -97,14 +97,19 @@ export default function Customers() {
         return false;
       }
 
+      // Routing Reason filter (Item 9, T13)
+      // 'never_routed' is a synthetic value meaning lastRoutingReason IS NULL
+      if (selectedRoutingReason) {
+        if (selectedRoutingReason === 'never_routed') {
+          if ((customer as any).lastRoutingReason !== null && (customer as any).lastRoutingReason !== undefined) return false;
+        } else {
+          if ((customer as any).lastRoutingReason !== selectedRoutingReason) return false;
+        }
+      }
+
       return true;
     });
   }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason]);
-
-  // Dummy — replaced above, kept for linter
-  const _unused = selectedRoutingReason;
-    });
-  // (filter memo moved above)
 
   // Get field manager name
   const getFieldManagerName = (managerId: number | null) => {
@@ -236,6 +241,24 @@ export default function Customers() {
             <option value="unassigned">Route Unassigned</option>
             {/* Item 9 (T13): never-routed is the canonical 'untreated' state */}
             <option value="untreated">Never Routed (Untreated)</option>
+          </select>
+        </div>
+
+        {/* 5. Routing Reason Filter (Item 9, T13) */}
+        <div>
+          <label className="block text-sm text-slate-400 mb-2">Filter by Last Routing Reason</label>
+          <select
+            value={selectedRoutingReason}
+            onChange={(e) => setSelectedRoutingReason(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">All Routing Reasons</option>
+            <option value="never_routed">Never Routed</option>
+            <option value="regular">Regular</option>
+            <option value="callback">Callback</option>
+            <option value="complaint">Complaint</option>
+            <option value="compliance">Compliance</option>
+            <option value="other">Other</option>
           </select>
         </div>
       </div>

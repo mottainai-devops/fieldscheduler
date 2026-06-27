@@ -184,7 +184,34 @@ export async function getAllVehicles() {
 export async function getAllCustomers() {
   const db = await getDb();
   if (!db) return [];
-  return await db.select().from(customers).orderBy(desc(customers.createdAt));
+  // Item 9 (T13): derive lastRoutingReason — the routingReason from the most recent
+  // routeCustomers row for each customer (NULL if never routed).
+  const lastRoutingReasonSubquery = sql<string>`(
+    SELECT rc.routingReason
+    FROM routeCustomers rc
+    INNER JOIN routes r ON rc.routeId = r.id
+    WHERE rc.customerId = ${customers.id}
+    ORDER BY r.scheduledDate DESC, r.createdAt DESC
+    LIMIT 1
+  )`;
+  const result = await db.select({
+    id: customers.id,
+    name: customers.name,
+    address: customers.address,
+    latitude: customers.latitude,
+    longitude: customers.longitude,
+    serviceType: customers.serviceType,
+    priority: customers.priority,
+    buildingId: customers.buildingId,
+    zohoContactId: customers.zohoContactId,
+    fieldManager: customers.fieldManager,
+    maf: customers.maf,
+    customerType: customers.customerType,
+    routeAssignmentStatus: customers.routeAssignmentStatus,
+    createdAt: customers.createdAt,
+    lastRoutingReason: lastRoutingReasonSubquery,
+  }).from(customers).orderBy(desc(customers.createdAt));
+  return result;
 }
 
 export async function getCustomersByIds(ids: number[]) {
@@ -198,9 +225,35 @@ export async function getCustomersByIds(ids: number[]) {
 export async function getCustomersByFieldManager(fieldManagerId: number) {
   const db = await getDb();
   if (!db) return [];
-  return await db.select().from(customers)
+  // Item 9 (T13): same lastRoutingReason derivation as getAllCustomers.
+  const lastRoutingReasonSubquery = sql<string>`(
+    SELECT rc.routingReason
+    FROM routeCustomers rc
+    INNER JOIN routes r ON rc.routeId = r.id
+    WHERE rc.customerId = ${customers.id}
+    ORDER BY r.scheduledDate DESC, r.createdAt DESC
+    LIMIT 1
+  )`;
+  const result = await db.select({
+    id: customers.id,
+    name: customers.name,
+    address: customers.address,
+    latitude: customers.latitude,
+    longitude: customers.longitude,
+    serviceType: customers.serviceType,
+    priority: customers.priority,
+    buildingId: customers.buildingId,
+    zohoContactId: customers.zohoContactId,
+    fieldManager: customers.fieldManager,
+    maf: customers.maf,
+    customerType: customers.customerType,
+    routeAssignmentStatus: customers.routeAssignmentStatus,
+    createdAt: customers.createdAt,
+    lastRoutingReason: lastRoutingReasonSubquery,
+  }).from(customers)
     .where(eq(customers.fieldManager, fieldManagerId))
     .orderBy(desc(customers.createdAt));
+  return result;
 }
 
 export async function getCustomerById(id: number) {

@@ -167,6 +167,10 @@ export const routes = mysqlTable("routes", {
   startingPointLat: decimal("startingPointLat", { precision: 10, scale: 7 }),
   startingPointLng: decimal("startingPointLng", { precision: 10, scale: 7 }),
   startingPointLabel: varchar("startingPointLabel", { length: 255 }),
+  // Item 1 (T13): route-level routing reason. Inherited by all stops unless overridden per-stop.
+  routingReason: mysqlEnum("routingReason", ["regular", "callback", "complaint", "compliance", "other"]),
+  // Free text required when routingReason = 'other' (10+ chars enforced at application layer).
+  routingReasonNote: varchar("routingReasonNote", { length: 500 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -188,6 +192,10 @@ export const routeCustomers = mysqlTable("routeCustomers", {
   skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "customer_not_present", "safety_concern", "bin_not_out", "permanent_moved", "permanent_closed", "other"]),
   // Free text required when skipReason = 'other' (10+ chars enforced at application layer).
   skipNote: text("skipNote"),
+  // Item 1 (T13): per-stop routing reason. NULL = inherits route-level routingReason.
+  routingReason: mysqlEnum("routingReason", ["regular", "callback", "complaint", "compliance", "other"]),
+  // Free text required when routingReason = 'other' (10+ chars enforced at application layer).
+  routingReasonNote: varchar("routingReasonNote", { length: 500 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
