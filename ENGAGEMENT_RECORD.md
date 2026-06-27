@@ -1557,6 +1557,12 @@ FK impact: Route id=165 (supervisorId=14) and its 3 routeCustomers rows deleted 
 
 ### New Patterns and Rules
 
+**Pattern #42 — Supervisor Picker UX Parity Not Maintained Across All Entry Points**
+The lot-coverage grouped supervisor picker (Full Coverage / Partial Coverage / No Lot Access) was implemented in CreateRoute but not ported to PendingAssignments. When the pending_assignment workflow was added in T15, the assign dialog used a plain flat list, losing the coverage grouping that helps admins identify the correct supervisor quickly.
+**Rule added (Rule 47):** Any UI component that presents a supervisor selection list must use the lot-coverage grouped picker pattern (checkSupervisorLotAccess, three groups, green/red badges). Adding a new supervisor picker entry point without this grouping is a regression.
+
+---
+
 **Pattern #38 — Supervisor Records Must Not Be Created Manually**
 All 9 supervisor records were created manually, bypassing ensureSupervisorWorker and creating orphaned records with missing surveyAppUserId values.
 **Rule added (Rule 43):** Supervisor workers rows must only be created via ensureSupervisorWorker in workerAuth.supervisorLogin. Manual creation via Workers UI is blocked (T14 Item 5).
@@ -1573,11 +1579,11 @@ ADMIN_WORKER_IDS was empty from T14 through start of T15. Workers not in SUPERAD
 createRoute previously always wrote status=assigned regardless of whether a supervisor was provided.
 **Rule added (Rule 46):** Route status at creation must reflect actual assignment state: pending_assignment (no supervisor) or assigned (supervisor resolved). Transition pending_assignment -> assigned is performed by assignSupervisorToRoute.
 
-### Production State After Tranche 15
+### Production State After Tranche 15 (Close-Out)
 
 | Signal | Value |
 |--------|-------|
-| Git HEAD (GitHub + production) | `1a14012a` |
+| Git HEAD (GitHub + production) | `871d75a7` |
 | Production server | `54.194.172.107` (key: fieldscheduler-key-new.pem) |
 | PM2 field-worker-scheduler | online, port 3002 |
 | users.role enum | ('user', 'admin', 'field_manager', 'superadmin', 'supervisor') |
@@ -1586,9 +1592,17 @@ createRoute previously always wrote status=assigned regardless of whether a supe
 | ADMIN_WORKER_IDS | {10, 27} (Wale Onibudo + Alaba) |
 | Supervisor records in DB | 0 (all deleted; auto-provision on mobile login) |
 | createRoute default status | pending_assignment (no supervisor) or assigned (supervisor resolved) |
-| /pending-assignments page | Live — admin tier, 30s auto-refresh, supervisor picker |
-| getPendingAssignmentRoutes | adminProcedure |
+| /pending-assignments page | Live — admin tier, 30s auto-refresh, lot-coverage grouped supervisor picker |
+| getPendingAssignmentRoutes | adminProcedure — returns customerMafs[] per route |
 | assignSupervisorToRoute | adminProcedure |
+
+### T15 Verification Results (Live)
+
+| Item | Verification | Result |
+|---|---|---|
+| Item 3 — ADMIN_WORKER_IDS | Wale logged in; users.role = 'admin' written at 2026-06-27T18:13:43Z. Alaba already promoted at 2026-06-27T15:46:31Z. | ✅ Confirmed live |
+| Item 4 — pending_assignment | Route #167 created with No supervisor + Bukola as field manager. DB: status='pending_assignment', supervisorId=NULL, workerId=8. | ✅ Confirmed live |
+| Item 5 — Pending Assignments page | Route #167 visible on /pending-assignments. Assign dialog opens. Grouped picker shows Full Coverage (71) with green badges. | ✅ Confirmed live |
 
 ### Carry-Forward to Tranche 16
 
@@ -1598,3 +1612,5 @@ createRoute previously always wrote status=assigned regardless of whether a supe
 4. Scoped financial access for field managers — getMyFinancialMetrics procedure (T16 candidate)
 5. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
 6. Kelani (id=26 deleted) — valid supervisor with no surveyAppUserId; needs Survey App account before mobile use
+7. Field Manager Dashboard — focused operational view for field managers (owner-requested T16 scope item)
+8. Tranche 5C canonical constants centralisation — owner-requested T16 scope item
