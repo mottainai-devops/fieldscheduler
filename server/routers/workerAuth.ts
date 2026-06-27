@@ -549,8 +549,9 @@ export const workerAuthRouter = router({
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new Error("Database not available");
+      // Item 4 (T13): write completedAt and completionType atomically — no partial states
       await db.update(routeCustomers)
-        .set({ completedAt: new Date() })
+        .set({ completedAt: new Date(), completionType: 'picked' } as any)
         .where(and(eq(routeCustomers.routeId, input.routeId), eq(routeCustomers.customerId, input.customerId)));
       return { success: true };
     }),
@@ -564,8 +565,9 @@ export const workerAuthRouter = router({
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new Error("Database not available");
+      // Item 4 (T13): reset both completedAt and completionType atomically — no partial states
       await db.update(routeCustomers)
-        .set({ completedAt: null as any })
+        .set({ completedAt: null as any, completionType: 'not_attempted' } as any)
         .where(and(eq(routeCustomers.routeId, input.routeId), eq(routeCustomers.customerId, input.customerId)));
       return { success: true };
     }),
