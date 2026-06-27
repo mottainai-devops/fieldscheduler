@@ -7,7 +7,7 @@ import RequireAdmin from "./RequireAdmin";
 interface LayoutRouteProps extends Omit<RouteProps, "component"> {
   component: ComponentType<any>;
   requireAuth?: boolean;
-  /** requireAdmin implies requireAuth — only system_admin / field_manager / admin roles */
+  /** requireAdmin implies requireAuth — only superadmin / admin / field_manager roles (T14) */
   requireAdmin?: boolean;
 }
 

@@ -29,11 +29,11 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
         if (response.ok) {
           const user = await response.json();
-          // Three-tier model: both system_admin and field_manager have admin UI access
+          // Four-tier model (T14): superadmin, admin, and field_manager have admin UI access
           const hasAdminAccess = user && (
-            user.role === 'system_admin' ||
-            user.role === 'field_manager' ||
-            user.role === 'admin' // legacy compat
+            user.role === 'superadmin' ||
+            user.role === 'admin' ||
+            user.role === 'field_manager'
           );
           if (hasAdminAccess) {
             setIsAuthenticated(true);

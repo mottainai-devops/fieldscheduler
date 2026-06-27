@@ -27,16 +27,24 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
-// adminProcedure: accessible to system_admin and field_manager roles.
-// Three-tier model:
-//   system_admin  → full access, no data scoping
+// adminProcedure: accessible to superadmin, admin, and field_manager roles.
+// Four-tier model (T14 Item 1):
+//   superadmin    → full access, no data scoping (replaces system_admin)
+//   admin         → admin UI access, all customers visible
 //   field_manager → admin UI access, scoped data (fieldManagerId set)
+//   supervisor    → mobile app only, no admin access
 //   user          → no admin access
+//
+// NOTE: This procedure will be split into tiered procedures in T14 Item 3.
+// Until then, it grants access to all three admin-tier roles.
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    const hasAdminAccess = ctx.user?.role === 'system_admin' || ctx.user?.role === 'field_manager';
+    const hasAdminAccess =
+      ctx.user?.role === 'superadmin' ||
+      ctx.user?.role === 'admin' ||
+      ctx.user?.role === 'field_manager';
     if (!ctx.user || !hasAdminAccess) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }

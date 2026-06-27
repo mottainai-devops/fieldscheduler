@@ -7,9 +7,10 @@ interface RequireAdminProps {
 }
 
 /**
- * RequireAdmin — wraps routes that require system_admin or field_manager role.
+ * RequireAdmin — wraps routes that require superadmin, admin, or field_manager role.
  * Redirects to /login if unauthenticated, or shows a 403 message if authenticated
  * but lacking the required role.
+ * (T14 Item 1: system_admin renamed to superadmin)
  */
 export default function RequireAdmin({ children }: RequireAdminProps) {
   const [, setLocation] = useLocation();
@@ -17,9 +18,9 @@ export default function RequireAdmin({ children }: RequireAdminProps) {
 
   const isAuthenticated = !!worker;
   const hasAdminRole =
-    worker?.role === "system_admin" ||
-    worker?.role === "field_manager" ||
-    worker?.role === "admin"; // legacy compat
+    worker?.role === "superadmin" ||
+    worker?.role === "admin" ||
+    worker?.role === "field_manager";
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
