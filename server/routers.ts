@@ -7,6 +7,8 @@ import * as zoho from "./services/zoho";
 import { extractAssignmentsFromVRP, persistAssignments } from "./services/vrpPersist";
 import { optimizeRouteWithMottainai, validateRouteInput } from "./services/mottainaiRouteOptimization";
 import { analyticsRouter } from "./routers/analyticsRouter";
+import { financialRouter } from "./routers/financialRouter";
+import { reportingRouter } from "./routers/reportingRouter";
 import { fieldWorkerRouter } from "./routers/fieldWorker";
 import { workerAuthRouter } from "./routers/workerAuth";
 import { paymentsRouter } from "./routers/payments";
@@ -133,6 +135,10 @@ export const appRouter = router({
   customer: customerRouter,
   calendar: calendarRouter,
   calendarOverrides: calendarOverridesRouter,
+  // T14 Condition 5: Mount previously orphaned routers
+  analytics: analyticsRouter,
+  financial: financialRouter,
+  reporting: reportingRouter,
 
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),

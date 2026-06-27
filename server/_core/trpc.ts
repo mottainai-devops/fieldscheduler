@@ -27,34 +27,79 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
-// adminProcedure: accessible to superadmin, admin, and field_manager roles.
-// Four-tier model (T14 Item 1):
-//   superadmin    → full access, no data scoping (replaces system_admin)
-//   admin         → admin UI access, all customers visible
-//   field_manager → admin UI access, scoped data (fieldManagerId set)
-//   supervisor    → mobile app only, no admin access
-//   user          → no admin access
+// ─────────────────────────────────────────────────────────────────────────────
+// T14 Item 3 — Four-tier procedure model
 //
-// NOTE: This procedure will be split into tiered procedures in T14 Item 3.
-// Until then, it grants access to all three admin-tier roles.
+// Tier hierarchy (most → least privileged):
+//
+//   superadminProcedure  → superadmin only
+//     Destructive or owner-level operations: delete worker, delete customer,
+//     Zoho sync, system config, user role management.
+//
+//   adminProcedure       → superadmin + admin
+//     Head-of-operations tier: create/update workers, manage MAF tags,
+//     send payment reminders, create violation types, financial reporting.
+//
+//   fieldManagerProcedure → superadmin + admin + field_manager
+//     Field operations accessible to all admin-tier roles: create routes,
+//     view customers, calendar management, compliance reads.
+//
+//   protectedProcedure   → any authenticated user (unchanged)
+//   publicProcedure      → no auth required (unchanged)
+//
+// Role values in users.role (T14 Item 1 enum):
+//   'superadmin' | 'admin' | 'field_manager' | 'supervisor' | 'user'
+//
+// Supervisor accounts are rejected at web app login (adminAuth.ts).
+// They never reach any of these procedures via the web admin.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * superadminProcedure — superadmin only.
+ * Owner-level destructive or configuration operations.
+ */
+export const superadminProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    if (!ctx.user || ctx.user.role !== 'superadmin') {
+      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    }
+    return next({ ctx: { ...ctx, user: ctx.user } });
+  }),
+);
+
+/**
+ * adminProcedure — superadmin + admin.
+ * Head-of-operations tier: worker management, MAF tags, financial ops.
+ */
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
+    const hasAccess =
+      ctx.user?.role === 'superadmin' ||
+      ctx.user?.role === 'admin';
+    if (!ctx.user || !hasAccess) {
+      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    }
+    return next({ ctx: { ...ctx, user: ctx.user } });
+  }),
+);
 
-    const hasAdminAccess =
+/**
+ * fieldManagerProcedure — superadmin + admin + field_manager.
+ * Field operations: route creation, customer views, calendar, compliance reads.
+ */
+export const fieldManagerProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    const hasAccess =
       ctx.user?.role === 'superadmin' ||
       ctx.user?.role === 'admin' ||
       ctx.user?.role === 'field_manager';
-    if (!ctx.user || !hasAdminAccess) {
+    if (!ctx.user || !hasAccess) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
-
-    return next({
-      ctx: {
-        ...ctx,
-        user: ctx.user,
-      },
-    });
+    return next({ ctx: { ...ctx, user: ctx.user } });
   }),
 );
 

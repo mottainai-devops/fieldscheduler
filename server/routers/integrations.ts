@@ -1,11 +1,12 @@
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, fieldManagerProcedure, adminProcedure, superadminProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import * as zoho from "../services/zoho";
 import * as scheduler from "../services/zohoScheduler";
 
 export const integrationsRouter = router({
   // Get Zoho authorization status
-  getZohoStatus: protectedProcedure.query(async () => {
+  // T14 Item 3: adminProcedure — Zoho integration status is admin-tier
+  getZohoStatus: adminProcedure.query(async () => {
     try {
       const status = zoho.getOAuthStatus();
       return {
@@ -22,7 +23,8 @@ export const integrationsRouter = router({
   }),
 
   // Sync Zoho contacts to database
-  syncZohoContacts: protectedProcedure.mutation(async () => {
+  // T14 Item 3: superadminProcedure — Zoho sync is a high-impact operation, superadmin only
+  syncZohoContacts: superadminProcedure.mutation(async () => {
     try {
       console.log('[Integrations] Starting Zoho sync...');
       const result = await zoho.syncZohoContacts();
@@ -49,7 +51,8 @@ export const integrationsRouter = router({
   }),
 
   // Get customer statement
-  getCustomerStatement: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer statement reads accessible to all admin-tier roles
+  getCustomerStatement: fieldManagerProcedure
     .input(z.object({ zohoContactId: z.string() }))
     .query(async ({ input }) => {
       try {
@@ -60,7 +63,8 @@ export const integrationsRouter = router({
     }),
 
   // Get customer invoices
-  getCustomerInvoices: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer invoice reads accessible to all admin-tier roles
+  getCustomerInvoices: fieldManagerProcedure
     .input(z.object({ zohoContactId: z.string() }))
     .query(async ({ input }) => {
       try {
@@ -71,7 +75,8 @@ export const integrationsRouter = router({
     }),
 
   // Get customer payments
-  getCustomerPayments: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer payment reads accessible to all admin-tier roles
+  getCustomerPayments: fieldManagerProcedure
     .input(z.object({ zohoContactId: z.string() }))
     .query(async ({ input }) => {
       try {
@@ -82,7 +87,8 @@ export const integrationsRouter = router({
     }),
 
   // Get all sync jobs
-  getAllSyncJobs: protectedProcedure.query(async () => {
+  // T14 Item 3: adminProcedure — sync job management is admin-tier
+  getAllSyncJobs: adminProcedure.query(async () => {
     try {
       return await scheduler.getAllSyncJobs();
     } catch (error: any) {
@@ -92,7 +98,8 @@ export const integrationsRouter = router({
   }),
 
   // Create a new sync job
-  createSyncJob: protectedProcedure
+  // T14 Item 3: adminProcedure — sync job management is admin-tier
+  createSyncJob: adminProcedure
     .input(z.object({
       jobName: z.string(),
       scheduleType: z.enum(['hourly', 'daily', 'weekly', 'monthly']),
@@ -115,7 +122,8 @@ export const integrationsRouter = router({
     }),
 
   // Update a sync job
-  updateSyncJob: protectedProcedure
+  // T14 Item 3: adminProcedure — sync job management is admin-tier
+  updateSyncJob: adminProcedure
     .input(z.object({
       jobId: z.number(),
       enabled: z.boolean().optional(),
@@ -139,7 +147,8 @@ export const integrationsRouter = router({
     }),
 
   // Delete a sync job
-  deleteSyncJob: protectedProcedure
+  // T14 Item 3: superadminProcedure — sync job deletion is destructive, superadmin only
+  deleteSyncJob: superadminProcedure
     .input(z.object({ jobId: z.number() }))
     .mutation(async ({ input }) => {
       try {
@@ -152,7 +161,8 @@ export const integrationsRouter = router({
     }),
 
   // Get sync history
-  getSyncHistory: protectedProcedure
+  // T14 Item 3: adminProcedure — sync history reads are admin-tier
+  getSyncHistory: adminProcedure
     .input(z.object({ limit: z.number().default(50) }))
     .query(async ({ input }) => {
       try {

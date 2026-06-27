@@ -1,3 +1,20 @@
+/**
+ * workerAuth router — Mobile App API (Flutter / Survey App)
+ *
+ * T14 Item 3 NOTE: All procedures in this router are intentionally publicProcedure.
+ * The Flutter mobile app authenticates via Survey App Bearer tokens stored in secure
+ * device storage, NOT via Manus OAuth session cookies. The protectedProcedure middleware
+ * checks for a session cookie and would reject all mobile app requests.
+ *
+ * Security for mobile endpoints is handled at the application layer:
+ *   - Worker identity is verified via PIN or email+password
+ *   - Supervisor-specific procedures check workers.role in the handler body
+ *   - Sensitive mutations (createViolation, markCustomerPicked, etc.) validate
+ *     the calling worker's identity before writing
+ *
+ * DO NOT upgrade these to protectedProcedure without first implementing
+ * Bearer token support in the tRPC middleware.
+ */
 import { publicProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";

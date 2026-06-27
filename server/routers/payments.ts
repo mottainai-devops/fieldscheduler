@@ -1,8 +1,11 @@
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, adminProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 
 export const paymentsRouter = router({
-  // Upload payment proof (base64 file)
+  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
+  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
+  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
+  // validation inside the handler. See SECURITY_DEBT.md.
   uploadPaymentProof: publicProcedure
     .input(z.object({
       customerId: z.number(),
@@ -60,8 +63,10 @@ export const paymentsRouter = router({
       return await getPaymentEvidenceByCustomer(input.customerId);
     }),
 
-  // Send payment reminder
-  sendPaymentReminder: publicProcedure
+  // T14 Item 3: adminProcedure — triggers email/SMS to customers, admin-tier operation.
+  // Adjustment 1: initial mapping classified this as "keep public" (mobile-adjacent file context).
+  // Handler audit (Condition 2) revealed it's admin-facing. Corrected per Rule 40.
+  sendPaymentReminder: adminProcedure
     .input(z.object({
       customerId: z.number(),
       invoiceId: z.string(),

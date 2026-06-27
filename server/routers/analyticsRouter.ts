@@ -1,4 +1,4 @@
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, fieldManagerProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import {
   getRouteAnalytics,
@@ -12,7 +12,8 @@ export const analyticsRouter = router({
   /**
    * Get analytics for a specific route
    */
-  getRouteAnalytics: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — analytics reads accessible to all admin-tier roles
+  getRouteAnalytics: fieldManagerProcedure
     .input(z.object({ routeId: z.number() }))
     .query(async ({ input }) => {
       return await getRouteAnalytics(input.routeId);
@@ -21,7 +22,8 @@ export const analyticsRouter = router({
   /**
    * Get worker route statistics
    */
-  getWorkerStats: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — analytics reads accessible to all admin-tier roles
+  getWorkerStats: fieldManagerProcedure
     .input(
       z.object({
         workerId: z.number(),
@@ -36,7 +38,8 @@ export const analyticsRouter = router({
   /**
    * Get team-wide route statistics
    */
-  getTeamStats: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — analytics reads accessible to all admin-tier roles
+  getTeamStats: fieldManagerProcedure
     .input(
       z.object({
         startDate: z.date().optional(),
@@ -50,7 +53,8 @@ export const analyticsRouter = router({
   /**
    * Get route history
    */
-  getRouteHistory: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — analytics reads accessible to all admin-tier roles
+  getRouteHistory: fieldManagerProcedure
     .input(
       z.object({
         startDate: z.date().optional(),
@@ -66,6 +70,10 @@ export const analyticsRouter = router({
   /**
    * Record route analytics (called after route optimization)
    */
+  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
+  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
+  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
+  // validation inside the handler. See SECURITY_DEBT.md.
   recordAnalytics: publicProcedure
     .input(
       z.object({
@@ -92,6 +100,10 @@ export const analyticsRouter = router({
   /**
    * Record route history event
    */
+  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
+  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
+  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
+  // validation inside the handler. See SECURITY_DEBT.md.
   recordHistory: publicProcedure
     .input(
       z.object({

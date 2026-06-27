@@ -1,4 +1,4 @@
-import { router, publicProcedure } from '../_core/trpc';
+import { router, adminProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import * as notificationDb from '../notificationDb';
 
@@ -6,7 +6,8 @@ export const adminNotificationsRouter = router({
   /**
    * Get all admin notifications
    */
-  getAll: publicProcedure
+  // T14 Item 3: adminProcedure — admin notifications are admin-tier
+  getAll: adminProcedure
     .query(async () => {
       return await notificationDb.getAllAdminNotifications();
     }),
@@ -14,7 +15,8 @@ export const adminNotificationsRouter = router({
   /**
    * Get unread admin notifications count
    */
-  getUnreadCount: publicProcedure
+  // T14 Item 3: adminProcedure — admin notifications are admin-tier
+  getUnreadCount: adminProcedure
     .query(async () => {
       const unread = await notificationDb.getUnreadAdminNotifications();
       return { count: unread.length };
@@ -23,7 +25,8 @@ export const adminNotificationsRouter = router({
   /**
    * Get unread admin notifications
    */
-  getUnread: publicProcedure
+  // T14 Item 3: adminProcedure — admin notifications are admin-tier
+  getUnread: adminProcedure
     .query(async () => {
       return await notificationDb.getUnreadAdminNotifications();
     }),
@@ -31,7 +34,8 @@ export const adminNotificationsRouter = router({
   /**
    * Mark a specific notification as read
    */
-  markAsRead: publicProcedure
+  // T14 Item 3: adminProcedure — admin notifications are admin-tier
+  markAsRead: adminProcedure
     .input(z.object({
       id: z.number(),
     }))
@@ -42,7 +46,8 @@ export const adminNotificationsRouter = router({
   /**
    * Mark all notifications as read
    */
-  markAllAsRead: publicProcedure
+  // T14 Item 3: adminProcedure — admin notifications are admin-tier
+  markAllAsRead: adminProcedure
     .mutation(async () => {
       return await notificationDb.markAllAdminNotificationsRead();
     }),

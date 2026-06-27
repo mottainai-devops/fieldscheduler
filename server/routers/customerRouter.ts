@@ -1,9 +1,10 @@
-import { router, protectedProcedure } from '../_core/trpc';
+import { router, protectedProcedure, fieldManagerProcedure, adminProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import * as fieldWorkerDb from '../fieldWorkerDb';
 
 export const customerRouter = router({
-  getCustomers: protectedProcedure.query(async ({ ctx }) => {
+  // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles
+  getCustomers: fieldManagerProcedure.query(async ({ ctx }) => {
     // Admin sees all customers, field managers see only their customers
     if (ctx.user.role === 'field_manager' && ctx.user.fieldManagerId) {
       return await fieldWorkerDb.getCustomersByFieldManager(ctx.user.fieldManagerId);
@@ -11,13 +12,15 @@ export const customerRouter = router({
     return await fieldWorkerDb.getAllCustomers();
   }),
   
-  getCustomerById: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles
+  getCustomerById: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getCustomerById(input.id);
     }),
   
-  createCustomer: protectedProcedure
+  // T14 Item 3: adminProcedure — customer creation is admin-tier
+  createCustomer: adminProcedure
     .input(z.object({
       name: z.string(),
       email: z.string().optional(),
@@ -34,14 +37,16 @@ export const customerRouter = router({
     }),
 
   // ===== ADMIN: CUSTOMER VISIT NOTES =====
-  getCustomerNotes: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer note reads accessible to all admin-tier roles
+  getCustomerNotes: fieldManagerProcedure
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
       const notesDb = await import('../notesDb');
       return await notesDb.getCustomerNotesWithReplies(input.customerId);
     }),
 
-  addAdminNote: protectedProcedure
+  // T14 Item 3: adminProcedure — admin note creation is admin-tier
+  addAdminNote: adminProcedure
     .input(z.object({
       customerId: z.number(),
       routeId: z.number().optional().nullable(),
@@ -61,7 +66,8 @@ export const customerRouter = router({
       return { success: true };
     }),
 
-  deleteCustomerNote: protectedProcedure
+  // T14 Item 3: adminProcedure — customer note deletion is admin-tier
+  deleteCustomerNote: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const notesDb = await import('../notesDb');

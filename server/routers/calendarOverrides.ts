@@ -9,7 +9,7 @@
  *   J1 — Audit log: all mutations write a row to calendarAuditLog
  */
 import { z } from "zod";
-import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, fieldManagerProcedure, adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { TRPCError } from "@trpc/server";
 import {
@@ -71,7 +71,8 @@ export const calendarOverridesRouter = router({
    * overrideType = 'added'    adds a customer to that occurrence.
    * overrideType = 'reordered' changes stop_order for that occurrence.
    */
-  setInstanceCustomerOverride: protectedProcedure
+  // T14 Item 3: adminProcedure — customer override management is admin-tier
+  setInstanceCustomerOverride: adminProcedure
     .input(
       z.object({
         instanceId: z.number().int().positive(),
@@ -150,7 +151,8 @@ export const calendarOverridesRouter = router({
     }),
 
   /** Remove a per-instance customer override (undo an exclude/add) */
-  removeInstanceCustomerOverride: protectedProcedure
+  // T14 Item 3: adminProcedure — customer override management is admin-tier
+  removeInstanceCustomerOverride: adminProcedure
     .input(
       z.object({
         instanceId: z.number().int().positive(),
@@ -196,7 +198,8 @@ export const calendarOverridesRouter = router({
     }),
 
   /** List all overrides for a given instance */
-  listInstanceOverrides: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — override reads accessible to all admin-tier roles
+  listInstanceOverrides: fieldManagerProcedure
     .input(z.object({ instanceId: z.number().int().positive() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -215,7 +218,8 @@ export const calendarOverridesRouter = router({
    *   plus added overrides for this instance
    * Ordered by: override.stopOrder ASC NULLS LAST, then natural schedule order.
    */
-  getResolvedCustomersForInstance: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — resolved customer reads accessible to all admin-tier roles
+  getResolvedCustomersForInstance: fieldManagerProcedure
     .input(z.object({ instanceId: z.number().int().positive() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -299,7 +303,8 @@ export const calendarOverridesRouter = router({
    * Move a customer permanently from one route schedule to another.
    * Transactional: delete from source + insert into target atomically.
    */
-  moveCustomerPermanently: protectedProcedure
+  // T14 Item 3: adminProcedure — permanent customer moves are admin-tier
+  moveCustomerPermanently: adminProcedure
     .input(
       z.object({
         customerId: z.number().int().positive(),
@@ -403,7 +408,8 @@ export const calendarOverridesRouter = router({
    *   2. Create new schedule with same customers, new RRULE, starts_on = today.
    *   3. Audit both.
    */
-  archiveAndRecreate: protectedProcedure
+  // T14 Item 3: adminProcedure — archive and recreate is admin-tier
+  archiveAndRecreate: adminProcedure
     .input(
       z.object({
         scheduleId: z.number().int().positive(),
@@ -520,6 +526,11 @@ export const calendarOverridesRouter = router({
   // validates cookies, so every handoff call returned HTTP 401, which the Flutter
   // _handle401() interceptor caught and displayed as "Session expired, please sign in again".
   // supervisorId is validated against the fieldWorkers table inside the mutation body.
+  //
+  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
+  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
+  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
+  // validation inside the handler. See SECURITY_DEBT.md.
   requestHandoff: publicProcedure
     .input(
       z.object({
@@ -601,7 +612,8 @@ export const calendarOverridesRouter = router({
     }),
 
   /** List pending handoff requests (admin view) */
-  listHandoffRequests: protectedProcedure
+  // T14 Item 3: adminProcedure — handoff request management is admin-tier
+  listHandoffRequests: adminProcedure
     .input(z.object({ status: z.enum(["pending", "accepted", "declined"]).optional() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -629,7 +641,8 @@ export const calendarOverridesRouter = router({
     }),
 
   /** Accept or decline a handoff request */
-  resolveHandoffRequest: protectedProcedure
+  // T14 Item 3: adminProcedure — handoff request resolution is admin-tier
+  resolveHandoffRequest: adminProcedure
     .input(
       z.object({
         handoffRequestId: z.number().int().positive(),
@@ -675,7 +688,8 @@ export const calendarOverridesRouter = router({
 
   // ─── J1: Audit log query ──────────────────────────────────────────────────
   /** Query the audit log for a specific entity */
-  getAuditLog: protectedProcedure
+  // T14 Item 3: adminProcedure — audit log reads are admin-tier
+  getAuditLog: adminProcedure
     .input(
       z.object({
         entityType: z

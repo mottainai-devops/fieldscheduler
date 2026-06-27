@@ -3,22 +3,25 @@ import { TRPCError } from "@trpc/server";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import { clusterCustomers } from "../utils/clustering";
 import { clusterCustomersByCount } from "../utils/clusteringByCount";
-import { protectedProcedure, adminProcedure, router, driftLogger } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, fieldManagerProcedure, superadminProcedure, router, driftLogger } from "../_core/trpc";
 import * as notificationDb from "../notificationDb";
 
 export const fieldWorkerRouter = router({
   // Worker operations
-  getWorkers: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — worker reads accessible to all admin-tier roles
+  getWorkers: fieldManagerProcedure.query(async () => {
     return await fieldWorkerDb.getAllWorkers();
   }),
 
-  getWorkerById: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — worker reads accessible to all admin-tier roles
+  getWorkerById: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getWorkerById(input.id);
     }),
 
-  createWorker: protectedProcedure
+  // T14 Item 3: adminProcedure — worker creation is admin-tier (superadmin + admin)
+  createWorker: adminProcedure
     .input(
       // Tranche 9 Item B closure: depot fields (all three or none — coupling enforced by .refine)
       z.object({
@@ -60,7 +63,8 @@ export const fieldWorkerRouter = router({
       }
     }),
 
-  updateWorker: protectedProcedure
+  // T14 Item 3: adminProcedure — worker updates are admin-tier (superadmin + admin)
+  updateWorker: adminProcedure
     .input(
       // Tranche 9 Item B closure: depot fields (all three or none — coupling enforced by .refine)
       z.object({
@@ -109,7 +113,8 @@ export const fieldWorkerRouter = router({
    * and the Workers management page to validate lot access.
    * Requires SURVEY_API_ADMIN_TOKEN env var for service-account auth.
    */
-  getSurveyAppSupervisors: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — supervisor list reads accessible to all admin-tier roles
+  getSurveyAppSupervisors: fieldManagerProcedure.query(async () => {
     const SURVEY_API = process.env.SURVEY_API_URL || "https://upwork.kowope.xyz";
     const adminToken = process.env.SURVEY_API_ADMIN_TOKEN || "";
     if (!adminToken) {
@@ -153,14 +158,16 @@ export const fieldWorkerRouter = router({
     }
   }),
 
-  deleteWorker: protectedProcedure
+  // T14 Item 3: superadminProcedure — worker deletion is destructive, superadmin only
+  deleteWorker: superadminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.deleteWorker(input.id);
     }),
 
   // Customer operations
-  getCustomers: protectedProcedure.query(async ({ ctx }) => {
+  // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles
+  getCustomers: fieldManagerProcedure.query(async ({ ctx }) => {
     // Four-tier scoping model (T14 Item 1):
     //   superadmin    → fieldManagerId=null → sees ALL customers
     //   admin         → fieldManagerId=null → sees ALL customers
@@ -177,24 +184,28 @@ export const fieldWorkerRouter = router({
     return await fieldWorkerDb.getAllCustomers();
   }),
 
-  getCustomersByIds: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles
+  getCustomersByIds: fieldManagerProcedure
     .input(z.object({ ids: z.array(z.number()) }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getCustomersByIds(input.ids);
     }),
 
-  getCustomerById: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles
+  getCustomerById: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getCustomerById(input.id);
     }),
 
-  getAllCustomers: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles
+  getAllCustomers: fieldManagerProcedure.query(async () => {
     return await fieldWorkerDb.getAllCustomers();
   }),
 
   // Tranche 11 Item 4: driftLogger applied — catches AddCustomer.tsx payload drift
-  createCustomer: protectedProcedure
+  // T14 Item 3: adminProcedure — customer creation is admin-tier
+  createCustomer: adminProcedure
     .use(driftLogger('createCustomer', {
       shape: {
         name: true, email: true, phone: true, address: true, customermaf: true,
@@ -224,7 +235,8 @@ export const fieldWorkerRouter = router({
       return await fieldWorkerDb.createCustomer(input);
     }),
 
-  updateCustomer: protectedProcedure
+  // T14 Item 3: adminProcedure — customer updates are admin-tier
+  updateCustomer: adminProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().optional(),
@@ -249,24 +261,28 @@ export const fieldWorkerRouter = router({
       return await fieldWorkerDb.updateCustomer(id, data);
     }),
 
-  deleteCustomer: protectedProcedure
+  // T14 Item 3: superadminProcedure — customer deletion is destructive, superadmin only
+  deleteCustomer: superadminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.deleteCustomer(input.id);
     }),
 
   // Vehicle operations
-  getVehicles: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — vehicle reads accessible to all admin-tier roles
+  getVehicles: fieldManagerProcedure.query(async () => {
     return await fieldWorkerDb.getVehicles();
   }),
 
-  getVehicleById: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — vehicle reads accessible to all admin-tier roles
+  getVehicleById: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getVehicleById(input.id);
     }),
 
-  createVehicle: protectedProcedure
+  // T14 Item 3: adminProcedure — vehicle creation is admin-tier
+  createVehicle: adminProcedure
     .input(z.object({
       name: z.string(),
       plateNumber: z.string().optional(),
@@ -280,7 +296,8 @@ export const fieldWorkerRouter = router({
       return await fieldWorkerDb.createVehicle(input);
     }),
 
-  updateVehicle: protectedProcedure
+  // T14 Item 3: adminProcedure — vehicle updates are admin-tier
+  updateVehicle: adminProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().optional(),
@@ -296,36 +313,44 @@ export const fieldWorkerRouter = router({
       return await fieldWorkerDb.updateVehicle(id, data);
     }),
 
-  deleteVehicle: protectedProcedure
+  // T14 Item 3: adminProcedure — vehicle deletion is admin-tier
+  deleteVehicle: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.deleteVehicle(input.id);
     }),
 
   // Route operations
-  getRoutes: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — route reads accessible to all admin-tier roles
+  getRoutes: fieldManagerProcedure.query(async () => {
     return await fieldWorkerDb.getAllRoutes();
   }),
 
-  getRouteById: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — route reads accessible to all admin-tier roles
+  getRouteById: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getRouteById(input.id);
     }),
 
-  getRouteDetails: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — route reads accessible to all admin-tier roles
+  getRouteDetails: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getRouteDetails(input.id);
     }),
 
-  getRoutesByWorkerId: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — route reads accessible to all admin-tier roles
+  getRoutesByWorkerId: fieldManagerProcedure
     .input(z.object({ workerId: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getRoutesByWorkerId(input.workerId);
     }),
 
-  createRoute: adminProcedure
+  // T14 Item 3: fieldManagerProcedure — route creation is a field operation (superadmin + admin + field_manager)
+  // T15 note: when pending_assignment workflow is added, a separate assignRoute procedure
+  // (adminProcedure) will move routes from pending_assignment → assigned.
+  createRoute: fieldManagerProcedure
     .input(z.object({
       workerId: z.number().optional(),
       vehicleId: z.number().optional(),
@@ -403,7 +428,8 @@ export const fieldWorkerRouter = router({
       }
     }),
 
-  updateRoute: protectedProcedure
+  // T14 Item 3: adminProcedure — route updates are admin-tier
+  updateRoute: adminProcedure
     .input(z.object({
       id: z.number(),
       workerId: z.number().optional(),
@@ -421,7 +447,8 @@ export const fieldWorkerRouter = router({
       return await fieldWorkerDb.updateRoute(id, data);
     }),
 
-  deleteRoute: protectedProcedure
+  // T14 Item 3: superadminProcedure — route deletion is destructive, superadmin only
+  deleteRoute: superadminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.deleteRoute(input.id);
@@ -431,7 +458,8 @@ export const fieldWorkerRouter = router({
    * 5A(d): Check if a worker already has a route on a given date.
    * Returns the conflicting routes (id, status) so the UI can warn the admin.
    */
-  getWorkerRoutesOnDate: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — route date check accessible to all admin-tier roles
+  getWorkerRoutesOnDate: fieldManagerProcedure
     .input(z.object({
       workerId: z.number(),
       scheduledDate: z.string(), // YYYY-MM-DD
@@ -444,7 +472,8 @@ export const fieldWorkerRouter = router({
    * 5A(c): Update a route's scheduledDate and fire a worker notification.
    * Used by the admin route-detail panel when an admin edits the date.
    */
-  updateRouteAndNotifyWorker: protectedProcedure
+  // T14 Item 3: adminProcedure — route date updates with notifications are admin-tier
+  updateRouteAndNotifyWorker: adminProcedure
     .input(z.object({
       id: z.number(),
       scheduledDate: z.string(), // YYYY-MM-DD
@@ -472,7 +501,8 @@ export const fieldWorkerRouter = router({
 
   // Clustering operations
   // Tranche 11 Item 1+4: customerIds filter pass-through + driftLogger applied
-  getCustomerClusters: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — clustering accessible to all admin-tier roles
+  getCustomerClusters: fieldManagerProcedure
     .use(driftLogger('getCustomerClusters', {
       shape: { clusterDistance: true, minClusterSize: true, maxClusterRadius: true, customerIds: true }
     }))
@@ -496,7 +526,8 @@ export const fieldWorkerRouter = router({
     }),
 
   // Tranche 11 Item 1+4: customerIds filter pass-through + driftLogger applied
-  getCustomerClustersByCount: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — clustering accessible to all admin-tier roles
+  getCustomerClustersByCount: fieldManagerProcedure
     .use(driftLogger('getCustomerClustersByCount', {
       shape: { customersPerCluster: true, customerIds: true }
     }))
@@ -518,7 +549,8 @@ export const fieldWorkerRouter = router({
     }),
 
   // Filter Preset operations
-  getFilterPresets: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — filter preset reads accessible to all admin-tier roles
+  getFilterPresets: fieldManagerProcedure
     .query(async ({ ctx }) => {
       if (!ctx.user) return [];
       try {
@@ -529,7 +561,8 @@ export const fieldWorkerRouter = router({
       }
     }),
 
-  saveFilterPreset: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — filter preset saves accessible to all admin-tier roles
+  saveFilterPreset: fieldManagerProcedure
     .input(z.object({
       name: z.string(),
       buildingId: z.string().optional(),
@@ -552,7 +585,8 @@ export const fieldWorkerRouter = router({
       }
     }),
 
-  deleteFilterPreset: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — filter preset deletes accessible to all admin-tier roles
+  deleteFilterPreset: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new Error("Not authenticated");
@@ -564,7 +598,8 @@ export const fieldWorkerRouter = router({
       }
     }),
 
-  updateFilterPreset: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — filter preset updates accessible to all admin-tier roles
+  updateFilterPreset: fieldManagerProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().optional(),
@@ -590,19 +625,22 @@ export const fieldWorkerRouter = router({
     }),
 
   // Field Manager Tagging endpoints
-  getFieldManagerTags: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — FM tag reads accessible to all admin-tier roles
+  getFieldManagerTags: fieldManagerProcedure
     .input(z.object({ fieldManagerId: z.number() }))
     .query(async ({ input }) => {
       const fmTagDb = await import("../fieldManagerTagDb");
       return await fmTagDb.getFieldManagerTags(input.fieldManagerId);
     }),
 
-  getAllFieldManagerTags: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — FM tag reads accessible to all admin-tier roles
+  getAllFieldManagerTags: fieldManagerProcedure.query(async () => {
     const fmTagDb = await import("../fieldManagerTagDb");
     return await fmTagDb.getAllFieldManagerTags();
   }),
 
-  addFieldManagerTag: protectedProcedure
+  // T14 Item 3: adminProcedure — MAF tag management is admin-tier (superadmin + admin)
+  addFieldManagerTag: adminProcedure
     .input(z.object({
       fieldManagerId: z.number(),
       customermaf: z.string(),
@@ -617,7 +655,8 @@ export const fieldWorkerRouter = router({
       );
     }),
 
-  removeFieldManagerTag: protectedProcedure
+  // T14 Item 3: adminProcedure — MAF tag management is admin-tier (superadmin + admin)
+  removeFieldManagerTag: adminProcedure
     .input(z.object({
       fieldManagerId: z.number(),
       customermaf: z.string(),
@@ -630,7 +669,8 @@ export const fieldWorkerRouter = router({
       );
     }),
 
-  updateFieldManagerTagDescription: protectedProcedure
+  // T14 Item 3: adminProcedure — MAF tag management is admin-tier (superadmin + admin)
+  updateFieldManagerTagDescription: adminProcedure
     .input(z.object({
       fieldManagerId: z.number(),
       customermaf: z.string(),
@@ -645,7 +685,8 @@ export const fieldWorkerRouter = router({
       );
     }),
 
-  bulkAddFieldManagerTags: protectedProcedure
+  // T14 Item 3: adminProcedure — MAF tag management is admin-tier (superadmin + admin)
+  bulkAddFieldManagerTags: adminProcedure
     .input(z.object({
       fieldManagerId: z.number(),
       tags: z.array(z.object({
@@ -666,7 +707,8 @@ export const fieldWorkerRouter = router({
   // If workerId is provided and worker has no valid depot, throws PRECONDITION_FAILED.
   // If customStartLat/Lng/Label are provided, they override the worker depot.
   // No silent fallback — explicit failure is the contract.
-  optimizeRoute: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — route optimization accessible to all admin-tier roles
+  optimizeRoute: fieldManagerProcedure
     .input(z.object({
       customerIds: z.array(z.number()),
       workerId: z.number().optional(),

@@ -6,7 +6,7 @@
  * frontend receives a flat list of CalendarEvent objects ready to render.
  */
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, fieldManagerProcedure, adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { routeSchedules, routeInstances, workers, calendarAuditLog } from "../../drizzle/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
@@ -184,7 +184,8 @@ function expandSchedule(
 
 export const calendarRouter = router({
   /** List all schedules (admin view) */
-  listSchedules: protectedProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — schedule reads accessible to all admin-tier roles
+  listSchedules: fieldManagerProcedure.query(async () => {
     const db = await getDb();
     if (!db) return [];
     const schedules = await db
@@ -195,7 +196,8 @@ export const calendarRouter = router({
   }),
 
   /** Get a single schedule by id */
-  getSchedule: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — schedule reads accessible to all admin-tier roles
+  getSchedule: fieldManagerProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -210,7 +212,8 @@ export const calendarRouter = router({
     }),
 
   /** Create a new recurring schedule */
-  createSchedule: protectedProcedure
+  // T14 Item 3: adminProcedure — schedule creation is admin-tier
+  createSchedule: adminProcedure
     .input(ScheduleInput)
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -235,7 +238,8 @@ export const calendarRouter = router({
     }),
 
   /** Update an existing schedule */
-  updateSchedule: protectedProcedure
+  // T14 Item 3: adminProcedure — schedule updates are admin-tier
+  updateSchedule: adminProcedure
     .input(ScheduleInput.extend({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -262,7 +266,8 @@ export const calendarRouter = router({
     }),
 
   /** Delete a schedule and all its instances */
-  deleteSchedule: protectedProcedure
+  // T14 Item 3: adminProcedure — schedule deletion is admin-tier
+  deleteSchedule: adminProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -280,7 +285,8 @@ export const calendarRouter = router({
    * Expand all active schedules in a date range into CalendarEvent objects.
    * Used by the admin calendar view.
    */
-  getCalendarEvents: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — calendar event reads accessible to all admin-tier roles
+  getCalendarEvents: fieldManagerProcedure
     .input(DateRangeInput)
     .query(async ({ input }) => {
       const db = await getDb();
@@ -326,7 +332,8 @@ export const calendarRouter = router({
     }),
 
   /** Cancel a specific occurrence (creates a 'cancelled' instance row) */
-  cancelOccurrence: protectedProcedure
+  // T14 Item 3: adminProcedure — occurrence cancellation is admin-tier
+  cancelOccurrence: adminProcedure
     .input(
       z.object({
         scheduleId: z.number().int().positive(),
@@ -373,7 +380,8 @@ export const calendarRouter = router({
     }),
 
   /** Reschedule a specific occurrence to a new date */
-  rescheduleOccurrence: protectedProcedure
+  // T14 Item 3: adminProcedure — occurrence rescheduling is admin-tier
+  rescheduleOccurrence: adminProcedure
     .input(
       z.object({
         scheduleId: z.number().int().positive(),

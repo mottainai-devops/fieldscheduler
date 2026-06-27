@@ -1,4 +1,4 @@
-import { router, protectedProcedure, adminProcedure } from '../_core/trpc';
+import { router, fieldManagerProcedure, adminProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import { getDb } from '../db';
 import { sql } from 'drizzle-orm';
@@ -7,7 +7,8 @@ export const reportingRouter = router({
   /**
    * Get all report templates
    */
-  getTemplates: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — report template reads accessible to all admin-tier roles
+  getTemplates: fieldManagerProcedure
     .input(z.object({
       reportType: z.enum(['customer', 'route', 'worker', 'financial', 'compliance', 'custom']).optional(),
       category: z.enum(['operational', 'financial', 'compliance', 'performance', 'executive']).optional(),
@@ -43,7 +44,8 @@ export const reportingRouter = router({
   /**
    * Get a single report template by ID
    */
-  getTemplateById: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — report template reads accessible to all admin-tier roles
+  getTemplateById: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -63,7 +65,8 @@ export const reportingRouter = router({
   /**
    * Create a new report template
    */
-  createTemplate: protectedProcedure
+  // T14 Item 3: adminProcedure — report template creation is admin-tier
+  createTemplate: adminProcedure
     .input(z.object({
       name: z.string(),
       description: z.string().optional(),
@@ -91,7 +94,8 @@ export const reportingRouter = router({
   /**
    * Generate a report from a template
    */
-  generateReport: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — report generation accessible to all admin-tier roles
+  generateReport: fieldManagerProcedure
     .input(z.object({
       templateId: z.number(),
       filters: z.any().optional(),
@@ -176,7 +180,8 @@ export const reportingRouter = router({
   /**
    * Get all KPI definitions
    */
-  getKPIs: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — KPI reads accessible to all admin-tier roles
+  getKPIs: fieldManagerProcedure
     .input(z.object({
       category: z.enum(['operational', 'financial', 'compliance', 'performance', 'customer']).optional(),
     }))
@@ -206,7 +211,8 @@ export const reportingRouter = router({
   /**
    * Calculate KPI values
    */
-  calculateKPI: protectedProcedure
+  // T14 Item 3: adminProcedure — KPI calculation is admin-tier
+  calculateKPI: adminProcedure
     .input(z.object({
       kpiId: z.number(),
       periodType: z.enum(['current', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly']),
@@ -275,7 +281,8 @@ export const reportingRouter = router({
   /**
    * Get report execution history
    */
-  getExecutionHistory: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — execution history reads accessible to all admin-tier roles
+  getExecutionHistory: fieldManagerProcedure
     .input(z.object({
       limit: z.number().default(50),
       templateId: z.number().optional(),
@@ -307,7 +314,8 @@ export const reportingRouter = router({
   /**
    * Get all scheduled reports for the current user
    */
-  getScheduledReports: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — scheduled reports reads accessible to all admin-tier roles
+  getScheduledReports: fieldManagerProcedure
     .input(z.object({}))
     .query(async ({ ctx }) => {
       const db = await getDb();
@@ -332,7 +340,8 @@ export const reportingRouter = router({
   /**
    * Create a new scheduled report
    */
-  createScheduledReport: protectedProcedure
+  // T14 Item 3: adminProcedure — scheduled report creation is admin-tier
+  createScheduledReport: adminProcedure
     .input(z.object({
       templateId: z.number(),
       frequency: z.enum(['daily', 'weekly', 'monthly']),
@@ -387,7 +396,8 @@ export const reportingRouter = router({
   /**
    * Toggle scheduled report active status
    */
-  toggleScheduledReport: protectedProcedure
+  // T14 Item 3: adminProcedure — scheduled report management is admin-tier
+  toggleScheduledReport: adminProcedure
     .input(z.object({
       id: z.number(),
       isActive: z.boolean(),
@@ -413,7 +423,8 @@ export const reportingRouter = router({
   /**
    * Delete a scheduled report
    */
-  deleteScheduledReport: protectedProcedure
+  // T14 Item 3: adminProcedure — scheduled report deletion is admin-tier
+  deleteScheduledReport: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();

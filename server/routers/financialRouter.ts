@@ -1,4 +1,4 @@
-import { router, protectedProcedure, adminProcedure } from '../_core/trpc';
+import { router, fieldManagerProcedure, adminProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import { getDb } from '../db';
 import { sql } from 'drizzle-orm';
@@ -7,7 +7,8 @@ export const financialRouter = router({
   /**
    * Get financial metrics overview
    */
-  getMetrics: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — financial metrics reads accessible to all admin-tier roles
+  getMetrics: fieldManagerProcedure
     .input(z.object({
       startDate: z.string().optional(),
       endDate: z.string().optional(),
@@ -115,7 +116,8 @@ export const financialRouter = router({
   /**
    * Get recent invoices
    */
-  getInvoices: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — invoice reads accessible to all admin-tier roles
+  getInvoices: fieldManagerProcedure
     .input(z.object({
       limit: z.number().default(10),
       fieldManagerId: z.string().optional(),
@@ -142,7 +144,8 @@ export const financialRouter = router({
   /**
    * Get recent payments
    */
-  getPayments: protectedProcedure
+  // T14 Item 3: fieldManagerProcedure — payment reads accessible to all admin-tier roles
+  getPayments: fieldManagerProcedure
     .input(z.object({
       limit: z.number().default(10),
       fieldManagerId: z.string().optional(),

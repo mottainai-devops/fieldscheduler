@@ -1,4 +1,4 @@
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, fieldManagerProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as db from "../db";
@@ -110,14 +110,16 @@ export const adminAuthRouter = router({
     }),
 
   // Get worker by ID
-  getWorker: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — worker reads accessible to all admin-tier roles
+  getWorker: fieldManagerProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return await fieldWorkerDb.getWorkerById(input.id);
     }),
 
   // Get all workers (for selection screen)
-  getAllWorkers: publicProcedure.query(async () => {
+  // T14 Item 3: fieldManagerProcedure — worker reads accessible to all admin-tier roles
+  getAllWorkers: fieldManagerProcedure.query(async () => {
     return await fieldWorkerDb.getAllWorkers();
   }),
 });

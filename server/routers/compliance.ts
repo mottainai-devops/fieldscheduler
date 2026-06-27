@@ -1,4 +1,4 @@
-import { router, protectedProcedure, publicProcedure } from '../_core/trpc';
+import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManagerProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import * as complianceDb from '../complianceDb';
 import * as notificationDb from '../notificationDb';
@@ -73,8 +73,9 @@ export const complianceRouter = router({
 
   /**
    * Create a new violation type
+   * T14 Item 3: adminProcedure — violation type management is admin-tier
    */
-  createViolationType: publicProcedure
+  createViolationType: adminProcedure
     .input(z.object({
       name: z.string(),
       description: z.string().optional(),
@@ -87,7 +88,8 @@ export const complianceRouter = router({
   /**
    * Update an existing violation type
    */
-  updateViolationType: publicProcedure
+  // T14 Item 3: adminProcedure — violation type management is admin-tier
+  updateViolationType: adminProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().optional(),
@@ -110,6 +112,10 @@ export const complianceRouter = router({
   /**
    * Create/Report a violation — triggers notifications
    */
+  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
+  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
+  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
+  // validation inside the handler. See SECURITY_DEBT.md.
   createViolation: publicProcedure
     .input(z.object({
       customerId: z.number(),
@@ -167,7 +173,8 @@ export const complianceRouter = router({
   /**
    * Get all violations
    */
-  getAllViolations: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — compliance reads accessible to all admin-tier roles
+  getAllViolations: fieldManagerProcedure
     .query(async () => {
       return await complianceDb.getAllViolations();
     }),
@@ -175,7 +182,8 @@ export const complianceRouter = router({
   /**
    * Get violations for a customer
    */
-  getViolationsByCustomer: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — compliance reads accessible to all admin-tier roles
+  getViolationsByCustomer: fieldManagerProcedure
     .input(z.object({
       customerId: z.number()
     }))
@@ -186,7 +194,8 @@ export const complianceRouter = router({
   /**
    * Update violation status — triggers resolution notification
    */
-  updateViolationStatus: publicProcedure
+  // T14 Item 3: adminProcedure — violation status updates are admin-tier
+  updateViolationStatus: adminProcedure
     .input(z.object({
       violationId: z.number(),
       status: z.enum(["reported", "under_review", "resolved", "dismissed"]),
@@ -224,7 +233,8 @@ export const complianceRouter = router({
   /**
    * Get all abatement notices
    */
-  getAllAbatementNotices: publicProcedure
+  // T14 Item 3: fieldManagerProcedure — compliance reads accessible to all admin-tier roles
+  getAllAbatementNotices: fieldManagerProcedure
     .query(async () => {
       return await complianceDb.getAllAbatementNotices();
     }),
@@ -232,7 +242,8 @@ export const complianceRouter = router({
   /**
    * Create an abatement notice — triggers notifications
    */
-  createAbatementNotice: publicProcedure
+  // T14 Item 3: adminProcedure — abatement notice creation is admin-tier
+  createAbatementNotice: adminProcedure
     .input(z.object({
       customerId: z.number(),
       violationId: z.number().optional(),
@@ -297,7 +308,8 @@ export const complianceRouter = router({
   /**
    * Update abatement notice status — triggers compliance/escalation notifications
    */
-  updateAbatementNoticeStatus: publicProcedure
+  // T14 Item 3: adminProcedure — abatement notice status updates are admin-tier
+  updateAbatementNoticeStatus: adminProcedure
     .input(z.object({
       noticeId: z.number(),
       status: z.string(),
