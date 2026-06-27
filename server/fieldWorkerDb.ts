@@ -438,9 +438,11 @@ export async function createRoute(data: {
   // Tranche 9: starting point fields
   startingPointLat?: number;
   startingPointLng?: number;
-  startingPointLabel?: string;
+  routingReasonNote?: string;
+  // Item 2 (T13): per-stop routing reason overrides (keyed by customerId as string)
+  stopReasonOverrides?: Record<string, { reason: "regular" | "callback" | "complaint" | "compliance" | "other"; note?: string }>;
 }) {
-  console.log('\n[DB] createRoute called with data:', JSON.stringify(data, null, 2));
+  console.log('\n[DB] createRoute called with data::', JSON.stringify(data, null, 2));
   
   const db = await getDb();
   if (!db) {

@@ -355,6 +355,11 @@ export const fieldWorkerRouter = router({
       routingReason: z.enum(["regular", "callback", "complaint", "compliance", "other"]).optional(),
       // Required when routingReason = 'other' (10+ chars enforced at application layer)
       routingReasonNote: z.string().max(500).optional(),
+      // Item 2 (T13): per-stop routing reason overrides (keyed by customerId)
+      stopReasonOverrides: z.record(z.string(), z.object({
+        reason: z.enum(["regular", "callback", "complaint", "compliance", "other"]),
+        note: z.string().max(500).optional(),
+      })).optional(),
     }))
     .mutation(async ({ input }) => {
       console.log('\n========== CREATE ROUTE REQUEST ==========');
