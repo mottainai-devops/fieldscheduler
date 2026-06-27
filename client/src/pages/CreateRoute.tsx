@@ -1174,7 +1174,7 @@ export default function CreateRoute() {
                 )}
               </div>
 
-              <Label className="text-slate-300 text-sm mb-2 block">Assign Field Manager <span className="text-red-400 font-normal">(Required)</span></Label>
+              <Label className="text-slate-300 text-sm mb-2 block">Assign Field Manager <span className="text-slate-500 font-normal">(Optional — at least one of supervisor or field manager required)</span></Label>
               {/* 5A(d): Worker conflict warning */}
               {workerConflictRoutes.length > 0 && (
                 <div className="mb-4 p-3 bg-yellow-900/30 border border-yellow-600/50 rounded text-yellow-300 text-xs">
@@ -1355,7 +1355,7 @@ export default function CreateRoute() {
                     type="button"
                     className="btn btn-primary bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="optimize-route"
-                    disabled={optimizing || !selectedCustomers?.length || !selectedWorker}
+                    disabled={optimizing || !selectedCustomers?.length || (!selectedWorker && !selectedSupervisorObj)}
                     onClick={(e) => { 
                       e.preventDefault(); 
                       e.stopPropagation(); 
