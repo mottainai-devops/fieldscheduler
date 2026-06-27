@@ -1402,3 +1402,122 @@ During T13 close-out, `drizzle/schema.ts` was found to be missing `routingReason
 4. **Item 3 (unassigned dashboard chip)** — deferred pending owner confirmation (originally T12 Item 3).
 5. **27CBM-DINO tariff DB update** — ops action.
 6. **Lasika06 Fixed Billing activation** — ops + engineering coordinated.
+
+---
+
+## Tranche 14 — Role Architecture Remediation
+
+### Pre-Tranche Context
+T14 was triggered by an independent verification (IV) report identifying the following root issues in the role model:
+- `workers.role='supervisor'` was being collapsed to `users.role='field_manager'` at login (role identity loss)
+- `users.role` enum did not include `supervisor` or `superadmin` (only `user`, `admin`, `field_manager`, `system_admin`)
+- Three admin routes had insufficient or missing guards (`/workers`, `/field-manager-tagging`, `/financial-dashboard`)
+- `adminProcedure` was a single tier allowing both `system_admin` and `field_manager` — no separation between admin-tier and field-manager-tier operations
+- Three tRPC routers (`analyticsRouter`, `financialRouter`, `reportingRouter`) were defined but not mounted in `appRouter`, causing silent failures for all frontend calls to those procedures
+- Workers UI allowed supervisor creation, which should be exclusive to Mottainai Admin Dashboard
+
+### Items Executed
+
+**Item 0 — Immediate Security Hardening** (`1096a129`)
+- `/workers`: `requireAuth` → `requireAdmin`
+- `/field-manager-tagging`: no guard → `requireAdmin`
+- `/financial-dashboard`: `requireAuth` → `requireAdmin`
+- Shipped before any schema changes to close security gaps immediately.
+
+**Item 1 — Schema Enum Extensions** (`736ef5b9`)
+- `users.role` extended: added `superadmin`, `supervisor`; data-migrated `system_admin` → `superadmin`; removed `system_admin`
+- Final `users.role` enum: `('user', 'admin', 'field_manager', 'superadmin', 'supervisor')`
+- `routes.status` extended: added `pending_assignment`
+- Final `routes.status` enum: `('pending', 'pending_assignment', 'optimized', 'assigned', 'in_progress', 'completed', 'cancelled')`
+- `drizzle/schema.ts` updated atomically with migration (Rule 36)
+- `useAuth.tsx`, `RequireAdmin.tsx`, `ProtectedRoute.tsx`, `trpc.ts`, `fieldWorker.ts`, `systemAdminRole.ts` all updated to use `superadmin` instead of `system_admin`
+
+**Item 2 — adminAuth.ts Role Mapping Fix** (`fa36fab7`)
+- Role mapping corrected:
+  - `workers.id ∈ SUPERADMIN_WORKER_IDS {1,2}` → `users.role = 'superadmin'`
+  - `workers.id ∈ ADMIN_WORKER_IDS {}` → `users.role = 'admin'` (empty; owner populates when admins exist)
+  - `workers.role = 'field_manager'` → `users.role = 'field_manager'`
+  - `workers.role = 'supervisor'` → `users.role = 'supervisor'` (no longer collapsed to `field_manager`)
+  - otherwise → `users.role = 'user'`
+- Supervisor web login rejected: "Supervisor accounts must use the mobile app at fieldscheduler-mobile."
+- `runSupervisorRoleMigration` startup noise fixed: catch block now checks `e.cause?.code` and `e.cause?.message` to handle Drizzle ORM error wrapping
+
+**Item 3 — Four-Tier tRPC Procedure Refactor** (`a862306f`)
+- New procedures in `server/_core/trpc.ts`:
+  - `superadminProcedure`: `users.role === 'superadmin'`
+  - `adminProcedure` (new): `users.role ∈ {'superadmin', 'admin'}`
+  - `fieldManagerProcedure`: `users.role ∈ {'superadmin', 'admin', 'field_manager'}`
+  - `protectedProcedure` (retained): any authenticated user
+  - `publicProcedure` (retained): unauthenticated
+- All 12 router files audited and procedures reassigned to correct tier
+- Three orphaned routers mounted in `appRouter`: `analyticsRouter`, `financialRouter`, `reportingRouter`
+- Dead code deleted: `compliance_updated.ts`, 3 backup files, `fieldWorker.ts.backup*`
+- `workerAuth.ts` documented as mobile-API-only (all procedures intentionally `publicProcedure`)
+
+**Item 4 — Frontend Route Guards** (`a8a1b351`)
+- New guard components: `RequireSuperadmin.tsx`, `RequireFieldManager.tsx`
+- `LayoutRoute.tsx` extended with `requireSuperadmin`, `requireFieldManager` props
+- `App.tsx` routes updated per tier:
+  - `requireSuperadmin`: `/workers`, `/financial-dashboard`, `/field-manager-admin`, `/zoho`
+  - `requireAdmin`: `/field-manager-tagging`, `/report-builder`, `/scheduled-reports`, `/customers/new`
+  - `requireFieldManager`: `/routes`, `/customers`, `/customers/:id`, `/create-route`, `/analytics`, `/route-schedules`
+- `SidebarNavigation.tsx` updated with `meetsMinRole()` helper — nav items filtered by user role at render time
+
+**Item 5 — Remove Supervisor Creation from Workers UI** (`3bc69838`)
+- Create Worker dialog: `Supervisor` removed from role dropdown; `Billing Type` sub-field removed
+- Edit Worker dialog: `Supervisor` removed from role dropdown; `Billing Type` field removed
+- Supervisor-role workers in edit dialog: show read-only view with notice "This worker is managed in Mottainai Admin Dashboard (admin.kowope.xyz)"
+- Workers list: supervisors still displayed with purple `Supervisor` badge (read-only)
+- Comments added documenting that supervisor creation lives in `admin.kowope.xyz`
+
+### Patterns Added in Tranche 14
+
+**Pattern #33 — Drizzle ORM Wraps MySQL Error Codes in `e.cause`**
+**Context:** `runSupervisorRoleMigration` catch block checked `e.code === 'ER_DUP_FIELDNAME'` but Drizzle ORM wraps the MySQL error such that the `code` is on `e.cause`, not the top-level error object. The catch silently failed, logging to error.log on every startup.
+**Rule added (Rule 38):** When catching MySQL errors thrown via Drizzle ORM, always check both `e.code` and `e.cause?.code` (and `e.message` and `e.cause?.message`). Drizzle wraps the underlying MySQL driver error in a `cause` property. A catch that only checks the top-level `code` will miss the error.
+
+**Pattern #34 — Orphaned Router Files Not Mounted in appRouter**
+**Context:** `analyticsRouter`, `financialRouter`, and `reportingRouter` were fully implemented but never imported or mounted in `server/routers.ts`. All frontend calls to `trpc.analytics.*`, `trpc.financial.*`, and `trpc.reporting.*` were silently failing with "procedure not found" errors.
+**Rule added (Rule 39):** After creating a new router file, immediately add it to `server/routers.ts` (import + mount in `appRouter`) in the same commit. A router file that exists but is not mounted is dead code. Verify by checking `appRouter` definition after any new router is created.
+
+**Pattern #35 — Role Collapse at Login Creates Identity Loss**
+**Context:** `adminAuth.ts` mapped `workers.role='supervisor'` → `users.role='field_manager'` because the `users.role` enum did not include `supervisor`. This caused supervisors to appear as field managers in session context, bypassing all supervisor-specific access control.
+**Rule added (Rule 40):** When a new role value is added to `workers.role`, the `users.role` enum and the login role-mapping function in `adminAuth.ts` must be updated atomically. Never map a source role to a different target role as a workaround for a missing enum value — extend the enum first, then map correctly.
+
+**Pattern #36 — Single-Tier adminProcedure Conflates Admin and Field Manager**
+**Context:** The original `adminProcedure` allowed `system_admin` and `field_manager` — two roles with fundamentally different privilege levels. This meant a field manager could call procedures intended only for admins (e.g., worker creation, financial reporting).
+**Rule added (Rule 41):** tRPC procedures must be tiered to match the role hierarchy. A single "admin" procedure that covers multiple tiers is a security design flaw. The correct model is: `superadminProcedure` ⊂ `adminProcedure` ⊂ `fieldManagerProcedure` ⊂ `protectedProcedure` ⊂ `publicProcedure`. Each procedure must enforce its own role check, not rely on route guards alone.
+
+**Pattern #37 — Frontend Route Guards and Sidebar Must Be Updated Together**
+**Context:** When route guards were tightened in Item 0 (using `requireAdmin`), the sidebar still showed all nav items to all roles. A field manager could see "Workers" in the sidebar, click it, and get an "Access Denied" screen — a confusing UX.
+**Rule added (Rule 42):** When a route guard is added or tightened, the sidebar navigation must be updated in the same commit to hide the corresponding nav item from roles that cannot access it. Route guards and sidebar visibility are a coupled pair — updating one without the other creates a broken UX.
+
+### Production State After Tranche 14
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub + production) | `3bc69838` |
+| Production server | `54.194.172.107` (new server; key: `fieldscheduler-key-new.pem`) |
+| PM2 `field-worker-scheduler` | online, port 3002 |
+| `users.role` enum | `('user', 'admin', 'field_manager', 'superadmin', 'supervisor')` |
+| `routes.status` enum | `('pending', 'pending_assignment', 'optimized', 'assigned', 'in_progress', 'completed', 'cancelled')` |
+| `SUPERADMIN_WORKER_IDS` | `{1, 2}` (Adey + one other) |
+| `ADMIN_WORKER_IDS` | `{}` (empty; owner populates when admins exist) |
+| Supervisor web login | Rejected with mobile app redirect message |
+| tRPC procedure tiers | `superadminProcedure`, `adminProcedure`, `fieldManagerProcedure`, `protectedProcedure`, `publicProcedure` |
+| Mounted routers | All 14 routers mounted (analytics, financial, reporting now live) |
+| Route guards | 4-tier: `requireSuperadmin`, `requireAdmin`, `requireFieldManager`, `requireAuth` |
+| Sidebar filtering | Role-based via `meetsMinRole()` helper |
+| Workers UI | Supervisor creation removed; supervisor edit shows read-only view |
+| `drizzle/schema.ts` | In sync with production DB |
+| Startup noise | Clean — no `ER_DUP_FIELDNAME` in error.log |
+
+### Carry-Forward to Tranche 15
+
+1. **Field Manager Dashboard** — focused operational dashboard for field_manager role (deferred from T14 scope)
+2. **Pending Assignment admin workflow UI** — route status `pending_assignment` → `assigned` supervisor-assignment flow (deferred from T14 scope)
+3. **Pattern #15 forensic** — `assignedWorkerId` vs `workerId` full audit (deferred from T9–T14)
+4. **`sync-zoho-data.mjs` name normalisation** — `workerMap` lookup needs trim/lowercase/collapse for Zoho name variants (Rule 31 carry-forward)
+5. **`ADMIN_WORKER_IDS` population** — owner to identify which worker IDs should be `admin` tier and update `adminAuth.ts`
+6. **Security debt procedures** — 6 public write procedures with in-handler auth gaps (Condition 2 from T14) deferred to T15
+7. **Scoped financial access for field managers** — `getMyFinancialMetrics` procedure (T15 candidate noted in financialRouter.ts)
