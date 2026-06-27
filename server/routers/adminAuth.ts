@@ -38,20 +38,37 @@ export const adminAuthRouter = router({
         //   superadmin    → workers in SUPERADMIN_WORKER_IDS (full access, no scoping)
         //   admin         → workers in ADMIN_WORKER_IDS (admin UI, all data visible)
         //   field_manager → workers with workers.role='field_manager' (scoped to assigned customers)
-        //   supervisor    → workers with workers.role='supervisor' (mobile app only)
+        //   supervisor    → workers with workers.role='supervisor' (mobile app only — REJECTED here)
         //   user          → all other workers
         //
         // SUPERADMIN_WORKER_IDS: worker IDs 1 (adey adewuyi) and 2 (ADMIN / info@mottainai.africa)
         // ADMIN_WORKER_IDS: empty for now — owner will populate when admin-tier workers exist
+        //
+        // NOTE on the 'admin' value in users.role:
+        // The 'admin' value previously existed in users.role as legacy compatibility (never written
+        // by current code from some point in Tranche 5A onward). From Tranche 14, 'admin' is the
+        // canonical value for the head-of-operations tier and IS actively written by ADMIN_WORKER_IDS
+        // membership.
         // ─────────────────────────────────────────────────────────────────
+
+        // T14 Item 2 (Condition 1c): Reject supervisor logins at the web app.
+        // Supervisors interact with the system exclusively via the Flutter mobile app.
+        // If a supervisor navigates to the web admin and attempts to log in, reject with
+        // a clear message directing them to the mobile app.
+        if (worker.role === 'supervisor') {
+          throw new Error(
+            'Supervisor accounts must use the mobile app at fieldscheduler-mobile. ' +
+            'The web admin is not accessible to supervisors.'
+          );
+        }
+
         const SUPERADMIN_WORKER_IDS = new Set([1, 2]);
         const ADMIN_WORKER_IDS = new Set<number>([]); // populate when admin-tier workers exist
 
-        const usersRole: 'superadmin' | 'admin' | 'field_manager' | 'supervisor' | 'user' =
+        const usersRole: 'superadmin' | 'admin' | 'field_manager' | 'user' =
           SUPERADMIN_WORKER_IDS.has(worker.id) ? 'superadmin' :
           ADMIN_WORKER_IDS.has(worker.id)      ? 'admin' :
           worker.role === 'field_manager'       ? 'field_manager' :
-          worker.role === 'supervisor'          ? 'supervisor' :
           'user';
 
         await db.upsertUser({
