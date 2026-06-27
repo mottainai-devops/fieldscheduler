@@ -100,7 +100,7 @@ function Router() {
           </MainLayout>
         </RequireAuth>
       </Route>
-      <LayoutRoute path={"/workers"} component={Workers} requireAuth />
+      <LayoutRoute path={"/workers"} component={Workers} requireAdmin />
       <LayoutRoute path={"/create-route"} component={CreateRoute} requireAdmin />
       {/* [DEPRECATED T10] <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} requireAdmin /> */}
       <LayoutRoute path={"/cluster-management"} component={ClusterManagement} />
@@ -113,7 +113,7 @@ function Router() {
       <LayoutRoute path={"/zoho/sync-history"} component={SyncHistoryDashboard} />
       <LayoutRoute path={"/building-groups"} component={BuildingGroups} />
       <LayoutRoute path={"/compliance"} component={Compliance} />
-      <LayoutRoute path={"/field-manager-tagging"} component={FieldManagerTagging} />
+      <LayoutRoute path={"/field-manager-tagging"} component={FieldManagerTagging} requireAdmin />
       <LayoutRoute path={"/dynamic-customer-filtering"} component={DynamicCustomerFiltering} />
       <LayoutRoute path={"/tag-based-route-creation"} component={TagBasedRouteCreation} />
       <LayoutRoute path={"/field-manager-admin"} component={FieldManagerAdminDashboard} />
@@ -126,7 +126,7 @@ function Router() {
       <Route path={"/clusters"} component={() => { window.location.href = "/cluster-management"; return null; }} />
       <Route path={"/add-customer"} component={() => { window.location.href = "/customers/new"; return null; }} />
       <Route path={"/filter"} component={() => { window.location.href = "/dynamic-customer-filtering"; return null; }} />
-      <LayoutRoute path={"/financial-dashboard"} component={FinancialDashboard} requireAuth />
+      <LayoutRoute path={"/financial-dashboard"} component={FinancialDashboard} requireAdmin />
       <LayoutRoute path={"/report-builder"} component={ReportBuilderPage} requireAuth />
       <LayoutRoute path={"/scheduled-reports"} component={ScheduledReportsPage} requireAuth />
       <LayoutRoute path={"/route-schedules"} component={RouteSchedules} requireAuth />
