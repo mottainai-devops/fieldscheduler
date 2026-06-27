@@ -810,3 +810,89 @@ export async function deleteVehicle(id: number) {
   
   await db.delete(vehicles).where(eq(vehicles.id, id));
 }
+
+// Item 11 (T13): Skip analytics — distribution, per-worker pattern, 'other' free-text review
+export async function getSkipAnalytics(dayWindow: number = 30) {
+  const db = await getDb();
+  if (!db) return { distribution: [], perWorker: [], otherNotes: [] };
+
+  const since = new Date();
+  since.setDate(since.getDate() - dayWindow);
+
+  // 1. Skip reason distribution (last N days)
+  const distribution = await db
+    .select({
+      skipReason: (routeCustomers as any).skipReason,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(routeCustomers)
+    .where(
+      and(
+        eq((routeCustomers as any).completionType, 'skipped'),
+        sql`${(routeCustomers as any).completedAt} >= ${since}`
+      )
+    )
+    .groupBy((routeCustomers as any).skipReason)
+    .orderBy(desc(sql<number>`COUNT(*)`));
+
+  // 2. Per-worker skip pattern (last N days) — join via routes.supervisorId
+  const perWorker = await db
+    .select({
+      workerId: routes.supervisorId,
+      workerName: workers.name,
+      skipCount: sql<number>`COUNT(*)`,
+    })
+    .from(routeCustomers)
+    .innerJoin(routes, eq(routeCustomers.routeId, routes.id))
+    .leftJoin(workers, eq(routes.supervisorId, workers.id))
+    .where(
+      and(
+        eq((routeCustomers as any).completionType, 'skipped'),
+        sql`${(routeCustomers as any).completedAt} >= ${since}`
+      )
+    )
+    .groupBy(routes.supervisorId, workers.name)
+    .orderBy(desc(sql<number>`COUNT(*)`));
+
+  // 3. 'other' free-text review (last N days)
+  const otherNotes = await db
+    .select({
+      id: routeCustomers.id,
+      customerId: routeCustomers.customerId,
+      customerName: customers.name,
+      skipNote: (routeCustomers as any).skipNote,
+      completedAt: (routeCustomers as any).completedAt,
+      workerName: workers.name,
+    })
+    .from(routeCustomers)
+    .leftJoin(customers, eq(routeCustomers.customerId, customers.id))
+    .leftJoin(routes, eq(routeCustomers.routeId, routes.id))
+    .leftJoin(workers, eq(routes.supervisorId, workers.id))
+    .where(
+      and(
+        eq((routeCustomers as any).skipReason, 'other'),
+        sql`${(routeCustomers as any).completedAt} >= ${since}`
+      )
+    )
+    .orderBy(desc((routeCustomers as any).completedAt));
+
+  return {
+    distribution: distribution.map(d => ({
+      skipReason: d.skipReason ?? 'unknown',
+      count: Number(d.count),
+    })),
+    perWorker: perWorker.map(w => ({
+      workerId: w.workerId,
+      workerName: w.workerName ?? 'Unknown',
+      skipCount: Number(w.skipCount),
+    })),
+    otherNotes: otherNotes.map(n => ({
+      id: n.id,
+      customerId: n.customerId,
+      customerName: n.customerName ?? 'Unknown',
+      skipNote: n.skipNote ?? '',
+      completedAt: n.completedAt,
+      workerName: n.workerName ?? 'Unknown',
+    })),
+  };
+}

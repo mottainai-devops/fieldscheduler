@@ -1,12 +1,20 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, BarChart3, Calendar, Download } from "lucide-react";
+import { TrendingUp, TrendingDown, BarChart3, Calendar, SkipForward, AlertTriangle, User } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { useState } from "react";
 import AppHeader from "@/components/AppHeader";
+import { SKIP_REASONS } from '../../../shared/const';
 
 export default function Analytics() {
   const { data: routes = [] } = trpc.fieldWorker.getRoutes.useQuery();
   const { data: workers = [] } = trpc.fieldWorker.getWorkers.useQuery();
   const { data: customers = [] } = trpc.fieldWorker.getCustomers.useQuery();
+  // Item 11 (T13): skip analytics
+  const [dayWindow, setDayWindow] = useState(30);
+  const { data: skipAnalytics, isLoading: loadingSkip } = trpc.fieldWorker.getSkipAnalytics.useQuery(
+    { dayWindow },
+    { refetchOnMount: 'stale' }
+  );
 
   const completedRoutes = routes.filter(r => r.status === "completed");
   const avgEfficiency = routes.length > 0
@@ -210,6 +218,110 @@ export default function Analytics() {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Item 11 (T13): Skip Analytics */}
+        <Card className="bg-slate-800/50 border-slate-700 mb-8">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <SkipForward className="w-5 h-5 text-amber-400" />
+                  Skip Analytics
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  Skip reason distribution and per-worker pattern
+                </CardDescription>
+              </div>
+              <select
+                value={dayWindow}
+                onChange={(e) => setDayWindow(Number(e.target.value))}
+                className="bg-slate-700 border border-slate-600 text-white text-xs rounded px-2 py-1 focus:outline-none"
+              >
+                <option value={7}>Last 7 days</option>
+                <option value={30}>Last 30 days</option>
+                <option value={90}>Last 90 days</option>
+              </select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {loadingSkip ? (
+              <p className="text-slate-400 text-sm">Loading skip data...</p>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Skip reason distribution */}
+                <div>
+                  <h4 className="text-sm font-medium text-slate-300 mb-3">By Reason</h4>
+                  {skipAnalytics?.distribution.length === 0 ? (
+                    <p className="text-xs text-slate-500">No skips recorded in this period</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {skipAnalytics?.distribution.map((d) => {
+                        const total = skipAnalytics.distribution.reduce((s, r) => s + r.count, 0);
+                        const pct = total > 0 ? Math.round((d.count / total) * 100) : 0;
+                        const label = SKIP_REASONS.find(r => r.value === d.skipReason)?.label ?? d.skipReason.replace(/_/g, ' ');
+                        return (
+                          <div key={d.skipReason} className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-300 capitalize">{label}</span>
+                              <span className="text-amber-400">{d.count} ({pct}%)</span>
+                            </div>
+                            <div className="w-full bg-slate-700 rounded-full h-1.5">
+                              <div className="bg-amber-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Per-worker skip pattern */}
+                <div>
+                  <h4 className="text-sm font-medium text-slate-300 mb-3">By Supervisor</h4>
+                  {skipAnalytics?.perWorker.length === 0 ? (
+                    <p className="text-xs text-slate-500">No skips recorded in this period</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {skipAnalytics?.perWorker.map((w) => (
+                        <div key={w.workerId ?? 'unknown'} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2">
+                            <User className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="text-slate-300">{w.workerName}</span>
+                          </div>
+                          <span className="text-amber-400 font-medium">{w.skipCount}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 'other' free-text review */}
+                <div>
+                  <h4 className="text-sm font-medium text-slate-300 mb-3 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    'Other' Notes Review
+                  </h4>
+                  {skipAnalytics?.otherNotes.length === 0 ? (
+                    <p className="text-xs text-slate-500">No 'other' skips in this period</p>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {skipAnalytics?.otherNotes.map((n) => (
+                        <div key={n.id} className="p-2 bg-slate-700/30 rounded text-xs">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-slate-300 font-medium">{n.customerName}</span>
+                            <span className="text-slate-500">{n.workerName}</span>
+                          </div>
+                          <p className="text-amber-300 italic">"{n.skipNote || '(no note)'}"
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
