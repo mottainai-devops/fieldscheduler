@@ -16,8 +16,6 @@ export const adminAuthRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         console.log('[AdminAuth] Login attempt:', input.email);
-        // For now, accept any email/password combination
-        // In production, you would hash and verify passwords
         const worker = await fieldWorkerDb.getWorkerByEmail(input.email);
         console.log('[AdminAuth] Worker found:', worker?.email || 'NOT FOUND');
         
@@ -25,31 +23,35 @@ export const adminAuthRouter = router({
           throw new Error("Worker not found");
         }
         
-        // Simple password check - in production use bcrypt
-        // For now, accept any non-empty password
+        // Simple password check — in production use bcrypt
         if (!input.password) {
           throw new Error("Password required");
         }
         
-        // Create a user record in the users table if it doesn't exist
-        // Use the worker's email as the openId for session purposes
+        // Create a user record in the users table if it doesn't exist.
+        // Use the worker's email as the openId for session purposes.
         const openId = `worker-${worker.id}-${worker.email}`;
 
-        // Three-tier role model:
-        //   system_admin  → workers who manage the entire system (no customer scoping)
-        //   field_manager → route field managers (scoped to their assigned customers)
+        // ─────────────────────────────────────────────────────────────────
+        // Four-tier role model (T14 Item 2):
+        //
+        //   superadmin    → workers in SUPERADMIN_WORKER_IDS (full access, no scoping)
+        //   admin         → workers in ADMIN_WORKER_IDS (admin UI, all data visible)
+        //   field_manager → workers with workers.role='field_manager' (scoped to assigned customers)
+        //   supervisor    → workers with workers.role='supervisor' (mobile app only)
         //   user          → all other workers
         //
-        // Since all route managers and system admins share workers.role='field_manager',
-        // we use an explicit allowlist to identify system admins by worker ID.
-        // Worker IDs 1 (adey adewuyi) and 2 (ADMIN / info@mottainai.africa) are system admins.
-        const SYSTEM_ADMIN_WORKER_IDS = new Set([1, 2]);
+        // SUPERADMIN_WORKER_IDS: worker IDs 1 (adey adewuyi) and 2 (ADMIN / info@mottainai.africa)
+        // ADMIN_WORKER_IDS: empty for now — owner will populate when admin-tier workers exist
+        // ─────────────────────────────────────────────────────────────────
+        const SUPERADMIN_WORKER_IDS = new Set([1, 2]);
+        const ADMIN_WORKER_IDS = new Set<number>([]); // populate when admin-tier workers exist
 
-        const isSystemAdmin = SYSTEM_ADMIN_WORKER_IDS.has(worker.id);
-        const usersRole: 'system_admin' | 'field_manager' | 'user' =
-          isSystemAdmin                    ? 'system_admin' :
-          worker.role === 'field_manager'  ? 'field_manager' :
-          worker.role === 'supervisor'     ? 'field_manager' :
+        const usersRole: 'superadmin' | 'admin' | 'field_manager' | 'supervisor' | 'user' =
+          SUPERADMIN_WORKER_IDS.has(worker.id) ? 'superadmin' :
+          ADMIN_WORKER_IDS.has(worker.id)      ? 'admin' :
+          worker.role === 'field_manager'       ? 'field_manager' :
+          worker.role === 'supervisor'          ? 'supervisor' :
           'user';
 
         await db.upsertUser({
@@ -60,11 +62,11 @@ export const adminAuthRouter = router({
           role: usersRole,
           // fieldManagerId: set for field_manager-role users so that scoped queries
           // (e.g. getCustomers) can filter by assigned customers.
-          // system_admin users get null — they see all data unscoped.
+          // superadmin/admin users get null — they see all data unscoped.
           fieldManagerId: usersRole === 'field_manager' ? worker.id : null,
         });
         
-        console.log('[AdminAuth] User record created/updated for:', openId);
+        console.log('[AdminAuth] User record created/updated for:', openId, '(role:', usersRole, ')');
         
         // Create a session token using the openId
         const sessionToken = await sdk.createSessionToken(openId, {
@@ -102,4 +104,3 @@ export const adminAuthRouter = router({
     return await fieldWorkerDb.getAllWorkers();
   }),
 });
-

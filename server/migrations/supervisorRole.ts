@@ -25,7 +25,13 @@ export async function runSupervisorRoleMigration() {
       `);
       console.log("[migration:supervisorRole] ✅ Added workers.role");
     } catch (e: any) {
-      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+      // Drizzle ORM wraps MySQL errors — check both top-level and e.cause
+      const isDupCol =
+        e.message?.includes("Duplicate column") ||
+        e.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.message?.includes("Duplicate column");
+      if (isDupCol) {
         console.log("[migration:supervisorRole] ⏭️  workers.role already exists");
       } else {
         throw e;
@@ -40,7 +46,12 @@ export async function runSupervisorRoleMigration() {
       `);
       console.log("[migration:supervisorRole] ✅ Added workers.preferredWebhookType");
     } catch (e: any) {
-      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+      const isDupCol =
+        e.message?.includes("Duplicate column") ||
+        e.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.message?.includes("Duplicate column");
+      if (isDupCol) {
         console.log("[migration:supervisorRole] ⏭️  workers.preferredWebhookType already exists");
       } else {
         throw e;
@@ -55,7 +66,12 @@ export async function runSupervisorRoleMigration() {
       `);
       console.log("[migration:supervisorRole] ✅ Added routeCustomers.pickedAt");
     } catch (e: any) {
-      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+      const isDupCol =
+        e.message?.includes("Duplicate column") ||
+        e.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.message?.includes("Duplicate column");
+      if (isDupCol) {
         console.log("[migration:supervisorRole] ⏭️  routeCustomers.pickedAt already exists");
       } else {
         throw e;
@@ -72,7 +88,12 @@ export async function runSupervisorRoleMigration() {
       `);
       console.log("[migration:supervisorRole] ✅ Added workers.surveyAppUserId");
     } catch (e: any) {
-      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+      const isDupCol =
+        e.message?.includes("Duplicate column") ||
+        e.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.message?.includes("Duplicate column");
+      if (isDupCol) {
         console.log("[migration:supervisorRole] ⏭️  workers.surveyAppUserId already exists");
       } else {
         throw e;
@@ -87,7 +108,12 @@ export async function runSupervisorRoleMigration() {
       `);
       console.log("[migration:supervisorRole] ✅ Added customers.pickupFrequency");
     } catch (e: any) {
-      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+      const isDupCol =
+        e.message?.includes("Duplicate column") ||
+        e.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.message?.includes("Duplicate column");
+      if (isDupCol) {
         console.log("[migration:supervisorRole] ⏭️  customers.pickupFrequency already exists");
       } else { throw e; }
     }
@@ -177,9 +203,19 @@ export async function runSupervisorRoleMigration() {
       `);
       console.log("[migration:supervisorRole] ✅ Added routes.supervisorId");
     } catch (e: any) {
-      if (e.message?.includes("Duplicate column") || e.code === "ER_DUP_FIELDNAME") {
+      const isDupCol =
+        e.message?.includes("Duplicate column") ||
+        e.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.code === "ER_DUP_FIELDNAME" ||
+        e.cause?.message?.includes("Duplicate column");
+      const isDupKey =
+        e.message?.includes("Duplicate key name") ||
+        e.code === "ER_DUP_KEYNAME" ||
+        e.cause?.code === "ER_DUP_KEYNAME" ||
+        e.cause?.message?.includes("Duplicate key name");
+      if (isDupCol) {
         console.log("[migration:supervisorRole] ⏭️  routes.supervisorId already exists");
-      } else if (e.message?.includes("Duplicate key name") || e.code === "ER_DUP_KEYNAME") {
+      } else if (isDupKey) {
         console.log("[migration:supervisorRole] ⏭️  routes.supervisorId FK already exists");
       } else { throw e; }
     }
