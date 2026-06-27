@@ -2,6 +2,10 @@
  * T15 Item 5: Pending Assignments page.
  * Shows all routes with status='pending_assignment' and allows admins to assign
  * a supervisor to each route, moving it to status='assigned'.
+ *
+ * T15 close-out: supervisor picker uses the same lot-coverage grouping as
+ * CreateRoute (Full Coverage / Partial Coverage / No Lot Access) so admins
+ * can immediately identify the best supervisor for each route.
  */
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -40,12 +44,73 @@ import {
   Route,
 } from "lucide-react";
 
+// ─── Lot-coverage helpers (mirrored from CreateRoute.tsx) ─────────────────────
+
+function lotCodesMatch(supLotCode: string, customerMaf: string): boolean {
+  const s = String(supLotCode).trim();
+  const c = String(customerMaf).trim();
+  if (!s || !c) return false;
+  if (s === c) return true;
+  if (s === c.replace(/^0+/, '')) return true;
+  const sn = parseInt(s, 10);
+  const cn = parseInt(c, 10);
+  if (!isNaN(sn) && !isNaN(cn) && sn === cn) return true;
+  return false;
+}
+
+type CoverageGroup = 'full_coverage' | 'partial_coverage' | 'no_access';
+
+function checkSupervisorLotAccess(
+  supObj: any | null,
+  customerMafs: string[]
+): { group: CoverageGroup; badge: string } {
+  if (!supObj) return { group: 'full_coverage', badge: '' };
+
+  // cherry_picker role: unrestricted
+  if (supObj.role === 'cherry_picker') {
+    return { group: 'full_coverage', badge: '✓ Any Lot' };
+  }
+
+  const supLots: any[] = supObj?.lots ?? supObj?.assignedLots ?? [];
+
+  // No lots assigned → no restriction (soft advisory)
+  if (!supLots.length) {
+    return { group: 'full_coverage', badge: `✓ ${supLots.length === 0 ? 'Any Lot' : supLots.length + ' lot' + (supLots.length !== 1 ? 's' : '')}` };
+  }
+
+  const relevantMafs = customerMafs.filter(Boolean);
+  if (!relevantMafs.length) {
+    return { group: 'full_coverage', badge: `✓ ${supLots.length} lot${supLots.length !== 1 ? 's' : ''}` };
+  }
+
+  const unmatched = relevantMafs.filter(
+    (maf) => !supLots.some((l: any) => lotCodesMatch(String(l.lotCode), maf))
+  );
+
+  if (unmatched.length === 0) {
+    return { group: 'full_coverage', badge: '✓ Full' };
+  }
+
+  if (unmatched.length < relevantMafs.length) {
+    const listed = unmatched.slice(0, 3).join(', ');
+    const extra = unmatched.length > 3 ? ` +${unmatched.length - 3}` : '';
+    return { group: 'partial_coverage', badge: `⚠ Missing: ${listed}${extra}` };
+  }
+
+  return { group: 'no_access', badge: '✗ No lot access' };
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface Supervisor {
   id: string;
   fullName: string;
   email?: string;
   companyName?: string;
   defaultLotCode?: string;
+  role?: string;
+  lots?: { lotCode: string }[];
+  assignedLots?: { lotCode: string }[];
 }
 
 interface PendingRoute {
@@ -59,18 +124,21 @@ interface PendingRoute {
   createdAt: Date | string;
   workerName: string | null;
   customerCount: number;
+  customerMafs: string[];
   isRecurring: number | null;
   cadence: string | null;
   startingPointLabel: string | null;
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function PendingAssignments() {
   const utils = trpc.useUtils();
 
-  // Fetch pending routes
+  // Fetch pending routes (includes customerMafs for lot-coverage grouping)
   const { data: pendingRoutes = [], isLoading, error, refetch } =
     trpc.fieldWorker.getPendingAssignmentRoutes.useQuery(undefined, {
-      refetchInterval: 30_000, // auto-refresh every 30s
+      refetchInterval: 30_000,
     });
 
   // Fetch supervisors from Survey App (same source as CreateRoute)
@@ -127,15 +195,67 @@ export default function PendingAssignments() {
     });
   };
 
+  // ── Grouped picker helpers ──────────────────────────────────────────────────
+  const routeMafs: string[] = selectedRoute?.customerMafs ?? [];
+
   const filteredSupervisors = supervisors.filter((sup) => {
     if (!supervisorSearch) return true;
     const q = supervisorSearch.toLowerCase();
     return (
       (sup.fullName || "").toLowerCase().includes(q) ||
       (sup.email || "").toLowerCase().includes(q) ||
-      (sup.companyName || "").toLowerCase().includes(q)
+      (sup.companyName || "").toLowerCase().includes(q) ||
+      (sup.defaultLotCode || "").toLowerCase().includes(q) ||
+      (sup.lots || []).some((l) => String(l.lotCode).toLowerCase().includes(q))
     );
   });
+
+  const fullCoverage: Supervisor[] = [];
+  const partialCoverage: Supervisor[] = [];
+  const noAccess: Supervisor[] = [];
+
+  filteredSupervisors.forEach((sup) => {
+    const { group } = checkSupervisorLotAccess(sup, routeMafs);
+    if (group === 'full_coverage') fullCoverage.push(sup);
+    else if (group === 'partial_coverage') partialCoverage.push(sup);
+    else noAccess.push(sup);
+  });
+
+  const renderSupervisorItem = (sup: Supervisor, coverageBadge?: React.ReactNode) => (
+    <CommandItem
+      key={String(sup.id)}
+      value={`${sup.fullName} ${sup.email ?? ""} ${sup.companyName ?? ""}`}
+      onSelect={() => {
+        setSelectedSupervisor(sup);
+        setSupervisorPickerOpen(false);
+        setSupervisorSearch("");
+      }}
+      className="text-white cursor-pointer"
+    >
+      <Check
+        className={`mr-2 h-4 w-4 ${
+          selectedSupervisor && String(selectedSupervisor.id) === String(sup.id)
+            ? "opacity-100"
+            : "opacity-0"
+        }`}
+      />
+      <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium truncate">{sup.fullName}</span>
+          {coverageBadge}
+        </div>
+        <span className="text-xs text-slate-400 truncate">
+          {sup.email}
+          {sup.companyName ? ` · ${sup.companyName}` : ""}
+          {sup.role === "cherry_picker"
+            ? " · cherry picker"
+            : sup.lots?.length
+            ? ` · ${sup.lots.length} lot${sup.lots.length !== 1 ? "s" : ""}`
+            : ""}
+        </span>
+      </div>
+    </CommandItem>
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -275,7 +395,7 @@ export default function PendingAssignments() {
                 </div>
               </div>
 
-              {/* Supervisor picker */}
+              {/* Supervisor picker — grouped by lot coverage */}
               <div className="space-y-1.5">
                 <label className="text-sm text-slate-300 font-medium">Select Supervisor</label>
                 <Popover open={supervisorPickerOpen} onOpenChange={setSupervisorPickerOpen}>
@@ -292,7 +412,7 @@ export default function PendingAssignments() {
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[420px] p-0 bg-slate-800 border-slate-600">
+                  <PopoverContent className="w-[400px] p-0 bg-slate-800 border-slate-600">
                     <Command className="bg-slate-800">
                       <CommandInput
                         placeholder="Search by name, email, or company…"
@@ -306,38 +426,52 @@ export default function PendingAssignments() {
                             ? "Loading supervisors…"
                             : "No supervisor found."}
                         </CommandEmpty>
-                        <CommandGroup>
-                          {filteredSupervisors.map((sup) => (
-                            <CommandItem
-                              key={String(sup.id)}
-                              value={`${sup.fullName} ${sup.email ?? ""} ${sup.companyName ?? ""}`}
-                              onSelect={() => {
-                                setSelectedSupervisor(sup);
-                                setSupervisorPickerOpen(false);
-                                setSupervisorSearch("");
-                              }}
-                              className="text-white cursor-pointer"
-                            >
-                              <Check
-                                className={`mr-2 h-4 w-4 ${
-                                  selectedSupervisor &&
-                                  String(selectedSupervisor.id) === String(sup.id)
-                                    ? "opacity-100"
-                                    : "opacity-0"
-                                }`}
-                              />
-                              <div className="flex flex-col flex-1 min-w-0">
-                                <span className="font-medium truncate">{sup.fullName}</span>
-                                {sup.email && (
-                                  <span className="text-xs text-slate-400 truncate">{sup.email}</span>
-                                )}
-                                {sup.companyName && (
-                                  <span className="text-xs text-slate-500 truncate">{sup.companyName}</span>
-                                )}
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
+
+                        {/* Full Coverage group */}
+                        {fullCoverage.length > 0 && (
+                          <CommandGroup
+                            heading={
+                              routeMafs.length > 0
+                                ? `Full Coverage (${fullCoverage.length})`
+                                : `Available (${fullCoverage.length})`
+                            }
+                          >
+                            {fullCoverage.map((sup) => {
+                              const { badge } = checkSupervisorLotAccess(sup, routeMafs);
+                              return renderSupervisorItem(
+                                sup,
+                                routeMafs.length > 0
+                                  ? <span className="text-xs text-green-400 shrink-0">{badge}</span>
+                                  : undefined
+                              );
+                            })}
+                          </CommandGroup>
+                        )}
+
+                        {/* Partial Coverage group */}
+                        {partialCoverage.length > 0 && (
+                          <CommandGroup heading={`Partial Coverage (${partialCoverage.length})`}>
+                            {partialCoverage.map((sup) => {
+                              const { badge } = checkSupervisorLotAccess(sup, routeMafs);
+                              return renderSupervisorItem(
+                                sup,
+                                <span className="text-xs text-red-400 shrink-0">{badge}</span>
+                              );
+                            })}
+                          </CommandGroup>
+                        )}
+
+                        {/* No Lot Access group */}
+                        {noAccess.length > 0 && (
+                          <CommandGroup heading={`No Lot Access (${noAccess.length})`}>
+                            {noAccess.map((sup) =>
+                              renderSupervisorItem(
+                                sup,
+                                <span className="text-xs text-red-400 shrink-0">✗ No lot access</span>
+                              )
+                            )}
+                          </CommandGroup>
+                        )}
                       </CommandList>
                     </Command>
                   </PopoverContent>

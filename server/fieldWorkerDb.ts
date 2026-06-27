@@ -595,14 +595,23 @@ export async function getPendingAssignmentRoutes() {
     .where(eq(routes.status, 'pending_assignment' as any))
     .orderBy(desc(routes.createdAt));
 
-  // Add customer count per route
+  // Add customer count and MAF codes per route
   const withCounts = await Promise.all(
     pendingRoutes.map(async (route) => {
       const countResult = await db
         .select({ count: sql<number>`count(*)` })
         .from(routeCustomers)
         .where(eq(routeCustomers.routeId, route.id));
-      return { ...route, customerCount: Number(countResult[0]?.count || 0) };
+      // Fetch MAF codes for lot-coverage grouping in PendingAssignments supervisor picker
+      const mafResult = await db
+        .select({ customermaf: customers.customermaf })
+        .from(routeCustomers)
+        .innerJoin(customers, eq(routeCustomers.customerId, customers.id))
+        .where(eq(routeCustomers.routeId, route.id));
+      const customerMafs = mafResult
+        .map((r) => r.customermaf)
+        .filter((m): m is string => !!m);
+      return { ...route, customerCount: Number(countResult[0]?.count || 0), customerMafs };
     })
   );
 
