@@ -351,6 +351,10 @@ export const fieldWorkerRouter = router({
       startingPointLat: z.number().optional(),
       startingPointLng: z.number().optional(),
       startingPointLabel: z.string().optional(),
+      // Item 1 (T13): route-level routing reason
+      routingReason: z.enum(["regular", "callback", "complaint", "compliance", "other"]).optional(),
+      // Required when routingReason = 'other' (10+ chars enforced at application layer)
+      routingReasonNote: z.string().max(500).optional(),
     }))
     .mutation(async ({ input }) => {
       console.log('\n========== CREATE ROUTE REQUEST ==========');
