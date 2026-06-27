@@ -183,6 +183,11 @@ export const routeCustomers = mysqlTable("routeCustomers", {
   // completedAt = timestamp of supervisor action (set for both picked and skipped).
   // completion_type = how the stop was resolved.
   completionType: mysqlEnum("completion_type", ["picked", "skipped", "not_attempted"]).notNull().default("not_attempted"),
+  // Item 5 (T13): structured skip reason — same 8 values as routeScheduleCustomers.skipReason.
+  // Canonical source for skip analytics (Items 8, 11). NULL = not a skip stop.
+  skipReason: mysqlEnum("skipReason", ["no_access", "customer_request", "customer_not_present", "safety_concern", "bin_not_out", "permanent_moved", "permanent_closed", "other"]),
+  // Free text required when skipReason = 'other' (10+ chars enforced at application layer).
+  skipNote: text("skipNote"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
