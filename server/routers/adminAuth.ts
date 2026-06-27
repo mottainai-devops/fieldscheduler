@@ -42,7 +42,7 @@ export const adminAuthRouter = router({
         //   user          → all other workers
         //
         // SUPERADMIN_WORKER_IDS: worker IDs 1 (adey adewuyi) and 2 (ADMIN / info@mottainai.africa)
-        // ADMIN_WORKER_IDS: empty for now — owner will populate when admin-tier workers exist
+        // ADMIN_WORKER_IDS: Wale Onibudo (id=10), Alaba (id=27) — T15 Item 3 (2026-06-27)
         //
         // NOTE on the 'admin' value in users.role:
         // The 'admin' value previously existed in users.role as legacy compatibility (never written
@@ -63,7 +63,7 @@ export const adminAuthRouter = router({
         }
 
         const SUPERADMIN_WORKER_IDS = new Set([1, 2]);
-        const ADMIN_WORKER_IDS = new Set<number>([]); // populate when admin-tier workers exist
+        const ADMIN_WORKER_IDS = new Set<number>([10, 27]); // Wale Onibudo (10), Alaba (27)
 
         const usersRole: 'superadmin' | 'admin' | 'field_manager' | 'user' =
           SUPERADMIN_WORKER_IDS.has(worker.id) ? 'superadmin' :
