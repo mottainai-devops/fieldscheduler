@@ -184,34 +184,27 @@ export async function getAllVehicles() {
 export async function getAllCustomers() {
   const db = await getDb();
   if (!db) return [];
-  // Item 9 (T13): derive lastRoutingReason — the routingReason from the most recent
-  // routeCustomers row for each customer (NULL if never routed).
-  const lastRoutingReasonSubquery = sql<string>`(
-    SELECT rc.routingReason
-    FROM routeCustomers rc
-    INNER JOIN routes r ON rc.routeId = r.id
-    WHERE rc.customerId = ${customers.id}
-    ORDER BY r.scheduledDate DESC, r.createdAt DESC
-    LIMIT 1
-  )`;
-  const result = await db.select({
-    id: customers.id,
-    name: customers.name,
-    address: customers.address,
-    latitude: customers.latitude,
-    longitude: customers.longitude,
-    serviceType: customers.serviceType,
-    priority: customers.priority,
-    buildingId: customers.buildingId,
-    zohoContactId: customers.zohoContactId,
-    fieldManager: customers.fieldManager,
-    maf: customers.maf,
-    customerType: customers.customerType,
-    routeAssignmentStatus: customers.routeAssignmentStatus,
-    createdAt: customers.createdAt,
-    lastRoutingReason: lastRoutingReasonSubquery,
-  }).from(customers).orderBy(desc(customers.createdAt));
-  return result;
+  // Item 9 (T13) — two-step approach to avoid null-dereference from correlated
+  // sql<string> subquery when no routeCustomers rows exist (Pattern #29, Rule 34).
+  const rows = await db.select().from(customers).orderBy(desc(customers.createdAt));
+  // Step 2: build customerId → lastRoutingReason map from aggregated routeCustomers
+  const reasonRows = await db
+    .select({
+      customerId: routeCustomers.customerId,
+      routingReason: routeCustomers.routingReason,
+      scheduledDate: routes.scheduledDate,
+      routeCreatedAt: routes.createdAt,
+    })
+    .from(routeCustomers)
+    .innerJoin(routes, eq(routeCustomers.routeId, routes.id))
+    .orderBy(desc(routes.scheduledDate), desc(routes.createdAt));
+  const reasonMap = new Map<number, string | null>();
+  for (const r of reasonRows) {
+    if (!reasonMap.has(r.customerId)) {
+      reasonMap.set(r.customerId, r.routingReason ?? null);
+    }
+  }
+  return rows.map(c => ({ ...c, lastRoutingReason: reasonMap.get(c.id) ?? null }));
 }
 
 export async function getCustomersByIds(ids: number[]) {
@@ -225,35 +218,30 @@ export async function getCustomersByIds(ids: number[]) {
 export async function getCustomersByFieldManager(fieldManagerId: number) {
   const db = await getDb();
   if (!db) return [];
-  // Item 9 (T13): same lastRoutingReason derivation as getAllCustomers.
-  const lastRoutingReasonSubquery = sql<string>`(
-    SELECT rc.routingReason
-    FROM routeCustomers rc
-    INNER JOIN routes r ON rc.routeId = r.id
-    WHERE rc.customerId = ${customers.id}
-    ORDER BY r.scheduledDate DESC, r.createdAt DESC
-    LIMIT 1
-  )`;
-  const result = await db.select({
-    id: customers.id,
-    name: customers.name,
-    address: customers.address,
-    latitude: customers.latitude,
-    longitude: customers.longitude,
-    serviceType: customers.serviceType,
-    priority: customers.priority,
-    buildingId: customers.buildingId,
-    zohoContactId: customers.zohoContactId,
-    fieldManager: customers.fieldManager,
-    maf: customers.maf,
-    customerType: customers.customerType,
-    routeAssignmentStatus: customers.routeAssignmentStatus,
-    createdAt: customers.createdAt,
-    lastRoutingReason: lastRoutingReasonSubquery,
-  }).from(customers)
+  // Item 9 (T13) — two-step approach (same as getAllCustomers, Pattern #29, Rule 34).
+  const rows = await db.select().from(customers)
     .where(eq(customers.fieldManager, fieldManagerId))
     .orderBy(desc(customers.createdAt));
-  return result;
+  if (rows.length === 0) return [];
+  const customerIds = rows.map(c => c.id);
+  const reasonRows = await db
+    .select({
+      customerId: routeCustomers.customerId,
+      routingReason: routeCustomers.routingReason,
+      scheduledDate: routes.scheduledDate,
+      routeCreatedAt: routes.createdAt,
+    })
+    .from(routeCustomers)
+    .innerJoin(routes, eq(routeCustomers.routeId, routes.id))
+    .where(inArray(routeCustomers.customerId, customerIds))
+    .orderBy(desc(routes.scheduledDate), desc(routes.createdAt));
+  const reasonMap = new Map<number, string | null>();
+  for (const r of reasonRows) {
+    if (!reasonMap.has(r.customerId)) {
+      reasonMap.set(r.customerId, r.routingReason ?? null);
+    }
+  }
+  return rows.map(c => ({ ...c, lastRoutingReason: reasonMap.get(c.id) ?? null }));
 }
 
 export async function getCustomerById(id: number) {
