@@ -393,9 +393,11 @@ export default function CreateRoute() {
       toast.error("Please complete all steps before creating the route");
       return;
     }
-    // Item 2: at least one of supervisor or field manager must be selected
-    if (!selectedSupervisorObj && !selectedWorker) {
-      toast.error("Select a supervisor or a field manager (or both) before creating the route.");
+    // T15 Item 4: Supervisor is now optional. If no supervisor is selected, the server
+    // writes status='pending_assignment' and the route appears in the Pending Assignments queue.
+    // A field manager (workerId) is still required.
+    if (!selectedWorker) {
+      toast.error("Select a field manager before creating the route.");
       return;
     }
     // A4: Hard block if supervisor has no lot access or partial coverage
@@ -421,7 +423,9 @@ export default function CreateRoute() {
         efficiencyScore: Number(optimizedRoute.efficiencyScore || 50),
         customerIds: selectedCustomers.filter(id => typeof id === 'number' && !isNaN(id)),
         scheduledDate: scheduledDate,  // 5A(b): use admin-selected date
-        status: "assigned" as const,
+        // T15 Item 4: status is omitted — the server decides:
+        //   - supervisor provided → 'assigned'
+        //   - no supervisor      → 'pending_assignment'
         // Tranche 6 Item 1: recurring route fields
         isRecurring: isRecurring ? 1 : 0,
         cadence: isRecurring ? cadence : undefined,
@@ -440,7 +444,10 @@ export default function CreateRoute() {
       
       await createRouteMutation.mutateAsync(routeData);
       
-      toast.success("Route created and assigned successfully!");
+      const successMsg = selectedSupervisorObj
+        ? "Route created and assigned successfully!"
+        : "Route created. Assign a supervisor from the Pending Assignments page.";
+      toast.success(successMsg);
       setTimeout(() => {
         setLocation("/routes");
       }, 1500);

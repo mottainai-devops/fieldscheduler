@@ -348,8 +348,9 @@ export const fieldWorkerRouter = router({
     }),
 
   // T14 Item 3: fieldManagerProcedure — route creation is a field operation (superadmin + admin + field_manager)
-  // T15 note: when pending_assignment workflow is added, a separate assignRoute procedure
-  // (adminProcedure) will move routes from pending_assignment → assigned.
+  // T15 Item 4: createRoute now writes 'pending_assignment' when no supervisor is selected.
+  // The separate assignSupervisorToRoute procedure (adminProcedure) moves routes from
+  // pending_assignment → assigned when a supervisor is assigned.
   createRoute: fieldManagerProcedure
     .input(z.object({
       workerId: z.number().optional(),
@@ -357,7 +358,7 @@ export const fieldWorkerRouter = router({
       totalDistance: z.string().optional(),
       estimatedDuration: z.string().optional(),
       efficiencyScore: z.number().optional(),
-      status: z.enum(["assigned", "pending", "in_progress", "completed", "cancelled", "optimized"]).optional(),
+      status: z.enum(["assigned", "pending_assignment", "pending", "in_progress", "completed", "cancelled", "optimized"]).optional(),
       scheduledDate: z.string().optional(),
       customerIds: z.array(z.number()).optional(),
       dispatchedAt: z.string().optional(),
@@ -411,10 +412,16 @@ export const fieldWorkerRouter = router({
           throw new Error('Failed to provision supervisor record: ' + provErr.message);
         }
       }
+
+      // T15 Item 4: If no supervisor was provided and no explicit status was set,
+      // write 'pending_assignment' so the route appears in the Pending Assignments queue.
+      // If a supervisor was resolved, write 'assigned' as before.
+      const resolvedStatus = input.status ?? (resolvedSupervisorId ? 'assigned' : 'pending_assignment');
+      console.log('[CREATE ROUTE] resolvedSupervisorId:', resolvedSupervisorId, '| resolvedStatus:', resolvedStatus);
       
       try {
         console.log('[CREATE ROUTE] Calling fieldWorkerDb.createRoute...');
-        const result = await fieldWorkerDb.createRoute({ ...input, supervisorId: resolvedSupervisorId });
+        const result = await fieldWorkerDb.createRoute({ ...input, supervisorId: resolvedSupervisorId, status: resolvedStatus });
         console.log('[CREATE ROUTE] ✅ SUCCESS! Result:', JSON.stringify(result, null, 2));
         console.log('========================================\n');
         return result;
@@ -452,6 +459,40 @@ export const fieldWorkerRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.deleteRoute(input.id);
+    }),
+
+  /**
+   * T15 Item 5: Get all routes with status='pending_assignment'.
+   * Used by the Pending Assignments admin page.
+   * adminProcedure — only superadmin and admin can see the assignment queue.
+   */
+  getPendingAssignmentRoutes: adminProcedure.query(async () => {
+    return await fieldWorkerDb.getPendingAssignmentRoutes();
+  }),
+
+  /**
+   * T15 Item 5: Assign a supervisor to a pending_assignment route.
+   * Accepts the Survey App supervisor id (MongoDB _id string); provisions the
+   * shadow workers row via ensureSupervisorWorker if needed, then moves the
+   * route from pending_assignment → assigned.
+   * adminProcedure — only superadmin and admin can assign supervisors.
+   */
+  assignSupervisorToRoute: adminProcedure
+    .input(z.object({
+      routeId: z.number(),
+      // Survey App MongoDB _id of the supervisor to assign
+      surveyAppSupervisorId: z.string(),
+      surveyAppSupervisorName: z.string().optional(),
+      surveyAppSupervisorEmail: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      // Provision the shadow workers row if it doesn't exist yet
+      const supervisorWorkerId = await fieldWorkerDb.ensureSupervisorWorker({
+        id: input.surveyAppSupervisorId,
+        fullName: input.surveyAppSupervisorName,
+        email: input.surveyAppSupervisorEmail,
+      });
+      return await fieldWorkerDb.assignSupervisorToRoute(input.routeId, supervisorWorkerId);
     }),
 
   /**

@@ -50,6 +50,7 @@ import AdvancedFilters from "./components/AdvancedFilters";
 import FinancialDashboard from "./pages/FinancialDashboard";
 import ReportBuilderPage from "./pages/ReportBuilderPage";
 import ScheduledReportsPage from "./pages/ScheduledReportsPage";
+import PendingAssignments from "./pages/PendingAssignments";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequireAuth from "./components/RequireAuth";
 import RequireFieldManager from "./components/RequireFieldManager";
@@ -146,6 +147,8 @@ function Router() {
       <LayoutRoute path={"/scheduled-reports"} component={ScheduledReportsPage} requireAdmin />
       {/* T14 Item 4: fieldManager tier — route schedules accessible to all admin-tier roles */}
       <LayoutRoute path={"/route-schedules"} component={RouteSchedules} requireFieldManager />
+      {/* T15 Item 5: admin tier — pending assignments visible to superadmin + admin only */}
+      <LayoutRoute path={"/pending-assignments"} component={PendingAssignments} requireAdmin />
 
       <Route path={"/worker-mobile"} component={WorkerMobile} />
       <Route path={"/worker-mobile/routes"} component={WorkerMobile} />

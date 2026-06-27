@@ -19,6 +19,7 @@ import {
   ClipboardCheck,
   Wrench,
   Zap,
+  ClockAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import AdminNotificationBell from "./AdminNotificationBell";
@@ -86,6 +87,8 @@ const navigationGroups: NavGroup[] = [
       { label: "Route Optimization", href: "/route-optimization", icon: Navigation },
       { label: "Clusters", href: "/clusters", icon: Route },
       { label: "Route Schedules", href: "/route-schedules", icon: Route, minRole: "fieldManager" },
+      // T15 Item 5: Pending Assignments — admin tier (superadmin + admin)
+      { label: "Pending Assignments", href: "/pending-assignments", icon: ClockAlert, minRole: "admin" },
     ],
   },
   {

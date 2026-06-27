@@ -467,7 +467,7 @@ export async function createRoute(data: {
   totalDistance?: string;
   estimatedDuration?: string;
   efficiencyScore?: number;
-  status?: "pending" | "optimized" | "assigned" | "in_progress" | "completed" | "cancelled";
+  status?: "pending" | "pending_assignment" | "optimized" | "assigned" | "in_progress" | "completed" | "cancelled";
   scheduledDate?: string;
   customerIds?: number[];
   supervisorId?: number;
@@ -556,6 +556,87 @@ export async function updateRouteStatus(id: number, status: string) {
   
   await db.update(routes).set({ status: status as any }).where(eq(routes.id, id));
   return await getRouteById(id);
+}
+
+/**
+ * T15 Item 5: Get all routes with status='pending_assignment'.
+ * Returns routes enriched with worker name, supervisor name, and customer count.
+ * Used by the Pending Assignments admin page.
+ */
+export async function getPendingAssignmentRoutes() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Alias workers table for supervisor join
+  const supervisorWorkers = db.select().from(workers).as('supervisorWorkers');
+
+  const pendingRoutes = await db
+    .select({
+      id: routes.id,
+      workerId: routes.workerId,
+      supervisorId: (routes as any).supervisorId,
+      vehicleId: routes.vehicleId,
+      status: routes.status,
+      totalDistance: routes.totalDistance,
+      estimatedDuration: routes.estimatedDuration,
+      efficiencyScore: routes.efficiencyScore,
+      scheduledDate: routes.scheduledDate,
+      createdAt: routes.createdAt,
+      updatedAt: routes.updatedAt,
+      workerName: workers.name,
+      isRecurring: routes.isRecurring,
+      cadence: routes.cadence,
+      startingPointLat: routes.startingPointLat,
+      startingPointLng: routes.startingPointLng,
+      startingPointLabel: routes.startingPointLabel,
+    })
+    .from(routes)
+    .leftJoin(workers, eq(routes.workerId, workers.id))
+    .where(eq(routes.status, 'pending_assignment' as any))
+    .orderBy(desc(routes.createdAt));
+
+  // Add customer count per route
+  const withCounts = await Promise.all(
+    pendingRoutes.map(async (route) => {
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(routeCustomers)
+        .where(eq(routeCustomers.routeId, route.id));
+      return { ...route, customerCount: Number(countResult[0]?.count || 0) };
+    })
+  );
+
+  return withCounts;
+}
+
+/**
+ * T15 Item 5: Assign a supervisor to a pending_assignment route.
+ * Resolves the supervisor's workers.id from their Survey App user id,
+ * then sets routes.supervisorId and moves status to 'assigned'.
+ * Returns the updated route.
+ */
+export async function assignSupervisorToRoute(routeId: number, supervisorWorkerId: number) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  // Verify route exists and is pending_assignment
+  const existing = await db.select().from(routes).where(eq(routes.id, routeId)).limit(1);
+  if (!existing[0]) throw new Error(`Route ${routeId} not found`);
+  if (existing[0].status !== 'pending_assignment') {
+    throw new Error(`Route ${routeId} is not in pending_assignment status (current: ${existing[0].status})`);
+  }
+
+  // Update route: set supervisorId and move to 'assigned'
+  await db
+    .update(routes)
+    .set({
+      supervisorId: supervisorWorkerId as any,
+      status: 'assigned' as any,
+      updatedAt: new Date(),
+    })
+    .where(eq(routes.id, routeId));
+
+  return await getRouteById(routeId);
 }
 
 export async function deleteRoute(id: number) {
