@@ -1683,12 +1683,14 @@ surveyAppUserId existed in createWorker and updateWorker Zod schemas but was nev
 ### Production State After T16
 | Signal | Value |
 |--------|-------|
-| Git HEAD (GitHub + production) | TBD (deploy pending) |
-| Items 1–3 | Code complete, deploy pending |
+| Git HEAD (GitHub + production) | `e7979f43` |
+| Production server | `54.194.172.107` — PM2 both processes online |
+| Item 1 — routing reason write path | Code shipped (`e7979f43`). **Behavioral verification PENDING** (owner to create test routes A/B/C/D and run DB queries) |
+| Item 2 — createSyncJob handler | Code shipped (`e7979f43`). **Behavioral verification PENDING** (owner to submit Create Sync Job form and confirm no ReferenceError) |
+| Item 3 — surveyAppUserId dialogs | Code shipped (`e7979f43`). **Behavioral verification PENDING** (owner to create/edit a worker with surveyAppUserId populated and confirm DB write) |
+| Item 4 — T13 correction note | Written to ENGAGEMENT_RECORD.md. No behavioral verification required. |
 | routes.routingReason (pre-fix) | NULL (2/2 rows) |
 | routeCustomers.routingReason (pre-fix) | NULL (6/6 rows) |
-| createSyncJob handler | Fixed — was ReferenceError |
-| surveyAppUserId in worker dialogs | Fixed — now surfaced in create + edit |
 
 ### Carry-Forward to Tranche 17
 1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T16)
@@ -1700,4 +1702,5 @@ surveyAppUserId existed in createWorker and updateWorker Zod schemas but was nev
 7. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
 8. Field Manager Dashboard — focused operational view for field managers (owner-requested)
 9. Tranche 5C canonical constants centralisation — owner-requested
-10. driftLogger application — Item 5 proposal (pending owner approval)
+10. driftLogger runtime middleware application — Deliverable C (apply existing middleware to createRoute, createWorker, updateWorker, updateRoute, createSyncJob, updateSyncJob, createViolation, markCustomerPicked, skipCustomer, uploadPaymentProof, generateReport, createScheduledReport, assignSupervisorToRoute, updateRouteAndNotifyWorker)
+11. driftLogger static analysis script — T17 candidate (separate from runtime middleware; catches code-level drift at commit time)
