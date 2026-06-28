@@ -15,7 +15,7 @@
  * DO NOT upgrade these to protectedProcedure without first implementing
  * Bearer token support in the tRPC middleware.
  */
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
@@ -241,7 +241,14 @@ export const workerAuthRouter = router({
     }),
 
   // Create violation report
+  // T16 Item 5: driftLogger applied
   createViolation: publicProcedure
+    .use(driftLogger('workerAuth.createViolation', {
+      shape: {
+        customerId: true, violationTypeId: true, reportedBy: true,
+        notes: true, evidenceUrls: true,
+      }
+    }))
     .input(z.object({
       customerId: z.number(),
       violationTypeId: z.number(),
@@ -482,7 +489,11 @@ export const workerAuthRouter = router({
     }),
 
   // Mark a customer as picked up (supervisor action)
+  // T16 Item 5: driftLogger applied
   markCustomerPicked: publicProcedure
+    .use(driftLogger('markCustomerPicked', {
+      shape: { routeId: true, customerId: true, scheduleId: true }
+    }))
     .input(z.object({
       routeId: z.number(),
       customerId: z.number(),
@@ -611,7 +622,14 @@ export const workerAuthRouter = router({
   //
   // The skip is recorded on routeScheduleCustomers (schedule-level) and
   // optionally on routeInstanceCustomerOverrides (occurrence-level).
+  // T16 Item 5: driftLogger applied
   skipCustomer: publicProcedure
+    .use(driftLogger('skipCustomer', {
+      shape: {
+        scheduleId: true, routeId: true, customerId: true,
+        skipReason: true, skipNote: true, workerId: true,
+      }
+    }))
     .input(z.object({
       scheduleId: z.number().int().positive().optional(),
       routeId: z.number().int().positive(),

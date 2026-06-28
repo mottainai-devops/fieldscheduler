@@ -1645,9 +1645,9 @@ T13 close-out report stated: "routing reason picker built in CreateRoute.tsx (St
 
 T13 delivered: DB schema migration, Zod schema fields, Routes.tsx read-path display badges. T13 did NOT deliver: client picker state, client payload wiring, or DB helper write path.
 
-**Rule added (Rule 47):** Tranche close-out reports must include a behavioral verification trace (DB query confirming data written) for any feature that writes new columns. Schema migration alone is not sufficient evidence of a working write path.
+**Rule added (Rule 49):** Tranche close-out reports must include a behavioral verification trace (DB query confirming data written) for any feature that writes new columns. Schema migration alone is not sufficient evidence of a working write path.
 
-**Rule added (Rule 48):** Before closing a tranche that adds new optional fields to a Zod schema, the agent must confirm that at least one client call site sends the field. A field that is optional in the schema but never sent by any client is a ghost field and must be flagged as incomplete.
+**Rule added (Rule 50):** Before closing a tranche that adds new optional fields to a Zod schema, the agent must confirm that at least one client call site sends the field. A field that is optional in the schema but never sent by any client is a ghost field and must be flagged as incomplete.
 
 ### T16 Fixes Applied
 
@@ -1702,5 +1702,6 @@ surveyAppUserId existed in createWorker and updateWorker Zod schemas but was nev
 7. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
 8. Field Manager Dashboard — focused operational view for field managers (owner-requested)
 9. Tranche 5C canonical constants centralisation — owner-requested
-10. driftLogger runtime middleware application — Deliverable C (apply existing middleware to createRoute, createWorker, updateWorker, updateRoute, createSyncJob, updateSyncJob, createViolation, markCustomerPicked, skipCustomer, uploadPaymentProof, generateReport, createScheduledReport, assignSupervisorToRoute, updateRouteAndNotifyWorker)
+10. driftLogger runtime middleware application — **COMPLETED in T16 Item 5** (applied to all 14 procedures: createRoute, createWorker, updateWorker, updateRoute, createSyncJob, updateSyncJob, createViolation, markCustomerPicked, skipCustomer, uploadPaymentProof, generateReport, createScheduledReport, assignSupervisorToRoute, updateRouteAndNotifyWorker)
 11. driftLogger static analysis script — T17 candidate (separate from runtime middleware; catches code-level drift at commit time)
+12. **Tag-Based Route Creation — UI shipped but no backend integration; feature has never created a route in production.** TagBasedRouteCreation.tsx “Create Route” button runs a setTimeout simulation with no tRPC mutation call. Owner decides in T17 whether to fix (wire to createRoute) or remove the page entirely.

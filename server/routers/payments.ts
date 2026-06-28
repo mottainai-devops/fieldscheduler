@@ -1,4 +1,4 @@
-import { publicProcedure, adminProcedure, router } from "../_core/trpc";
+import { publicProcedure, adminProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 
 export const paymentsRouter = router({
@@ -6,7 +6,15 @@ export const paymentsRouter = router({
   // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
   // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
   // validation inside the handler. See SECURITY_DEBT.md.
+  // T16 Item 5: driftLogger applied
   uploadPaymentProof: publicProcedure
+    .use(driftLogger('uploadPaymentProof', {
+      shape: {
+        customerId: true, invoiceId: true, workerId: true,
+        fileData: true, fileName: true, fileType: true,
+        notes: true, amount: true, paymentMethod: true,
+      }
+    }))
     .input(z.object({
       customerId: z.number(),
       invoiceId: z.string().optional(),

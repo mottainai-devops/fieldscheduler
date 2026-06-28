@@ -1,4 +1,4 @@
-import { protectedProcedure, fieldManagerProcedure, adminProcedure, superadminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, fieldManagerProcedure, adminProcedure, superadminProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 import * as zoho from "../services/zoho";
 import * as scheduler from "../services/zohoScheduler";
@@ -99,7 +99,13 @@ export const integrationsRouter = router({
 
   // Create a new sync job
   // T14 Item 3: adminProcedure — sync job management is admin-tier
+  // T16 Item 5: driftLogger applied (T16 Item 2 fixed the missing handler; monitor for further drift)
   createSyncJob: adminProcedure
+    .use(driftLogger('createSyncJob', {
+      shape: {
+        jobName: true, scheduleType: true, scheduleTime: true, scheduleDay: true,
+      }
+    }))
     .input(z.object({
       jobName: z.string(),
       scheduleType: z.enum(['hourly', 'daily', 'weekly', 'monthly']),
@@ -123,7 +129,13 @@ export const integrationsRouter = router({
 
   // Update a sync job
   // T14 Item 3: adminProcedure — sync job management is admin-tier
+  // T16 Item 5: driftLogger applied
   updateSyncJob: adminProcedure
+    .use(driftLogger('updateSyncJob', {
+      shape: {
+        jobId: true, enabled: true, scheduleType: true, scheduleTime: true, scheduleDay: true,
+      }
+    }))
     .input(z.object({
       jobId: z.number(),
       enabled: z.boolean().optional(),

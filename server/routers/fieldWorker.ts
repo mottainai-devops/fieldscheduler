@@ -21,7 +21,16 @@ export const fieldWorkerRouter = router({
     }),
 
   // T14 Item 3: adminProcedure — worker creation is admin-tier (superadmin + admin)
+  // T16 Item 5: driftLogger applied — monitors for payload drift on worker creation
   createWorker: adminProcedure
+    .use(driftLogger('createWorker', {
+      shape: {
+        name: true, email: true, phone: true, skills: true, status: true,
+        shiftStart: true, shiftEnd: true, pin: true, role: true,
+        preferredWebhookType: true, surveyAppUserId: true,
+        homeDepotLat: true, homeDepotLng: true, homeDepotLabel: true,
+      }
+    }))
     .input(
       // Tranche 9 Item B closure: depot fields (all three or none — coupling enforced by .refine)
       z.object({
@@ -64,7 +73,16 @@ export const fieldWorkerRouter = router({
     }),
 
   // T14 Item 3: adminProcedure — worker updates are admin-tier (superadmin + admin)
+  // T16 Item 5: driftLogger applied — monitors for payload drift on worker updates
   updateWorker: adminProcedure
+    .use(driftLogger('updateWorker', {
+      shape: {
+        id: true, name: true, email: true, phone: true, skills: true, status: true,
+        shiftStart: true, shiftEnd: true, pin: true, role: true,
+        preferredWebhookType: true, surveyAppUserId: true,
+        homeDepotLat: true, homeDepotLng: true, homeDepotLabel: true,
+      }
+    }))
     .input(
       // Tranche 9 Item B closure: depot fields (all three or none — coupling enforced by .refine)
       z.object({
@@ -351,7 +369,19 @@ export const fieldWorkerRouter = router({
   // T15 Item 4: createRoute now writes 'pending_assignment' when no supervisor is selected.
   // The separate assignSupervisorToRoute procedure (adminProcedure) moves routes from
   // pending_assignment → assigned when a supervisor is assigned.
+  // T16 Item 5: driftLogger applied — monitors for payload drift on route creation (T13 routing reason fields were ghost until T16)
   createRoute: fieldManagerProcedure
+    .use(driftLogger('createRoute', {
+      shape: {
+        workerId: true, vehicleId: true, totalDistance: true, estimatedDuration: true,
+        efficiencyScore: true, status: true, scheduledDate: true, customerIds: true,
+        dispatchedAt: true, supervisorId: true, surveyAppSupervisorId: true,
+        surveyAppSupervisorName: true, surveyAppSupervisorEmail: true,
+        isRecurring: true, cadence: true, recurrenceStartDate: true, recurrenceEndDate: true,
+        startingPointLat: true, startingPointLng: true, startingPointLabel: true,
+        routingReason: true, routingReasonNote: true, stopReasonOverrides: true,
+      }
+    }))
     .input(z.object({
       workerId: z.number().optional(),
       vehicleId: z.number().optional(),
@@ -436,7 +466,15 @@ export const fieldWorkerRouter = router({
     }),
 
   // T14 Item 3: adminProcedure — route updates are admin-tier
+  // T16 Item 5: driftLogger applied
   updateRoute: adminProcedure
+    .use(driftLogger('updateRoute', {
+      shape: {
+        id: true, workerId: true, vehicleId: true, totalDistance: true,
+        estimatedDuration: true, efficiencyScore: true, status: true,
+        scheduledDate: true, customerIds: true, dispatchedAt: true,
+      }
+    }))
     .input(z.object({
       id: z.number(),
       workerId: z.number().optional(),
@@ -477,7 +515,14 @@ export const fieldWorkerRouter = router({
    * route from pending_assignment → assigned.
    * adminProcedure — only superadmin and admin can assign supervisors.
    */
+  // T16 Item 5: driftLogger applied
   assignSupervisorToRoute: adminProcedure
+    .use(driftLogger('assignSupervisorToRoute', {
+      shape: {
+        routeId: true, surveyAppSupervisorId: true,
+        surveyAppSupervisorName: true, surveyAppSupervisorEmail: true,
+      }
+    }))
     .input(z.object({
       routeId: z.number(),
       // Survey App MongoDB _id of the supervisor to assign
@@ -514,7 +559,11 @@ export const fieldWorkerRouter = router({
    * Used by the admin route-detail panel when an admin edits the date.
    */
   // T14 Item 3: adminProcedure — route date updates with notifications are admin-tier
+  // T16 Item 5: driftLogger applied
   updateRouteAndNotifyWorker: adminProcedure
+    .use(driftLogger('updateRouteAndNotifyWorker', {
+      shape: { id: true, scheduledDate: true }
+    }))
     .input(z.object({
       id: z.number(),
       scheduledDate: z.string(), // YYYY-MM-DD

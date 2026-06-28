@@ -1,4 +1,4 @@
-import { router, fieldManagerProcedure, adminProcedure } from '../_core/trpc';
+import { router, fieldManagerProcedure, adminProcedure, driftLogger } from '../_core/trpc';
 import { z } from 'zod';
 import { getDb } from '../db';
 import { sql } from 'drizzle-orm';
@@ -95,7 +95,11 @@ export const reportingRouter = router({
    * Generate a report from a template
    */
   // T14 Item 3: fieldManagerProcedure — report generation accessible to all admin-tier roles
+  // T16 Item 5: driftLogger applied
   generateReport: fieldManagerProcedure
+    .use(driftLogger('generateReport', {
+      shape: { templateId: true, filters: true, format: true }
+    }))
     .input(z.object({
       templateId: z.number(),
       filters: z.any().optional(),
@@ -341,7 +345,13 @@ export const reportingRouter = router({
    * Create a new scheduled report
    */
   // T14 Item 3: adminProcedure — scheduled report creation is admin-tier
+  // T16 Item 5: driftLogger applied
   createScheduledReport: adminProcedure
+    .use(driftLogger('createScheduledReport', {
+      shape: {
+        templateId: true, frequency: true, recipients: true, format: true, filters: true,
+      }
+    }))
     .input(z.object({
       templateId: z.number(),
       frequency: z.enum(['daily', 'weekly', 'monthly']),
