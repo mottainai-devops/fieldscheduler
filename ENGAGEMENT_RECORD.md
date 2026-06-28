@@ -1622,3 +1622,82 @@ createRoute previously always wrote status=assigned regardless of whether a supe
 6. Kelani (id=26 deleted) — valid supervisor with no surveyAppUserId; needs Survey App account before mobile use
 7. Field Manager Dashboard — focused operational view for field managers (owner-requested T16 scope item)
 8. Tranche 5C canonical constants centralisation — owner-requested T16 scope item
+
+---
+
+## Tranche 16 (T16) — Pattern #15 Forensic Audit + Drift Remediation
+
+**Date:** 2026-06-28 | **Method:** Static analysis (READ-ONLY) + targeted fixes
+
+### T16 Scope
+1. Pattern #15 forensic audit — full mutation procedure drift inventory (Deliverable A)
+2. Risk classification of all 11 findings (Deliverable B)
+3. Fix Item 1 — routing reason write path (ACTIVELY BROKEN, finding #2)
+4. Fix Item 2 — createSyncJob handler (ACTIVELY BROKEN, finding #10)
+5. Fix Item 3 — surveyAppUserId surfaced in worker dialogs (LATENTLY BROKEN, finding #3)
+
+### T13 Correction Note (Formal)
+T13 close-out report stated: "routing reason picker built in CreateRoute.tsx (Step 3)". This was **incorrect**. T16 forensic audit confirmed:
+- No routingReason, routingReasonNote, or stopReasonOverrides state existed anywhere in CreateRoute.tsx or TagBasedRouteCreation.tsx at T16 start.
+- All production routes.routingReason and routeCustomers.routingReason values were NULL (confirmed via live DB query: 2 routes, 6 routeCustomers, all NULL).
+- The DB columns existed (T13 migration ran), but the write path was never built.
+- TagBasedRouteCreation.tsx does not call createRoute at all — its "create route" button runs a setTimeout simulation with no tRPC mutation.
+
+T13 delivered: DB schema migration, Zod schema fields, Routes.tsx read-path display badges. T13 did NOT deliver: client picker state, client payload wiring, or DB helper write path.
+
+**Rule added (Rule 47):** Tranche close-out reports must include a behavioral verification trace (DB query confirming data written) for any feature that writes new columns. Schema migration alone is not sufficient evidence of a working write path.
+
+**Rule added (Rule 48):** Before closing a tranche that adds new optional fields to a Zod schema, the agent must confirm that at least one client call site sends the field. A field that is optional in the schema but never sent by any client is a ghost field and must be flagged as incomplete.
+
+### T16 Fixes Applied
+
+#### Item 1 — Routing Reason Write Path (3 layers)
+Files changed: client/src/pages/CreateRoute.tsx, server/fieldWorkerDb.ts
+
+Layer 1a (client): Added routingReason, routingReasonNote, stopReasonOverrides state. Added import from @shared/const. Added Routing Reason card in Step 3 with route-level reason select, other-note textarea with min-chars counter, and per-stop override section. Wired all three fields into handleCreateRoute payload.
+
+Layer 1b (DB helper): Added routingReason and startingPointLabel to createRoute input type (both were missing). Destructured stopReasonOverrides out of spread. Per-stop insert now writes routingReason and routingReasonNote from override map if provided.
+
+Production DB state at T16 start: routes.routingReason = NULL (2/2 rows), routeCustomers.routingReason = NULL (6/6 rows). After this fix, new routes created via the UI will write these values.
+
+#### Item 2 — createSyncJob Handler
+File changed: client/src/pages/SyncHistoryDashboard.tsx
+
+handleCreateJob was referenced in <form onSubmit={handleCreateJob}> but was never defined. Submitting the "New Job" form threw ReferenceError: handleCreateJob is not defined. Fix: Added handleCreateJob function reading FormData and calling createJobMutation.mutate. Also fixed duplicate React import.
+
+#### Item 3 — surveyAppUserId Worker Dialogs
+File changed: client/src/pages/Workers.tsx
+
+surveyAppUserId existed in createWorker and updateWorker Zod schemas but was never surfaced in the dialogs. Workers created via the UI always had surveyAppUserId = NULL, breaking the ensureSupervisorWorker lookup path. Fix: Added state, resetForm, handleEdit prefill, handleSubmit and handleUpdate payload wiring, and input fields in both Create Worker and Edit Worker dialogs.
+
+### Findings Deferred (Not Fixed in T16)
+| Finding | Reason Deferred |
+|---------|----------------|
+| #1 — register procedure missing | Owner decision needed on whether admin registration flow should exist |
+| #4 — createScheduledReport ghost fields | Low operational impact |
+| #5 — updateCustomer preferredWebhookType | Benign — client correctly omits it |
+| #6 — adminAuth.login preferredWebhookType | Benign — never used at login |
+| #7–#9 — Audit trail actor identity | Audit quality degradation only. Deferred to T17. |
+| #11 — updateSyncJob/deleteSyncJob operational status | Re-verify in T17 after Item 2 deploy |
+
+### Production State After T16
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub + production) | TBD (deploy pending) |
+| Items 1–3 | Code complete, deploy pending |
+| routes.routingReason (pre-fix) | NULL (2/2 rows) |
+| routeCustomers.routingReason (pre-fix) | NULL (6/6 rows) |
+| createSyncJob handler | Fixed — was ReferenceError |
+| surveyAppUserId in worker dialogs | Fixed — now surfaced in create + edit |
+
+### Carry-Forward to Tranche 17
+1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T16)
+2. Audit trail actor identity — findings #7, #8, #9 (calendarOverrides, archiveAndRecreate, resolveHandoffRequest)
+3. register procedure decision — finding #1 (owner input needed)
+4. updateSyncJob/deleteSyncJob operational verification — finding #11 (re-verify after Item 2 deploy)
+5. sync-zoho-data.mjs name normalisation — workerMap lookup needs trim/lowercase/collapse (Rule 31 carry-forward)
+6. Scoped financial access for field managers — getMyFinancialMetrics procedure
+7. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
+8. Field Manager Dashboard — focused operational view for field managers (owner-requested)
+9. Tranche 5C canonical constants centralisation — owner-requested
+10. driftLogger application — Item 5 proposal (pending owner approval)

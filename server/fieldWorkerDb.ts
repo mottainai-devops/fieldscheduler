@@ -479,8 +479,11 @@ export async function createRoute(data: {
   // Tranche 9: starting point fields
   startingPointLat?: number;
   startingPointLng?: number;
+  startingPointLabel?: string;
+  // T16 Item 1: route-level routing reason (was ghost field — now written to DB)
+  routingReason?: "regular" | "callback" | "complaint" | "compliance" | "other";
   routingReasonNote?: string;
-  // Item 2 (T13): per-stop routing reason overrides (keyed by customerId as string)
+  // Item 2 (T13) / T16 Item 1: per-stop routing reason overrides (keyed by customerId as string)
   stopReasonOverrides?: Record<string, { reason: "regular" | "callback" | "complaint" | "compliance" | "other"; note?: string }>;
 }) {
   console.log('\n[DB] createRoute called with data::', JSON.stringify(data, null, 2));
@@ -492,8 +495,8 @@ export async function createRoute(data: {
   }
   console.log('[DB] Database connection OK');
   
-  // Extract customerIds from data
-  const { customerIds, ...routeData } = data;
+  // Extract customerIds and stopReasonOverrides from data (not direct DB columns)
+  const { customerIds, stopReasonOverrides, ...routeData } = data;
   console.log('[DB] Extracted customerIds:', customerIds);
   console.log('[DB] Route data to insert:', JSON.stringify(routeData, null, 2));
 
@@ -525,11 +528,19 @@ export async function createRoute(data: {
     // If customerIds are provided, create route-customer assignments
     if (customerIds && customerIds.length > 0) {
       console.log('[DB] Creating route-customer assignments for', customerIds.length, 'customers');
-      const routeCustomerValues = customerIds.map((customerId, index) => ({
-        routeId: Number(routeId),
-        customerId: customerId,
-        sequenceNumber: index + 1
-      }));
+      const routeCustomerValues = customerIds.map((customerId, index) => {
+        const override = stopReasonOverrides?.[String(customerId)];
+        return {
+          routeId: Number(routeId),
+          customerId: customerId,
+          sequenceNumber: index + 1,
+          // T16 Item 1: write per-stop routing reason override if provided
+          ...(override ? {
+            routingReason: override.reason,
+            routingReasonNote: override.note ?? null,
+          } : {}),
+        };
+      });
       console.log('[DB] Route-customer values:', JSON.stringify(routeCustomerValues, null, 2));
       
       const rcResult = await db.insert(routeCustomers).values(routeCustomerValues);

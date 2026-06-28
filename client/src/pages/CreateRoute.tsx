@@ -14,6 +14,7 @@ import AppHeader from "@/components/AppHeader";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChevronsUpDown, Check } from "lucide-react";
+import { ROUTING_REASONS, type RoutingReasonValue, ROUTING_REASON_OTHER_MIN_CHARS } from '@shared/const';
 
 // ---- safe list guards (injected) ----
 const asArray = <T,>(v: T[] | T | undefined | null | false): T[] => Array.isArray(v) ? v : (v != null && v !== false ? [v as T] : []);
@@ -61,6 +62,12 @@ export default function CreateRoute() {
   const [customStartError, setCustomStartError] = useState<string | null>(null);
   // resolvedStart is populated after a successful optimize call
   const [resolvedStart, setResolvedStart] = useState<{ lat: number; lng: number; label: string } | null>(null);
+
+  // T16 Item 1: routing reason state
+  const [routingReason, setRoutingReason] = useState<RoutingReasonValue | ''>('');
+  const [routingReasonNote, setRoutingReasonNote] = useState('');
+  // stopReasonOverrides: keyed by customerId (string), value is { reason, note }
+  const [stopReasonOverrides, setStopReasonOverrides] = useState<Record<string, { reason: RoutingReasonValue; note: string }>>({});
 
   // A3: Supervisor picker state
   // selectedSupervisor holds the resolved workers.id (set after ensureSupervisorWorker on submit)
@@ -435,6 +442,14 @@ export default function CreateRoute() {
         startingPointLat: resolvedStart?.lat ?? undefined,
         startingPointLng: resolvedStart?.lng ?? undefined,
         startingPointLabel: resolvedStart?.label ?? undefined,
+        // T16 Item 1: routing reason write path
+        routingReason: routingReason || undefined,
+        routingReasonNote: (routingReason === 'other' && routingReasonNote) ? routingReasonNote : undefined,
+        stopReasonOverrides: Object.keys(stopReasonOverrides).length > 0
+          ? Object.fromEntries(
+              Object.entries(stopReasonOverrides).map(([id, v]) => [id, { reason: v.reason, note: v.note || undefined }])
+            )
+          : undefined,
       };
       
       console.log("[CREATE ROUTE] Sending data:", routeData);
@@ -1460,6 +1475,101 @@ export default function CreateRoute() {
                     </div>
                   )}
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* T16 Item 1: Routing Reason Card */}
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardHeader>
+                <CardTitle className="text-white text-base">Routing Reason <span className="text-slate-500 font-normal text-sm">(Optional)</span></CardTitle>
+                <CardDescription className="text-slate-400">Record why this route is being created and optionally override the reason per stop</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Route-level reason */}
+                <div className="flex items-center gap-3">
+                  <Label className="text-slate-300 text-sm w-32 flex-shrink-0">Route Reason</Label>
+                  <Select value={routingReason} onValueChange={(v) => setRoutingReason(v as RoutingReasonValue)}>
+                    <SelectTrigger className="bg-slate-700 border-slate-600 text-white w-48">
+                      <SelectValue placeholder="Select reason" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-700 border-slate-600">
+                      {ROUTING_REASONS.map(r => (
+                        <SelectItem key={r.value} value={r.value} className="text-white">{r.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {routingReason && (
+                    <button type="button" onClick={() => { setRoutingReason(''); setRoutingReasonNote(''); }} className="text-xs text-slate-400 hover:text-white underline">
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {/* Note — only shown when reason = 'other' */}
+                {routingReason === 'other' && (
+                  <div className="flex items-start gap-3">
+                    <Label className="text-slate-300 text-sm w-32 flex-shrink-0 pt-2">Note</Label>
+                    <div className="flex-1">
+                      <textarea
+                        value={routingReasonNote}
+                        onChange={(e) => setRoutingReasonNote(e.target.value)}
+                        placeholder={`Describe the reason (min ${ROUTING_REASON_OTHER_MIN_CHARS} characters)`}
+                        rows={2}
+                        className="w-full bg-slate-700 border border-slate-600 text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                      />
+                      {routingReasonNote.length > 0 && routingReasonNote.length < ROUTING_REASON_OTHER_MIN_CHARS && (
+                        <p className="text-xs text-yellow-400 mt-1">{ROUTING_REASON_OTHER_MIN_CHARS - routingReasonNote.length} more characters needed</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Per-stop overrides */}
+                {toList<any>(optimizedRoute?.optimizedSequence).length > 0 && (
+                  <div className="border-t border-slate-700 pt-4">
+                    <p className="text-slate-400 text-xs mb-3">Override reason per stop (leave blank to inherit route reason)</p>
+                    <div className="space-y-2">
+                      {toList<any>(optimizedRoute?.optimizedSequence).map((customer: any, idx: number) => {
+                        const override = stopReasonOverrides[String(customer.id)];
+                        return (
+                          <div key={customer.id} className="flex items-center gap-3 p-2 bg-slate-700/30 rounded">
+                            <span className="w-5 h-5 bg-blue-600/20 text-blue-400 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0">{idx + 1}</span>
+                            <span className="text-white text-sm flex-1 truncate">{customer.name}</span>
+                            <Select
+                              value={override?.reason ?? ''}
+                              onValueChange={(v) => {
+                                if (!v) {
+                                  setStopReasonOverrides(prev => { const n = { ...prev }; delete n[String(customer.id)]; return n; });
+                                } else {
+                                  setStopReasonOverrides(prev => ({ ...prev, [String(customer.id)]: { reason: v as RoutingReasonValue, note: prev[String(customer.id)]?.note ?? '' } }));
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="bg-slate-700 border-slate-600 text-white w-36 text-xs h-8">
+                                <SelectValue placeholder="Inherit" />
+                              </SelectTrigger>
+                              <SelectContent className="bg-slate-700 border-slate-600">
+                                <SelectItem value="__clear__" className="text-slate-400 text-xs">Inherit route reason</SelectItem>
+                                {ROUTING_REASONS.map(r => (
+                                  <SelectItem key={r.value} value={r.value} className="text-white text-xs">{r.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {override?.reason === 'other' && (
+                              <input
+                                type="text"
+                                placeholder="Note..."
+                                value={override.note ?? ''}
+                                onChange={(e) => setStopReasonOverrides(prev => ({ ...prev, [String(customer.id)]: { ...prev[String(customer.id)], note: e.target.value } }))}
+                                className="bg-slate-700 border border-slate-600 text-white rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

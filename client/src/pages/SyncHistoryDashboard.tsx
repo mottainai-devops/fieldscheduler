@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, FormEvent } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,19 @@ import { RefreshCw, Trash2, Plus, Edit2 } from "lucide-react";
 export default function SyncHistoryDashboard() {
   const [selectedJob, setSelectedJob] = useState<number | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // T16 Item 2: handleCreateJob was missing — form onSubmit threw ReferenceError
+  const handleCreateJob = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const data = new FormData(form);
+    const jobName = (data.get('jobName') as string)?.trim();
+    const scheduleType = data.get('scheduleType') as 'hourly' | 'daily' | 'weekly' | 'monthly';
+    const scheduleTime = (data.get('scheduleTime') as string) || undefined;
+    const scheduleDay = (data.get('scheduleDay') as string) || undefined;
+    if (!jobName || !scheduleType) return;
+    createJobMutation.mutate({ jobName, scheduleType, scheduleTime, scheduleDay });
+  };
 
   // Queries
   const { data: syncJobs = [], refetch: refetchJobs } =

@@ -59,6 +59,9 @@ export default function Workers() {
   const [depotLng, setDepotLng] = useState("");
   const [depotError, setDepotError] = useState<string | null>(null);
 
+  // T16 Item 3: surveyAppUserId — was ghost field, now surfaced in UI
+  const [surveyAppUserId, setSurveyAppUserId] = useState("");
+
   const { data: workers = [], isLoading } = trpc.fieldWorker.getWorkers.useQuery();
   const utils = trpc.useUtils();
 
@@ -67,6 +70,7 @@ export default function Workers() {
     setStatus("active"); setShiftStart("08:00"); setShiftEnd("17:00");
     setPin(""); setWorkerRole("field_manager"); setPreferredWebhookType("payt");
     setDepotLabel(""); setDepotLat(""); setDepotLng(""); setDepotError(null);
+    setSurveyAppUserId(""); // T16 Item 3
   };
 
   const createWorkerMutation = trpc.fieldWorker.createWorker.useMutation({
@@ -132,6 +136,7 @@ export default function Workers() {
       shiftEnd,
       role: workerRole,
       preferredWebhookType: preferredWebhookType || undefined,
+      surveyAppUserId: surveyAppUserId.trim() || undefined, // T16 Item 3
       ...buildDepotPayload(),
     });
   };
@@ -153,6 +158,7 @@ export default function Workers() {
     setDepotLat(worker.homeDepotLat != null ? String(worker.homeDepotLat) : "");
     setDepotLng(worker.homeDepotLng != null ? String(worker.homeDepotLng) : "");
     setDepotError(null);
+    setSurveyAppUserId(worker.surveyAppUserId || ""); // T16 Item 3
     setEditOpen(true);
   };
 
@@ -180,6 +186,7 @@ export default function Workers() {
       shiftEnd,
       role: workerRole,
       preferredWebhookType: preferredWebhookType || undefined,
+      surveyAppUserId: surveyAppUserId.trim() || undefined, // T16 Item 3
       ...depotPayload,
     });
   };
@@ -389,6 +396,18 @@ export default function Workers() {
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-slate-500">To create a Supervisor, use Mottainai Admin Dashboard.</p>
+                      </div>
+                      {/* T16 Item 3: Survey App User ID */}
+                      <div className="grid gap-2">
+                        <Label htmlFor="surveyAppUserId" className="text-slate-300">Survey App User ID <span className="text-slate-500 font-normal text-xs">(Optional)</span></Label>
+                        <Input
+                          id="surveyAppUserId"
+                          value={surveyAppUserId}
+                          onChange={(e) => setSurveyAppUserId(e.target.value)}
+                          placeholder="e.g., SAU-00123"
+                          className="bg-slate-700 border-slate-600 text-white"
+                        />
+                        <p className="text-xs text-slate-500">Links this worker to their Survey App account for route assignment</p>
                       </div>
                       {/* Tranche 9: Home Depot sub-section */}
                       <HomeDepotSection />
@@ -660,6 +679,18 @@ export default function Workers() {
                       <SelectItem value="field_manager">Field Manager</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                {/* T16 Item 3: Survey App User ID */}
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-surveyAppUserId" className="text-slate-300">Survey App User ID <span className="text-slate-500 font-normal text-xs">(Optional)</span></Label>
+                  <Input
+                    id="edit-surveyAppUserId"
+                    value={surveyAppUserId}
+                    onChange={(e) => setSurveyAppUserId(e.target.value)}
+                    placeholder="e.g., SAU-00123"
+                    className="bg-slate-700 border-slate-600 text-white"
+                  />
+                  <p className="text-xs text-slate-500">Links this worker to their Survey App account for route assignment</p>
                 </div>
                 {/* Tranche 9: Home Depot sub-section */}
                 <HomeDepotSection />
