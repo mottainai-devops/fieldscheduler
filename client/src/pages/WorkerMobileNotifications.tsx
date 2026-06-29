@@ -28,8 +28,9 @@ export default function WorkerMobileNotifications() {
   const markAllAsReadMutation = trpc.workerNotifications.markAllAsRead.useMutation();
 
   const handleMarkAsRead = async (id: number) => {
+    if (!selectedWorkerId) return;
     try {
-      await markAsReadMutation.mutateAsync({ id });
+      await markAsReadMutation.mutateAsync({ id, workerId: selectedWorkerId });
       await refetch();
     } catch (error: any) {
       toast.error("Failed to mark as read");
