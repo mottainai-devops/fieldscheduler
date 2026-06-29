@@ -2117,3 +2117,103 @@ Security debt count: **12 → 0**. All procedures resolved. SECURITY_DEBT.md upd
 10. LOW driftCheck findings — 5 items (T19 Item 3)
 
 **T20 is closed. T21 may begin.**
+
+
+---
+
+## Tranche 21 (T21) — 2026-06-29
+
+### Scope
+1. **Finding 1** — Add notes field to cancel/reschedule dialogs in `RouteSchedules.tsx`
+2. **Finding 2** — Add `amount` and `paymentMethod` fields to payment proof upload dialog in `WorkerMobileCustomerDetail.tsx`
+3. **driftCheck expansion** — `@drift-suppress` marker support for cross-repo false-positive suppression (Pattern #47)
+4. **Finding 5c investigation** — `requestHandoff.routeId` cross-repo analysis; apply `@drift-suppress` marker
+5. **`/register` orphan removal** — Delete `Register.tsx`, remove route from `App.tsx`, remove dead link from `AdminLogin.tsx`
+
+### Commit
+`96a3b5c2` — pushed to `origin/main`
+
+### Implementation Detail
+
+#### Finding 1 — RouteSchedules.tsx cancel/reschedule notes
+Added a `notes` textarea to both the cancel-instance and reschedule-instance confirmation dialogs. The field is optional (`z.string().optional()`), displayed with a placeholder, and passed to `calendarOverrides.cancelInstance` and `calendarOverrides.rescheduleInstance` via `mutateAsync`. State is reset on dialog close and on success.
+
+#### Finding 2 — WorkerMobileCustomerDetail.tsx payment proof fields
+Added `amount` (number input) and `paymentMethod` (Select with options: `cash`, `bank_transfer`, `gcash`, `maya`, `check`, `other`) to the payment proof upload dialog. Both fields are passed to `payments.uploadPaymentProof.mutateAsync`. State is reset on success and on cancel. This resolves the two ghost fields that driftCheck had been reporting since T19.
+
+Cross-repo verification confirmed that the Flutter mobile app (`fieldscheduler-mobile`) already passes both `amount` and `paymentMethod` in its `uploadPaymentProof` call. The React web client was the only gap; T21 closes it.
+
+#### driftCheck @drift-suppress marker (Pattern #47)
+Expanded `scripts/driftCheck.ts` Class A analysis with a cross-repo false-positive suppression mechanism.
+
+Marker syntax: add `// @drift-suppress: <justification>` immediately above any Zod field to suppress it from Class A findings.
+
+Implementation:
+- `extractDriftSuppress(sourceText, fieldLineNumber)`: scans backwards through contiguous comment lines from each field, stopping at the first non-comment line. Correctly scopes the marker to the single field it immediately precedes.
+- `driftSuppressedFields[]` tracking array: parallel to `spreadSuppressedProcedures[]`.
+- `printResults()`: shows Category 2 suppression count in summary; `--verbose` lists each suppressed field with `file:line` and full justification text.
+- Updated header comment: documents all 3 false-positive categories.
+
+Dogfood verification: Before 14 findings (including `requestHandoff.routeId`). After: 13 findings (1 suppressed). `--verbose` output shows exactly 1 suppressed field with full justification.
+
+#### Finding 5c — requestHandoff.routeId
+**Verdict: Not a ghost field — Flutter-only, cross-repo client.**
+
+Investigation confirmed: The `routeId` field was added in commit `f10f50b2` (T3 B3 fix) to support non-recurring routes in the Flutter mobile app. `fieldscheduler-mobile/lib/services/api_service.dart` line 553 explicitly passes `routeId` when `scheduleId` is null. The server uses `routeId` as a lookup key to resolve `scheduleId` via `routes → routeSchedules` join. It is never stored in `handoffRequests`. The React web client does not pass `routeId` because it always has access to `scheduleId` via `getScheduleIdForRoute`. driftCheck scans only TypeScript/TSX files in this repo; the Dart client is invisible to it.
+
+Applied `@drift-suppress` marker to `routeId` in `calendarOverrides.ts`. The B3 fix comment is preserved below the marker.
+
+#### /register orphan removal
+The `Register.tsx` page called `trpc.workerAuth.register.useMutation` but no `workerAuth.register` procedure was ever implemented server-side. The page was a pure orphan with no reachable server contract. Removed: `client/src/pages/Register.tsx` (deleted), `import Register` and `<Route path="/register">` from `App.tsx`, dead "Create account" link (`href="/admin/register"`) from `AdminLogin.tsx` (no `/admin/register` route existed either).
+
+### Retroactive Cross-Repo Audit (T21)
+Full cross-repo scan performed against `fieldscheduler-mobile`, `mottainai-survey-app`, and `mottainai-platform-backend` for all remaining driftCheck findings.
+
+| Finding | Procedure | Field | Cross-repo client? | Verdict |
+|---------|-----------|-------|-------------------|---------|
+| `setInstanceCustomerOverride` | `stopOrder`, `reason` | None found | True ghost — deferred |
+| `setInstanceCustomerOverride` | `actorId`, `actorName` | None found | True ghost — audit trail carry-forward |
+| `removeInstanceCustomerOverride` | `actorId`, `actorName` | None found | True ghost — audit trail carry-forward |
+| `archiveAndRecreate` | `newTitle`, `actorId`, `actorName` | None found | True ghost — audit trail carry-forward |
+| `requestHandoff` | `routeId` | Flutter passes it | False positive — suppressed with `@drift-suppress` |
+| `resolveHandoffRequest` | `actorId`, `actorName` | None found | True ghost — audit trail carry-forward |
+| `compliance.createViolation` | `evidenceUrls` | Flutter does NOT pass it | True ghost |
+| `compliance.createAbatementNotice` | `noticeNumber` | Flutter does not call this procedure | True ghost |
+| `payments.uploadPaymentProof` | `amount`, `paymentMethod` | Flutter passes both | Resolved by Finding 2 fix |
+
+**Conclusion:** Only `requestHandoff.routeId` required `@drift-suppress`. All other findings are genuine ghosts. The 13 remaining driftCheck findings are all true positives.
+
+### Patterns and Rules Added in T21
+
+**Pattern #47 — Cross-Repo Client False Positives in Static Drift Analysis**
+A static drift analysis tool scans only the files within its own repository. Procedures called by clients in separate repositories (Flutter/Dart mobile apps, separate TypeScript backends, external API consumers) are invisible to the scan. A field that is legitimately sent by a cross-repo client will appear as a ghost field in the analysis output. The defect is a false positive: the field is in active use, just not visible to the scanner. Canonical instance: `requestHandoff.routeId` — passed by `fieldscheduler-mobile` ApiService, invisible to driftCheck TypeScript-only scan. Fix: add a `@drift-suppress` marker with a justification comment immediately preceding the field declaration.
+
+**Rule added (Rule 54):** Before acting on a driftCheck Class A finding, perform a cross-repo audit: check `fieldscheduler-mobile`, `mottainai-survey-app`, and `mottainai-platform-backend` for calls to the flagged procedure. If a cross-repo client sends the field, apply `@drift-suppress` with a justification citing the client repo, file, and line number. Do not remove or stub the field.
+
+### driftCheck State at T21 Close
+- **Total findings:** 13 (was 14 at T20 close; 1 suppressed via `@drift-suppress`)
+- **Suppressed fields:** 1 (`calendarOverrides.requestHandoff.routeId` — Flutter-only)
+- **Resolved by T21 fixes:** `payments.uploadPaymentProof.amount`, `payments.uploadPaymentProof.paymentMethod` (Finding 2)
+- **Remaining true ghosts:** 11 (audit trail actor fields, compliance fields — deferred to future tranches)
+
+### Production State at T21 Close
+| Item | Status |
+|------|--------|
+| T21 implementation | `96a3b5c2` — GitHub + production |
+| driftCheck findings | 13 remaining (all true positives) |
+| `@drift-suppress` marker | 1 active (`calendarOverrides.requestHandoff.routeId` — Flutter-only) |
+| `/register` orphan | Removed |
+| Finding 2 ghost fields | Resolved |
+
+### Carry-Forward to Tranche 22
+1. **Positive test verification** — confirm `workerProcedure` end-to-end with real Survey App token (first mobile app use after surveyAppUserId backfill)
+2. **Audit trail actor identity** — 8 remaining ghost fields: `actorId`/`actorName` on `setInstanceCustomerOverride`, `removeInstanceCustomerOverride`, `archiveAndRecreate`, `resolveHandoffRequest` — owner decision needed on whether to wire UI or remove
+3. **T17 Item 2 normalization** — sync-zoho-data.mjs behavioral verification at next scheduled sync
+4. Scoped financial access for field managers — `getMyFinancialMetrics`
+5. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+6. Field Manager Dashboard
+7. Tranche 5C canonical constants centralisation
+8. `compliance.createViolation.evidenceUrls` — owner decision needed (UI not wired)
+9. `compliance.createAbatementNotice.noticeNumber` — owner decision needed (UI not wired)
+10. `calendarOverrides.setInstanceCustomerOverride.stopOrder`, `.reason` — owner decision needed
+**T21 is closed. T22 may begin.**
