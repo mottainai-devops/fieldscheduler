@@ -1773,6 +1773,13 @@ Commit: `11ada4f8`
 | Item 3 — Tag-Based Route Creation removal | **VERIFIED ✅** (2026-06-29). Route Management sidebar section confirmed: Routes, Create Route, Route Optimization, Clusters, Route Schedules, Pending Assignments — "Tag-Based Routes" absent. Direct navigation to `/tag-based-route-creation` returns 404. FieldManagerAdminDashboard Step 3 no longer shows the tag-based route button. |
 | T17 close-out | **CLOSED 2026-06-29** — all 3 items delivered and verified |
 
+### Patterns and Rules Added in T17
+
+**Pattern #44 — JSX Event Handler Referencing Undefined Function**
+Component JSX references a handler function by name (e.g., `onClick={handleX}`, `onSubmit={handleY}`) that is never defined in the component. JavaScript does not enforce reference resolution at compile time, so the component renders and the button appears clickable. The ReferenceError only fires when the user actually triggers the event. Components ship through code review and happy-path demo testing while every secondary action is silently broken. Canonical instances: `SyncHistoryDashboard.tsx` — three handlers (`handleCreateJob`, `handleToggleJob`, `handleDeleteJob`) all called in JSX, none defined. `handleCreateJob` detected and fixed in T16 Item 2; `handleToggleJob` and `handleDeleteJob` detected and fixed in T17 Item 1. Detected by clicking the affordance, not by reading the code.
+
+**Rule added (Rule 51):** Before declaring a component complete, exercise every interactive element at least once — click buttons, submit forms, toggle switches. Code review and happy-path render test are insufficient: JavaScript silently accepts undefined function references in JSX until they are triggered.
+
 ### Carry-Forward to Tranche 18
 1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T17)
 2. Audit trail actor identity — findings #7, #8, #9 (calendarOverrides, archiveAndRecreate, resolveHandoffRequest)
@@ -1782,4 +1789,4 @@ Commit: `11ada4f8`
 6. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
 7. Field Manager Dashboard — focused operational view for field managers (owner-requested)
 8. Tranche 5C canonical constants centralisation — owner-requested
-9. driftLogger static analysis script — catches code-level drift at commit time (separate from runtime middleware already applied in T16)
+9. driftLogger static analysis script — **expanded scope (T17 addition):** detect TWO defect shapes, not just the original Pattern #15. (1) Schema field drift (original) — Zod schema declares field X, no client call site sends X. (2) JSX handler drift (new, Pattern #44) — component JSX references handler function X via onClick/onSubmit/onChange/etc., no const or function declaration of X exists in the component. Both are AST-level static analysis using ts-morph. Both run at commit time / CI. Bundle them in a single script.
