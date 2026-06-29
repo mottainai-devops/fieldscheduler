@@ -32,6 +32,14 @@ async function fetchZohoContacts(accessToken) {
   return data.contacts || [];
 }
 
+// T17 Item 2: Name normalization for workerMap lookup (Rule 31 carry-forward)
+// Normalizes a name string for matching: trim, lowercase, collapse internal whitespace.
+// Applied to BOTH the workers table key and the Zoho-sourced name at lookup time.
+// Persisted data is never modified — normalization is purely for the match operation.
+function normalizeName(name) {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 // Main sync
 async function syncData() {
   console.log('🔄 Starting Zoho sync...');
@@ -97,8 +105,9 @@ async function syncData() {
   console.log(`✅ Field managers inserted`);
   
   // Get worker IDs
+  // T17 Item 2: Build workerMap with normalized keys so lookup is whitespace/case-insensitive
   const [workers] = await db.execute('SELECT id, name FROM workers WHERE name IN (?)', [Array.from(fieldManagers)]);
-  const workerMap = Object.fromEntries(workers.map(w => [w.name, w.id]));
+  const workerMap = Object.fromEntries(workers.map(w => [normalizeName(w.name), w.id]));
   
   // Clear existing customers
   console.log('\n🗑️  Clearing existing customers...');
@@ -109,7 +118,16 @@ async function syncData() {
   let inserted = 0;
   for (const customer of customersData) {
     try {
-      const workerId = customer.fieldManager ? workerMap[customer.fieldManager] : null;
+      // T17 Item 2: Normalize Zoho-sourced name before lookup
+      let workerId = null;
+      if (customer.fieldManager) {
+        const normalizedZohoName = normalizeName(customer.fieldManager);
+        workerId = workerMap[normalizedZohoName] ?? null;
+        // Debug log when normalization actually changed the string (catches real variations)
+        if (workerId !== null && normalizedZohoName !== customer.fieldManager) {
+          console.log(`[sync-zoho-data] normalized match: zoho='${customer.fieldManager}' → worker='${workers.find(w => normalizeName(w.name) === normalizedZohoName)?.name ?? '?'}' (normalized: '${normalizedZohoName}')`);
+        }
+      }
       const status = workerId ? 'assigned' : 'unassigned';
       
       await db.execute(
