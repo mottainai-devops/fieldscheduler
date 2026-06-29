@@ -1780,6 +1780,9 @@ Component JSX references a handler function by name (e.g., `onClick={handleX}`, 
 
 **Rule added (Rule 51):** Before declaring a component complete, exercise every interactive element at least once — click buttons, submit forms, toggle switches. Code review and happy-path render test are insufficient: JavaScript silently accepts undefined function references in JSX until they are triggered.
 
+**Pattern #45 — Required Schema Field Drift**
+A Zod schema declares a field as required (no `.optional()`, no `.default()`), but no client call site sends that field. Unlike Pattern #15 (optional field drift, which produces silently missing data and a successful server response), required field drift causes the procedure to fail server-side Zod validation on **every** call. The feature is 100% broken from the moment the drift exists. Distinguished operationally from Pattern #15 by the failure mode: Pattern #15 returns success with null data; Pattern #45 returns a Zod validation error. The breakage is silent in the UI (the call fails, but unless the client surfaces the error explicitly, the user sees nothing). Canonical instance: `workerNotifications.markAsRead.workerId` (z.number, required) — detected by T18 driftCheck dogfood. The mobile app's notification-read flow has been broken since the drift was introduced. The driftCheck script detects Pattern #45 findings in the same Class A output as Pattern #15 findings; they are distinguished by the `(required)` label in the output vs `(optional)`.
+
 ### Carry-Forward to Tranche 18
 1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T17)
 2. Audit trail actor identity — findings #7, #8, #9 (calendarOverrides, archiveAndRecreate, resolveHandoffRequest)
@@ -1906,3 +1909,105 @@ All ghost handlers from T16 and T17 have been fixed. No new ghost handlers detec
    - MEDIUM: payments.uploadPaymentProof amount/paymentMethod (form never sends these)
    - LOW: compliance ghost fields, calendar notes fields, calendarOverrides.requestHandoff.routeId
 10. CI/pre-commit wiring for driftCheck — owner decision after script proves stable (T19+ decision)
+
+---
+
+## Tranche 19 (T19) — driftCheck Dogfood Remediation (Priority Items)
+
+**Date:** 2026-06-29
+**GitHub commits:** `0bd48dee` (Item 1) → `b4841d68` (Item 2a) → `e827bfb6` (Item 4, local only — workflow push blocked by token scope; requires manual push)
+**Production server:** `54.194.172.107` (SSH unavailable at T19 close; deploy pending SSH recovery)
+
+### Pattern Added
+
+**Pattern #45 — Required Zod Field Never Sent by Client (Silent Breakage)**
+**Context:** `workerNotifications.markAsRead` declared `workerId: z.number()` (required, no `.optional()`) in its Zod input schema. The client (`WorkerMobileNotifications.tsx`) sent only `{ id }`. Every call failed Zod validation silently — the `catch` block swallowed the error with `toast.error("Failed to mark as read")`. The feature appeared to work (toast appeared) but no notification was ever marked read. The `selectedWorkerId` value was available in the component and used correctly in `markAllAsRead` on the same page — the drift was introduced when the `markAsRead` handler was written independently without referencing the schema.
+**Rule added (Rule 52):** When writing a client call site for a mutation, read the Zod input schema first and verify every required field is included in the `.mutate({...})` or `.mutateAsync({...})` call. A required field with no `.optional()` will cause Zod to reject the call entirely — not a partial failure, a complete failure. The `catch` block swallowing the error makes this invisible in the UI.
+
+### Items Completed
+
+| Item | Description | Commit | Status |
+|------|-------------|--------|--------|
+| **Pattern #45** | Formalized in ENGAGEMENT_RECORD.md | (this entry) | Done |
+| **Item 1** | Fix `markAsRead` missing `workerId` in client payload | `0bd48dee` | Code on GitHub; deploy pending SSH recovery |
+| **Item 2a** | Remove `scheduleType`, `scheduleTime`, `scheduleDay` from `updateSyncJob` schema | `b4841d68` | Code on GitHub; deploy pending SSH recovery |
+| **Item 2b** | `uploadPaymentProof` amount/paymentMethod — deferred to T20+ | (documentation) | Documented below |
+| **Item 3** | LOW driftCheck findings — deferred to T20+ | (documentation) | Documented below |
+| **Item 4** | driftCheck GitHub Actions workflow authored | `e827bfb6` (local only) | Workflow push blocked by token scope — requires manual push to GitHub |
+
+### Item 1 — Behavioral Verification (Pending Deploy)
+
+Verification to be run after SSH recovery and production deploy:
+- Trigger mark-as-read action via WorkerMobileNotifications page
+- Confirm no Zod validation error in network response (HTTP 200, `{ success: true }`)
+- DB check: `SELECT id, workerId, isRead FROM workerNotifications WHERE id = <test id>;` — expected: `isRead = 1`
+
+### Item 2a — Behavioral Verification (Pending Deploy)
+
+- Toggle a sync job via Sync History Dashboard
+- Confirm `enabled` flag updates in DB (`SELECT id, jobName, enabled FROM zohoSyncJobs;`)
+- Confirm no Zod error in network response
+
+### Item 2b — Deferred to T20+
+
+`payments.uploadPaymentProof` — `amount` and `paymentMethod` ghost fields. Operational decision needed: does the payment proof upload flow need to capture these fields, or are they derived elsewhere (e.g., amount from the customer's outstanding ledger balance, payment method implied by proof type)? Owner input required before scoping fix or removal.
+
+### Item 3 — LOW driftCheck Findings (Deferred to T20+)
+
+The following LOW-priority findings from the T18 driftCheck dogfood run are deferred:
+
+- `compliance.createViolation.evidenceUrls` — upload UI never sends evidence URLs
+- `compliance.createAbatementNotice.noticeNumber` — form never sends notice number
+- `calendarOverrides.*` actor identity fields — already queued for audit trail tranche
+- `calendar.cancelOccurrence.notes` — cancel form never sends notes
+- `calendar.rescheduleOccurrence.notes` — reschedule form never sends notes
+
+### Item 4 — CI Wiring (Manual Push Required)
+
+`drift-check.yml` workflow file is authored and committed locally (`e827bfb6`). Push was blocked by GitHub App token lacking `workflows` scope (HTTP 403). To activate:
+
+**Option A (GitHub UI):** Go to `mottainai-devops/fieldscheduler` → Add file → Create new file → path: `.github/workflows/drift-check.yml` → paste content from `e827bfb6` → commit to `main`.
+
+**Option B (terminal):** From a terminal with personal GitHub credentials: `git push origin main` from the local repo at `/tmp/fieldscheduler-repo`.
+
+Workflow behaviour once live:
+- Triggers on every PR to `main`
+- Runs `pnpm drift:check`
+- Posts findings as PR comment (updates existing comment to avoid spam)
+- `continue-on-error: true` — check NEVER blocks merge
+
+### SECURITY_DEBT.md Created
+
+New file `SECURITY_DEBT.md` added to repo root in commit `0bd48dee`. Documents all 8 public write procedures with client-sent identity as security constraint:
+- 6 original (T14): `markCustomerPicked`, `skipCustomer`, `markCustomerComplete`, `markCustomerIncomplete`, `completeRoute`, `startRoute`
+- 2 added T19: `markAsRead`, `markAllAsRead`
+- Security debt count raised from 6 to 8 endpoints
+
+### Production State After T19
+
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub) | `b4841d68` (Item 4 local at `e827bfb6`, not yet pushed) |
+| Git HEAD (production) | `4df8742e` (T18) — deploy pending SSH recovery |
+| SSH status | Unavailable (EC2 transient issue) — app still running |
+| T19 Item 1 | Code on GitHub; not yet deployed |
+| T19 Item 2a | Code on GitHub; not yet deployed |
+| T19 Item 4 | Workflow authored; manual push required |
+| SECURITY_DEBT.md | On GitHub (`0bd48dee`) |
+
+### Carry-Forward to Tranche 20
+
+1. **Security debt procedures** — 8 public write procedures with client-sent identity as security constraint (6 original T14 + markAsRead/markAllAsRead added T19). Requires Bearer token support in tRPC middleware before fix.
+2. **Audit trail actor identity** — findings #7, #8, #9 (calendarOverrides, archiveAndRecreate, resolveHandoffRequest)
+3. `register` procedure decision — owner input needed
+4. **T17 Item 2 normalization** — sync-zoho-data.mjs behavioral verification at next scheduled sync
+5. **T19 Items 1 + 2a deploy + verification** — pending SSH recovery
+6. **T19 Item 4 CI wiring** — manual push of `drift-check.yml` to GitHub
+7. Scoped financial access for field managers — `getMyFinancialMetrics`
+8. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+9. Field Manager Dashboard
+10. Tranche 5C canonical constants centralisation
+11. `uploadPaymentProof` amount/paymentMethod — owner decision needed (T19 Item 2b)
+12. LOW driftCheck findings — 5 items (T19 Item 3)
+
+**T19 is closed. T20 may begin.**
