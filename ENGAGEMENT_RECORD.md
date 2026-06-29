@@ -2217,3 +2217,70 @@ A static drift analysis tool scans only the files within its own repository. Pro
 9. `compliance.createAbatementNotice.noticeNumber` — owner decision needed (UI not wired)
 10. `calendarOverrides.setInstanceCustomerOverride.stopOrder`, `.reason` — owner decision needed
 **T21 is closed. T22 may begin.**
+
+
+---
+
+## Tranche 22 (T22) — Actor Identity Wiring & calendarOverrides Ghost Field Resolution
+
+**Commit:** `0d07a745`
+**Date:** 2026-06-29
+**driftCheck before:** 13 findings | **driftCheck after:** 2 findings
+
+### Scope
+
+Resolved all 8 actor ghost fields across 6 `calendarOverrides` and `calendar` procedures. Resolved 2 non-actor ghost fields (`reason`, `newTitle`) by wiring them to UI. Introduced Pattern #48 and Rule 55.
+
+### Changes
+
+**Server — `calendarOverrides.ts` (4 procedures):**
+- `setInstanceCustomerOverride`: removed `actorId`, `actorName`, `stopOrder` from Zod; actor derived from `ctx.user`; `reason` kept and wired to DB `note` column
+- `removeInstanceCustomerOverride`: removed `actorId`, `actorName` from Zod; actor derived from `ctx.user`
+- `archiveAndRecreate`: removed `actorId`, `actorName` from Zod; actor derived from `ctx.user`; `newTitle` kept (now wired to UI)
+- `resolveHandoffRequest`: removed `actorId`, `actorName` from Zod; actor derived from `ctx.user`
+
+**Server — `calendar.ts` (2 procedures + helper):**
+- `writeCalendarAudit` helper: added `actorName` parameter
+- `cancelOccurrence`: removed `actorId`, `actorName` from Zod; actor derived from `ctx.user`
+- `rescheduleOccurrence`: removed `actorId`, `actorName` from Zod; actor derived from `ctx.user`
+
+**Client — `RouteSchedules.tsx`:**
+- `CustomerOverrideDialog`: added `overrideReason` state + Reason textarea; wired `reason` into `setOverrideMutation` and `removeOverrideMutation` calls
+- Archive-and-recreate dialog: added `archiveNewTitle` state + New Title input field; wired `newTitle` into `archiveAndRecreateMutation` call
+
+**Tests — `server/calendarOverrides.actorIdentity.test.ts`:**
+- 20 behavioral verification tests: 6 procedures × (rejects `actorId`, rejects `actorName`, accepts valid); plus `stopOrder` rejection and `newTitle`/`reason` acceptance tests
+- All 20 pass
+
+### Cross-repo check (T22 retroactive)
+
+Confirmed that `requestHandoff.routeId` (suppressed via `@drift-suppress` in T21) is the only cross-repo false positive. All other calendarOverrides ghost fields were genuine.
+
+### Audit log integrity
+
+Historical `NULL` audit entries (pre-T22) left as-is per Option X decision. They accurately represent "actor unknown (pre-T22)." No backfill performed.
+
+### Pattern #48 — Never trust client-supplied actor identity
+
+**Context:** `calendarOverrides` procedures had `actorId` and `actorName` as optional Zod fields. Since all 4 procedures are `adminProcedure` (authenticated), the client never sent these fields — every audit row had `actorId: null`, `actorName: null`.
+
+**Rule:** On any `protectedProcedure`, `adminProcedure`, or `fieldManagerProcedure`, actor identity MUST be derived from `ctx.user`. Never accept `actorId` or `actorName` as client input. Client-supplied identity is trivially spoofable and creates a false audit trail.
+
+**Implementation:** Remove `actorId`/`actorName` from Zod schema. In handler body: `const actorId = ctx.user.id; const actorName = ctx.user.name ?? null;`
+
+**Exception:** `publicProcedure` handlers (e.g., `requestHandoff`) that authenticate via non-cookie mechanisms (Survey App Bearer token) may accept `supervisorId` as identity — but only after validating it against the `fieldWorkers` table.
+
+### Rule 55 — writeCalendarAudit must always receive actorName
+
+`writeCalendarAudit` now accepts and writes `actorName` to `calendarAuditLog`. All callers must pass `actorName: ctx.user.name ?? null`. Omitting `actorName` is a lint-level error.
+
+### Carry-forward to T23
+
+1. `compliance.createViolation.evidenceUrls` — owner decision needed (wire to UI or remove)
+2. `compliance.createAbatementNotice.noticeNumber` — owner decision needed (wire to UI or remove)
+3. T17 Item 2 normalization — sync-zoho-data.mjs behavioral verification
+4. Scoped financial access — `getMyFinancialMetrics`
+5. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+6. Field Manager Dashboard
+7. Tranche 5C canonical constants centralisation
+8. `workerProcedure` positive test verification (real Survey App token)
