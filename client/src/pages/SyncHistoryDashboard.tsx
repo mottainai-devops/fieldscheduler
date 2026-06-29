@@ -18,6 +18,16 @@ export default function SyncHistoryDashboard() {
   const [selectedJob, setSelectedJob] = useState<number | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
+  // T17 Item 1: handleToggleJob and handleDeleteJob were missing — called in JSX but never defined
+  const handleToggleJob = (job: { id: number; enabled: boolean }) => {
+    updateJobMutation.mutate({ jobId: job.id, enabled: !job.enabled });
+  };
+
+  const handleDeleteJob = (jobId: number) => {
+    if (!window.confirm('Delete this sync job? This cannot be undone.')) return;
+    deleteJobMutation.mutate({ jobId });
+  };
+
   // T16 Item 2: handleCreateJob was missing — form onSubmit threw ReferenceError
   const handleCreateJob = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
