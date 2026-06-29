@@ -415,7 +415,16 @@ export default function CreateRoute() {
       toast.error(`Route blocked: ${detail}. Choose a supervisor with full lot coverage or remove the out-of-lot customers.`);
       return;
     }
-    
+    // T16 follow-up: routing reason validation gates (client-side, mirrors server-side defense in depth)
+    if (!isRecurring && !routingReason) {
+      toast.error('Select a routing reason for this one-off route.');
+      return;
+    }
+    if (routingReason === 'other' && (!routingReasonNote || routingReasonNote.length < ROUTING_REASON_OTHER_MIN_CHARS)) {
+      toast.error(`Note must be at least ${ROUTING_REASON_OTHER_MIN_CHARS} characters when reason is 'Other'.`);
+      return;
+    }
+
     try {
       const routeData = {
         workerId: selectedWorker ?? undefined,

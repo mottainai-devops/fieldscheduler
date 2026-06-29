@@ -448,10 +448,27 @@ export const fieldWorkerRouter = router({
       // If a supervisor was resolved, write 'assigned' as before.
       const resolvedStatus = input.status ?? (resolvedSupervisorId ? 'assigned' : 'pending_assignment');
       console.log('[CREATE ROUTE] resolvedSupervisorId:', resolvedSupervisorId, '| resolvedStatus:', resolvedStatus);
-      
+
+      // T16 follow-up: routing reason validation gates + auto-fill (defense in depth — mirrors client gates)
+      // Recurring routes auto-fill to 'regular' if no reason was provided.
+      const resolvedReason = input.routingReason ?? (input.isRecurring ? 'regular' : undefined);
+      if (!input.isRecurring && !resolvedReason) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Routing reason required for one-off routes',
+        });
+      }
+      if (resolvedReason === 'other' && (!input.routingReasonNote || input.routingReasonNote.length < 10)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Note (10+ chars) required when routing reason is Other',
+        });
+      }
+      console.log('[CREATE ROUTE] resolvedReason:', resolvedReason);
+
       try {
         console.log('[CREATE ROUTE] Calling fieldWorkerDb.createRoute...');
-        const result = await fieldWorkerDb.createRoute({ ...input, supervisorId: resolvedSupervisorId, status: resolvedStatus });
+        const result = await fieldWorkerDb.createRoute({ ...input, routingReason: resolvedReason, supervisorId: resolvedSupervisorId, status: resolvedStatus });
         console.log('[CREATE ROUTE] ✅ SUCCESS! Result:', JSON.stringify(result, null, 2));
         console.log('========================================\n');
         return result;
