@@ -2284,3 +2284,81 @@ Historical `NULL` audit entries (pre-T22) left as-is per Option X decision. They
 6. Field Manager Dashboard
 7. Tranche 5C canonical constants centralisation
 8. `workerProcedure` positive test verification (real Survey App token)
+
+
+---
+
+## Tranche 23 (T23) — Zero Schema Drift Milestone
+
+**Commit:** `0fcf2cf3`
+**Docs commit:** (this file)
+**Date:** 2026-06-30
+**Status:** CLOSED
+
+### Scope
+
+Final cleanup tranche targeting the last 2 driftCheck findings to reach zero known schema drift.
+
+### Item 1 — `compliance.createViolation.evidenceUrls`
+
+Applied `@drift-suppress` marker. Photo evidence is operationally required per owner but constitutes substantial tranche-sized work (S3 integration, Flutter camera UI, schema migration from `z.string()` to `z.array(z.string()).optional()`). Scoped as T24 candidate. DB column and Zod field retained as scaffolding. Schema-name mismatch documented for T24: field name implies multiple URLs but current type is `z.string()`.
+
+### Item 2 — `compliance.createAbatementNotice.noticeNumber` (Rule #56, Pattern #49)
+
+**Root cause:** Display-time generation without persistence. The server generated `ABT-{timestamp}` in notification messages but never wrote it to the DB row. The PDF renderer used `ABT-{id}` as a display fallback. The same notice had three different identifiers depending on read surface: `ABT-{timestamp}` in notification messages, `ABT-{id}` in PDFs, and `NULL` in DB queries.
+
+**Fix:**
+- Removed `noticeNumber` from `createAbatementNotice` Zod input schema (client should never supply it)
+- `complianceDb.createAbatementNotice`: insert without `noticeNumber`, capture `insertId`, immediately `UPDATE` row with `ABT-{insertId}`, return `{ insertId, noticeNumber }`
+- Handler: all notification messages (worker, admin, customer email) now use the persisted `noticeNumber` from the DB result
+- `getAbatementNoticeById`: changed `||` to `??` for display fallback (null-safe; fires only for historical rows before backfill migration)
+
+**Backfill migration (run on production after deploy):**
+```sql
+UPDATE abatementNotices SET noticeNumber = CONCAT('ABT-', id) WHERE noticeNumber IS NULL;
+```
+
+**Behavioral verification:** 11/11 tests pass (`server/compliance.noticeNumber.test.ts`)
+
+### Pattern #49 — Display-time generation without persistence
+
+A system generates a fallback value at read time (in notification text, in display logic, in PDF rendering) when a persisted field is null, but never writes the generated value back to the record. Different read surfaces produce different generated values for the same record. The record has multiple unstable identifiers depending on where you look. Distinguished from Pattern #15 (silent null data) because the data is present in display surfaces — but inconsistently across them.
+
+**Canonical instance:** `createAbatementNotice.noticeNumber` where the same notice could be referenced as `ABT-{timestamp}` in old notification messages, `ABT-{id}` in PDFs, and `NULL` in DB queries — three different identifiers for one notice.
+
+### Rule #56 — Generated identifiers must be persisted at creation time
+
+If a procedure generates a fallback identifier (auto-incremented, timestamp-based, reference number), the generation logic runs ONCE at insert (or immediately after), the result is written back to the record, and all subsequent read paths consume the persisted value. Read-time generation of identifiers is a data integrity antipattern — it produces records that have different identities depending on read surface.
+
+### Zero-Drift Milestone
+
+T23 closes the zero known schema drift milestone. The T18 dogfood found 22 findings. T19–T23 systematically addressed all 22:
+
+| Tranche | Findings addressed | Method |
+|---------|-------------------|--------|
+| T19 | 4 | Wire to client / remove |
+| T20 | 12 | workerProcedure migration |
+| T21 | 3 + 1 suppressed | Wire to client, @drift-suppress (Flutter-only) |
+| T22 | 9 | Actor identity from ctx, UI wiring |
+| T23 | 2 + 1 suppressed | noticeNumber persistence fix, @drift-suppress (T24 candidate) |
+
+driftCheck now runs against a known-clean baseline. New drift is caught the moment it is introduced. The compounding value: every future tranche that adds a procedure field must either wire it to a client or add a documented suppression — the tool enforces the discipline automatically.
+
+### Carry-Forward to T24+
+
+**T24 candidate — compliance.createViolation photo evidence (owner-confirmed operationally required):**
+- Decide file upload infrastructure (reuse payment proof S3 or new bucket)
+- Schema migration: `z.string()` → `z.array(z.string()).optional()` or JSON convention
+- Flutter mobile UI: camera capture, upload, URL collection (highest operational priority — supervisors at violation site)
+- React web UI: file picker for parity
+- Decide constraints: max photos per violation, size limits, compression, retry on upload failure
+- Behavioral verification: end-to-end photo capture, upload, display in violation detail view
+
+**T25+ carry-forward:**
+- Scoped financial access — `getMyFinancialMetrics`
+- Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+- Field Manager Dashboard
+- Tranche 5C canonical constants centralisation
+- `workerProcedure` positive test verification (real Survey App token)
+- T17 Item 2 normalization — sync-zoho-data.mjs behavioral verification
+- `deleteCustomerNote` ownership rules
