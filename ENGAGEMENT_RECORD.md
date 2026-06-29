@@ -1685,12 +1685,13 @@ surveyAppUserId existed in createWorker and updateWorker Zod schemas but was nev
 |--------|-------|
 | Git HEAD (GitHub + production) | `e7979f43` |
 | Production server | `54.194.172.107` — PM2 both processes online |
-| Item 1 — routing reason write path | Code shipped (`e7979f43`). **Behavioral verification PENDING** (owner to create test routes A/B/C/D and run DB queries) |
-| Item 2 — createSyncJob handler | Code shipped (`e7979f43`). **Behavioral verification PENDING** (owner to submit Create Sync Job form and confirm no ReferenceError) |
-| Item 3 — surveyAppUserId dialogs | Code shipped (`e7979f43`). **Behavioral verification PENDING** (owner to create/edit a worker with surveyAppUserId populated and confirm DB write) |
+| Item 1 — routing reason write path | **VERIFIED ✅** (2026-06-29). Tests 1A–1D all pass. DB: `routes` id=168 `routingReason='regular'` (recurring auto-fill); id=169 `routingReason='callback'` (one-off); `routeCustomers` routeId=169 customerId=6532 `routingReason='complaint'` (per-stop override). Client-side validation gates confirmed: one-off with no reason blocked; 'Other' with short note blocked. |
+| Item 2 — createSyncJob handler | **VERIFIED ✅** (2026-06-29). Test 2 pass. "T16 Test Sync Job" created (hourly at 09:00, Pending badge). No ReferenceError in console. |
+| Item 3 — surveyAppUserId dialogs | **VERIFIED ✅** (2026-06-29). Tests 3A and 3B pass. DB: workers id=35 (T16 Test Worker) `surveyAppUserId='SAU-T16-001'` (create path); id=10 (Wale Onibudo) `surveyAppUserId='SAU-WALE-001'` (update path). |
 | Item 4 — T13 correction note | Written to ENGAGEMENT_RECORD.md. No behavioral verification required. |
 | routes.routingReason (pre-fix) | NULL (2/2 rows) |
 | routeCustomers.routingReason (pre-fix) | NULL (6/6 rows) |
+| T16 close-out | **CLOSED 2026-06-29** — all 3 items verified, behavioral verification complete |
 
 ### Carry-Forward to Tranche 17
 1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T16)
