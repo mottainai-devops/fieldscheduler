@@ -461,27 +461,29 @@ function CustomerOverrideDialog({
 }) {
   const utils = trpc.useUtils();
   const [addCustomerId, setAddCustomerId] = useState("");
+  // T22 UI 3a: reason/notes for override actions (wires to server reason field)
+  const [overrideReason, setOverrideReason] = useState("");
   const { data: resolvedCustomers = [], isLoading } = trpc.calendarOverrides.getResolvedCustomersForInstance.useQuery(
     { instanceId },
     { enabled: open }
   );
   const { data: allCustomers = [] } = trpc.fieldWorker.getCustomers.useQuery();
   const setOverrideMutation = trpc.calendarOverrides.setInstanceCustomerOverride.useMutation({
-    onSuccess: () => { utils.calendarOverrides.getResolvedCustomersForInstance.invalidate(); toast.success("Customer override saved."); },
+    onSuccess: () => { utils.calendarOverrides.getResolvedCustomersForInstance.invalidate(); toast.success("Customer override saved."); setOverrideReason(""); },
     onError: (e) => toast.error(e.message),
   });
   const removeOverrideMutation = trpc.calendarOverrides.removeInstanceCustomerOverride.useMutation({
-    onSuccess: () => { utils.calendarOverrides.getResolvedCustomersForInstance.invalidate(); toast.success("Override removed."); },
+    onSuccess: () => { utils.calendarOverrides.getResolvedCustomersForInstance.invalidate(); toast.success("Override removed."); setOverrideReason(""); },
     onError: (e) => toast.error(e.message),
   });
 
   const handleExclude = (customerId: number) => {
-    setOverrideMutation.mutate({ instanceId, customerId, overrideType: "excluded" });
+    setOverrideMutation.mutate({ instanceId, customerId, overrideType: "excluded", reason: overrideReason || undefined });
   };
   const handleAdd = () => {
     const id = parseInt(addCustomerId);
     if (!id) return;
-    setOverrideMutation.mutate({ instanceId, customerId: id, overrideType: "added" });
+    setOverrideMutation.mutate({ instanceId, customerId: id, overrideType: "added", reason: overrideReason || undefined });
     setAddCustomerId("");
   };
 
@@ -518,6 +520,7 @@ function CustomerOverrideDialog({
                     ? removeOverrideMutation.mutate({ instanceId, customerId: rc.customerId })
                     : handleExclude(rc.customerId)
                   }
+                  // reason is captured from overrideReason state and passed in handleExclude
                 >
                   <UserMinus className="w-3 h-3 mr-1" />
                   {rc.overrideType === 'added' ? 'Remove' : 'Exclude'}
@@ -526,6 +529,17 @@ function CustomerOverrideDialog({
             ))}
           </div>
         )}
+        {/* T22 UI 3a: Reason / notes for override actions */}
+        <div className="border-t border-slate-700 pt-3">
+          <Label className="text-slate-400 text-xs">Reason (optional)</Label>
+          <Textarea
+            value={overrideReason}
+            onChange={(e) => setOverrideReason(e.target.value)}
+            placeholder="e.g. Customer requested skip, access issue..."
+            className="bg-slate-900 border-slate-700 text-white text-sm mt-1 resize-none"
+            rows={2}
+          />
+        </div>
         {/* Add customer to this occurrence */}
         <div className="border-t border-slate-700 pt-3">
           <p className="text-xs text-slate-400 mb-2">Add a customer to this occurrence only:</p>
@@ -708,6 +722,8 @@ export default function RouteSchedules() {
   const [archiveNewRrule, setArchiveNewRrule] = useState("");
   const [archiveRrulePreset, setArchiveRrulePreset] = useState("");
   const [archiveReason, setArchiveReason] = useState("");
+  // T22 UI 3b: optional new title for the recreated schedule
+  const [archiveNewTitle, setArchiveNewTitle] = useState("");
   const archiveAndRecreateMutation = trpc.calendarOverrides.archiveAndRecreate.useMutation({
     onSuccess: () => {
       utils.calendar.listSchedules.invalidate();
@@ -716,6 +732,7 @@ export default function RouteSchedules() {
       setArchiveNewRrule("");
       setArchiveRrulePreset("");
       setArchiveReason("");
+      setArchiveNewTitle("");
       toast.success("Schedule updated going forward. Old schedule archived.");
     },
     onError: (e) => toast.error(e.message),
@@ -871,6 +888,7 @@ export default function RouteSchedules() {
                                 setArchiveNewRrule("");
                                 setArchiveRrulePreset("");
                                 setArchiveReason("");
+                                setArchiveNewTitle("");
                               }}
                             >
                               <Archive className="w-4 h-4" />
@@ -1093,6 +1111,16 @@ export default function RouteSchedules() {
                   />
                 )}
               </div>
+              {/* T22 UI 3b: optional new title for the recreated schedule */}
+              <div>
+                <Label className="text-slate-300">New title <span className="text-slate-500">(optional — leave blank to keep current)</span></Label>
+                <Input
+                  value={archiveNewTitle}
+                  onChange={(e) => setArchiveNewTitle(e.target.value)}
+                  placeholder={archiveDialog?.title ?? ""}
+                  className="bg-slate-900 border-slate-700 text-white mt-1"
+                />
+              </div>
               <div>
                 <Label className="text-slate-300">Reason (optional)</Label>
                 <Textarea
@@ -1114,6 +1142,7 @@ export default function RouteSchedules() {
                   archiveAndRecreateMutation.mutate({
                     scheduleId: archiveDialog.scheduleId,
                     newRrule: archiveNewRrule,
+                    newTitle: archiveNewTitle || undefined,
                     reason: archiveReason || undefined,
                   });
                 }}

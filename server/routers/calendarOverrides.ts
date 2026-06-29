@@ -72,19 +72,17 @@ export const calendarOverridesRouter = router({
    * overrideType = 'reordered' changes stop_order for that occurrence.
    */
   // T14 Item 3: adminProcedure — customer override management is admin-tier
+  // T22: removed stopOrder (no DB column — schema cruft), removed actorId/actorName (derived from ctx)
   setInstanceCustomerOverride: adminProcedure
     .input(
       z.object({
         instanceId: z.number().int().positive(),
         customerId: z.number().int().positive(),
         overrideType: z.enum(["excluded", "added", "reordered"]),
-        stopOrder: z.number().int().optional(),
         reason: z.string().optional(),
-        actorId: z.number().int().optional(),
-        actorName: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
@@ -101,6 +99,9 @@ export const calendarOverridesRouter = router({
         .limit(1);
 
       const previousState = existing.length > 0 ? existing[0] : null;
+      // T22: actor identity derived from authenticated context
+      const actorId = ctx.user.id;
+      const actorName = ctx.user.name ?? null;
 
       if (existing.length > 0) {
         await db
@@ -119,8 +120,8 @@ export const calendarOverridesRouter = router({
           previousState,
           newState,
           actorType: "admin",
-          actorId: input.actorId,
-          actorName: input.actorName,
+          actorId,
+          actorName,
           reason: input.reason,
         });
         return { id: existing[0].id, updated: true };
@@ -131,7 +132,7 @@ export const calendarOverridesRouter = router({
         customerId: input.customerId,
         overrideType: input.overrideType as any,
         note: input.reason ?? null,
-        createdBy: input.actorId ?? null,
+        createdBy: actorId,
       });
       const newId = (result as any).insertId as number;
 
@@ -142,8 +143,8 @@ export const calendarOverridesRouter = router({
         previousState: null,
         newState: { instanceId: input.instanceId, customerId: input.customerId, overrideType: input.overrideType },
         actorType: "admin",
-        actorId: input.actorId,
-        actorName: input.actorName,
+        actorId,
+        actorName,
         reason: input.reason,
       });
 
@@ -152,16 +153,15 @@ export const calendarOverridesRouter = router({
 
   /** Remove a per-instance customer override (undo an exclude/add) */
   // T14 Item 3: adminProcedure — customer override management is admin-tier
+  // T22: removed actorId/actorName from Zod (derived from ctx)
   removeInstanceCustomerOverride: adminProcedure
     .input(
       z.object({
         instanceId: z.number().int().positive(),
         customerId: z.number().int().positive(),
-        actorId: z.number().int().optional(),
-        actorName: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
@@ -182,6 +182,7 @@ export const calendarOverridesRouter = router({
         .delete(routeInstanceCustomerOverrides)
         .where(eq(routeInstanceCustomerOverrides.id, existing[0].id));
 
+      // T22: actor identity derived from authenticated context
       await writeAudit(db, {
         entityType: "instance_override",
         entityId: existing[0].id,
@@ -189,8 +190,8 @@ export const calendarOverridesRouter = router({
         previousState: existing[0],
         newState: null,
         actorType: "admin",
-        actorId: input.actorId,
-        actorName: input.actorName,
+        actorId: ctx.user.id,
+        actorName: ctx.user.name ?? null,
         reason: "Override removed",
       });
 
@@ -409,6 +410,7 @@ export const calendarOverridesRouter = router({
    *   3. Audit both.
    */
   // T14 Item 3: adminProcedure — archive and recreate is admin-tier
+  // T22: removed actorId/actorName from Zod (derived from ctx); newTitle kept (UI wired in T22)
   archiveAndRecreate: adminProcedure
     .input(
       z.object({
@@ -416,11 +418,9 @@ export const calendarOverridesRouter = router({
         newRrule: z.string().min(1),
         newTitle: z.string().optional(),
         reason: z.string().optional(),
-        actorId: z.number().int().optional(),
-        actorName: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
@@ -487,7 +487,9 @@ export const calendarOverridesRouter = router({
         }
       });
 
-      // Audit
+      // Audit — T22: actor identity derived from authenticated context
+      const actorId = ctx.user.id;
+      const actorName = ctx.user.name ?? null;
       await writeAudit(db, {
         entityType: "schedule",
         entityId: input.scheduleId,
@@ -495,8 +497,8 @@ export const calendarOverridesRouter = router({
         previousState: original,
         newState: { ...original, status: "archived", dtend: yesterday },
         actorType: "admin",
-        actorId: input.actorId,
-        actorName: input.actorName,
+        actorId,
+        actorName,
         reason: input.reason ?? "Archive-and-recreate: RRULE changed going forward",
       });
 
@@ -507,8 +509,8 @@ export const calendarOverridesRouter = router({
         previousState: null,
         newState: { rrule: input.newRrule, dtstart: today, archivedFromScheduleId: input.scheduleId },
         actorType: "admin",
-        actorId: input.actorId,
-        actorName: input.actorName,
+        actorId,
+        actorName,
         reason: input.reason ?? `Created from archived schedule ${input.scheduleId}`,
       });
 
@@ -645,16 +647,15 @@ export const calendarOverridesRouter = router({
 
   /** Accept or decline a handoff request */
   // T14 Item 3: adminProcedure — handoff request resolution is admin-tier
+  // T22: removed actorId/actorName from Zod (derived from ctx)
   resolveHandoffRequest: adminProcedure
     .input(
       z.object({
         handoffRequestId: z.number().int().positive(),
         resolution: z.enum(["accepted", "declined"]),
-        actorId: z.number().int().optional(),
-        actorName: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
@@ -674,6 +675,7 @@ export const calendarOverridesRouter = router({
         .set({ status: input.resolution })
         .where(eq(handoffRequests.id, input.handoffRequestId));
 
+      // T22: actor identity derived from authenticated context
       await writeAudit(db, {
         entityType: "schedule",
         entityId: previous.scheduleId ?? previous.instanceId ?? 0,
@@ -681,8 +683,8 @@ export const calendarOverridesRouter = router({
         previousState: previous,
         newState: { ...previous, status: input.resolution },
         actorType: "admin",
-        actorId: input.actorId,
-        actorName: input.actorName,
+        actorId: ctx.user.id,
+        actorName: ctx.user.name ?? null,
         reason: `Handoff ${input.resolution}`,
       });
 
