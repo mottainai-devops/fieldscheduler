@@ -2313,10 +2313,24 @@ Applied `@drift-suppress` marker. Photo evidence is operationally required per o
 - Handler: all notification messages (worker, admin, customer email) now use the persisted `noticeNumber` from the DB result
 - `getAbatementNoticeById`: changed `||` to `??` for display fallback (null-safe; fires only for historical rows before backfill migration)
 
-**Backfill migration (run on production after deploy):**
+**Backfill migration status: MIGRATION PREPARED, EXECUTION PENDING OWNER APPROVAL (Rule #47)**
+
+The sandbox DB (`fedbcvtajnmsfbjdip7js8`) does not have the compliance tables — it is the dev DB. Production database requires separate credentials. The migration cannot be verified or run from the sandbox.
+
+Sequencing:
+1. Deploy T23 code fix (`0fcf2cf3`) to production (new notices auto-populate `noticeNumber` going forward)
+2. Owner approves and runs the one-time backfill on production:
 ```sql
 UPDATE abatementNotices SET noticeNumber = CONCAT('ABT-', id) WHERE noticeNumber IS NULL;
 ```
+3. Verify post-backfill (expected: `still_null = 0`):
+```sql
+SELECT COUNT(*) AS total, COUNT(noticeNumber) AS populated,
+       COUNT(*) - COUNT(noticeNumber) AS still_null
+FROM abatementNotices;
+```
+
+This is a T24 prerequisite: backfill should be confirmed complete before the photo evidence feature ships.
 
 **Behavioral verification:** 11/11 tests pass (`server/compliance.noticeNumber.test.ts`)
 
