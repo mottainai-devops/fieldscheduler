@@ -15,7 +15,8 @@
  * DO NOT upgrade these to protectedProcedure without first implementing
  * Bearer token support in the tRPC middleware.
  */
-import { publicProcedure, router, driftLogger } from "../_core/trpc";
+// T20: workerProcedure added — Bearer token authentication for mobile write mutations
+import { publicProcedure, workerProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
@@ -213,14 +214,17 @@ export const workerAuthRouter = router({
     }),
 
   // Create building linkage request
-  createLinkageRequest: publicProcedure
+  // T20: workerProcedure — requestedBy derived from ctx.workerId (no longer client-sent)
+  createLinkageRequest: workerProcedure
     .input(z.object({
       mainCustomerId: z.number(),
       annexCustomerId: z.number(),
-      requestedBy: z.number(),
     }))
-    .mutation(async ({ input }) => {
-      return await buildingIdLinkageDb.createLinkageRequest(input);
+    .mutation(async ({ input, ctx }) => {
+      return await buildingIdLinkageDb.createLinkageRequest({
+        ...input,
+        requestedBy: ctx.workerId,
+      });
     }),
 
   // Get all violation types
@@ -242,22 +246,25 @@ export const workerAuthRouter = router({
 
   // Create violation report
   // T16 Item 5: driftLogger applied
-  createViolation: publicProcedure
+  // T20: workerProcedure — reportedBy derived from ctx.workerId (no longer client-sent)
+  createViolation: workerProcedure
     .use(driftLogger('workerAuth.createViolation', {
       shape: {
-        customerId: true, violationTypeId: true, reportedBy: true,
+        customerId: true, violationTypeId: true,
         notes: true, evidenceUrls: true,
       }
     }))
     .input(z.object({
       customerId: z.number(),
       violationTypeId: z.number(),
-      reportedBy: z.number().optional(),
       notes: z.string().optional(),
       evidenceUrls: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      return await complianceDb.createViolation(input);
+    .mutation(async ({ input, ctx }) => {
+      return await complianceDb.createViolation({
+        ...input,
+        reportedBy: ctx.workerId,
+      });
     }),
 
   // Get customer payment status
@@ -471,12 +478,12 @@ export const workerAuthRouter = router({
 
   // Set the supervisor's preferred webhook type (payt or monthly)
   // Once set, only admin can change it via the Workers management page
-  setWebhookPreference: publicProcedure
+  // T20: workerProcedure — workerId derived from ctx.workerId (no longer client-sent)
+  setWebhookPreference: workerProcedure
     .input(z.object({
-      workerId: z.number(),
       webhookType: z.enum(["payt", "monthly"]),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { getDb } = await import("../db");
       const { workers } = await import("../../drizzle/schema");
       const { eq } = await import("drizzle-orm");
@@ -484,13 +491,14 @@ export const workerAuthRouter = router({
       if (!db) throw new Error("Database not available");
       await db.update(workers)
         .set({ preferredWebhookType: input.webhookType } as any)
-        .where(eq(workers.id, input.workerId));
+        .where(eq(workers.id, ctx.workerId));
       return { success: true, preferredWebhookType: input.webhookType };
     }),
 
   // Mark a customer as picked up (supervisor action)
   // T16 Item 5: driftLogger applied
-  markCustomerPicked: publicProcedure
+  // T20: workerProcedure — authentication enforced via Bearer token
+  markCustomerPicked: workerProcedure
     .use(driftLogger('markCustomerPicked', {
       shape: { routeId: true, customerId: true, scheduleId: true }
     }))
@@ -569,7 +577,8 @@ export const workerAuthRouter = router({
     }),
 
   // Mark a customer stop as completed
-  markCustomerComplete: publicProcedure
+  // T20: workerProcedure — authentication enforced via Bearer token
+  markCustomerComplete: workerProcedure
     .input(z.object({ routeId: z.number(), customerId: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("../db");
@@ -585,7 +594,8 @@ export const workerAuthRouter = router({
     }),
 
   // Mark a customer stop as incomplete (undo)
-  markCustomerIncomplete: publicProcedure
+  // T20: workerProcedure — authentication enforced via Bearer token
+  markCustomerIncomplete: workerProcedure
     .input(z.object({ routeId: z.number(), customerId: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("../db");
@@ -601,14 +611,16 @@ export const workerAuthRouter = router({
     }),
 
   // Complete an entire route
-  completeRoute: publicProcedure
+  // T20: workerProcedure — authentication enforced via Bearer token
+  completeRoute: workerProcedure
     .input(z.object({ routeId: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.updateRouteStatus(input.routeId, "completed");
     }),
 
   // Start a route (set to in_progress)
-  startRoute: publicProcedure
+  // T20: workerProcedure — authentication enforced via Bearer token
+  startRoute: workerProcedure
     .input(z.object({ routeId: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.updateRouteStatus(input.routeId, "in_progress");
@@ -623,11 +635,12 @@ export const workerAuthRouter = router({
   // The skip is recorded on routeScheduleCustomers (schedule-level) and
   // optionally on routeInstanceCustomerOverrides (occurrence-level).
   // T16 Item 5: driftLogger applied
-  skipCustomer: publicProcedure
+  // T20: workerProcedure — workerId derived from ctx.workerId (no longer client-sent)
+  skipCustomer: workerProcedure
     .use(driftLogger('skipCustomer', {
       shape: {
         scheduleId: true, routeId: true, customerId: true,
-        skipReason: true, skipNote: true, workerId: true,
+        skipReason: true, skipNote: true,
       }
     }))
     .input(z.object({
@@ -645,9 +658,9 @@ export const workerAuthRouter = router({
         'other',                // Other (free text required)
       ]),
       skipNote: z.string().optional(),
-      workerId: z.number().int().positive(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const workerId = ctx.workerId; // T20: derived from Bearer token, not client input
       const { getDb } = await import("../db");
       const { routeScheduleCustomers } = await import("../../drizzle/schema");
       const { eq, and } = await import("drizzle-orm");
@@ -706,7 +719,7 @@ export const workerAuthRouter = router({
             await notificationDb.createAdminNotification({
               type: 'warning',
               title: 'Customer Permanently Removed from Schedule',
-              message: `Customer #${input.customerId} was permanently removed from schedule #${input.scheduleId} by worker #${input.workerId}. Reason: ${input.skipReason === 'permanent_moved' ? 'Customer moved out' : 'Business closed'}. ${input.skipNote ? 'Note: ' + input.skipNote : ''}`,
+              message: `Customer #${input.customerId} was permanently removed from schedule #${input.scheduleId} by worker #${workerId}. Reason: ${input.skipReason === 'permanent_moved' ? 'Customer moved out' : 'Business closed'}. ${input.skipNote ? 'Note: ' + input.skipNote : ''}`,
               relatedId: input.customerId,
             });
           } catch { /* non-fatal */ }
@@ -756,7 +769,7 @@ export const workerAuthRouter = router({
               await notificationDb.createAdminNotification({
                 type: 'error',
                 title: 'Customer Auto-Paused (3 Consecutive Skips)',
-                message: `Customer #${input.customerId} on schedule #${input.scheduleId} has been skipped 3 consecutive times and has been auto-paused. Urgent review required. Last reason: ${input.skipReason}. Worker: #${input.workerId}.`,
+                message: `Customer #${input.customerId} on schedule #${input.scheduleId} has been skipped 3 consecutive times and has been auto-paused. Urgent review required. Last reason: ${input.skipReason}. Worker: #${workerId}.`,
                 relatedId: input.customerId,
               });
             } catch { /* non-fatal */ }
@@ -777,9 +790,9 @@ export const workerAuthRouter = router({
           await db.insert(customerVisitNotes).values({
             customerId: input.customerId,
             routeId: input.routeId,
-            workerId: input.workerId,
+            workerId: workerId,
             authorType: 'worker',
-            authorName: `Worker #${input.workerId}`,
+            authorName: `Worker #${workerId}`,
             noteText: `SKIP — Reason: ${input.skipReason}${input.skipNote ? '. Note: ' + input.skipNote : ''}`,
             visitDate: new Date().toISOString().slice(0, 10),
           } as any);
@@ -812,11 +825,11 @@ export const workerAuthRouter = router({
       return await notesDb.getCustomerNotesWithReplies(input.customerId);
     }),
 
-  addCustomerNote: publicProcedure
+  // T20: workerProcedure — workerId derived from ctx.workerId (no longer client-sent)
+  addCustomerNote: workerProcedure
     .input(z.object({
       customerId: z.number(),
       routeId: z.number().optional().nullable(),
-      workerId: z.number().optional().nullable(),
       authorType: z.enum(['worker', 'admin']).default('worker'),
       authorName: z.string().optional(),
       noteText: z.string().optional(),
@@ -824,13 +837,14 @@ export const workerAuthRouter = router({
       visitDate: z.string().optional(),
       parentNoteId: z.number().optional().nullable(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const notesDb = await import('../notesDb');
-      await notesDb.addCustomerNote(input);
+      await notesDb.addCustomerNote({ ...input, workerId: ctx.workerId });
       return { success: true };
     }),
 
-  deleteCustomerNote: publicProcedure
+  // T20: workerProcedure — no identity check existed before; now authenticated
+  deleteCustomerNote: workerProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const notesDb = await import('../notesDb');

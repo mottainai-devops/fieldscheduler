@@ -1,4 +1,5 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
+import * as fieldWorkerDb from '../fieldWorkerDb';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -100,6 +101,122 @@ export const fieldManagerProcedure = t.procedure.use(
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
     return next({ ctx: { ...ctx, user: ctx.user } });
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T20 — workerProcedure: Bearer token authentication for mobile app procedures
+//
+// The Flutter fieldscheduler-mobile app sends `Authorization: Bearer <surveyToken>`
+// on every request (see api_service.dart _getHeaders()). This middleware reads that
+// token, validates it against the Survey App /users/me endpoint, looks up the
+// corresponding shadow worker row, and sets ctx.workerId + ctx.workerSurveyAppUserId.
+//
+// Token cache (in-process Map, 5-minute TTL):
+//   - Key: raw token string
+//   - Value: { workerId: number; surveyAppUserId: string; expiresAt: number }
+//   - On cache hit: check expiresAt. If expired, re-validate.
+//   - On Survey App 401: do NOT cache. Propagate UNAUTHORIZED to caller.
+//   - Process-local only. Each instance caches independently (fine for current scale).
+//   - No explicit logout invalidation. 5-minute window is acceptable risk.
+//
+// Owner decision (T20 Decision 3): cache approved with these exact semantics.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SURVEY_API = process.env.SURVEY_API_URL || 'https://upwork.kowope.xyz';
+const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+type TokenCacheEntry = {
+  workerId: number;
+  surveyAppUserId: string;
+  expiresAt: number;
+};
+
+const tokenCache = new Map<string, TokenCacheEntry>();
+
+async function resolveWorkerFromToken(token: string): Promise<{ workerId: number; surveyAppUserId: string }> {
+  const now = Date.now();
+
+  // Cache hit
+  const cached = tokenCache.get(token);
+  if (cached && now < cached.expiresAt) {
+    console.log('[token cache] HIT — workerId:', cached.workerId);
+    return { workerId: cached.workerId, surveyAppUserId: cached.surveyAppUserId };
+  }
+
+  if (cached) {
+    console.log('[token cache] MISS — TTL expired for workerId:', cached.workerId);
+  } else {
+    console.log('[token cache] MISS — token not in cache');
+  }
+
+  // Validate against Survey App
+  let surveyUser: { id: string | number } | null = null;
+  try {
+    const res = await fetch(`${SURVEY_API}/users/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.status === 401) {
+      // Do NOT cache rejections (Decision 3e)
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Survey App token rejected' });
+    }
+    if (!res.ok) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: `Survey App /users/me returned ${res.status}` });
+    }
+    const data = await res.json() as any;
+    surveyUser = data?.user ?? data;
+  } catch (err: any) {
+    if (err instanceof TRPCError) throw err;
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Survey App unreachable during token validation' });
+  }
+
+  if (!surveyUser?.id) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Survey App /users/me returned no user id' });
+  }
+
+  const surveyAppUserId = String(surveyUser.id);
+  const worker = await fieldWorkerDb.getWorkerBySurveyAppUserId(surveyAppUserId);
+  if (!worker) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: `No shadow worker found for surveyAppUserId ${surveyAppUserId}` });
+  }
+
+  // Store in cache
+  tokenCache.set(token, { workerId: worker.id, surveyAppUserId, expiresAt: now + TOKEN_CACHE_TTL_MS });
+  console.log('[token cache] STORE — workerId:', worker.id, 'expires in 5m');
+
+  return { workerId: worker.id, surveyAppUserId };
+}
+
+/**
+ * workerProcedure — T20 mobile app authentication tier.
+ *
+ * Validates the Survey App Bearer token from the Authorization header.
+ * Sets ctx.workerId and ctx.workerSurveyAppUserId for use in handlers.
+ * Replaces publicProcedure for all procedures in SECURITY_DEBT.md.
+ *
+ * Mobile client: fieldscheduler-mobile already sends Authorization: Bearer <token>
+ * on every request (no mobile rebuild required).
+ */
+export const workerProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    const authHeader = ctx.req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Missing or invalid Authorization header' });
+    }
+    const token = authHeader.slice(7).trim();
+    if (!token) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Empty Bearer token' });
+    }
+    const { workerId, surveyAppUserId } = await resolveWorkerFromToken(token);
+    return next({
+      ctx: {
+        ...ctx,
+        workerId,
+        workerSurveyAppUserId: surveyAppUserId,
+      },
+    });
   }),
 );
 
