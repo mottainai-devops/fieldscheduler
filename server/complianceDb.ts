@@ -253,7 +253,8 @@ export async function getAbatementNoticeById(noticeId: number) {
   // Format for PDF generation
   return {
     id: notice.id,
-    noticeNumber: notice.noticeNumber || `ABT-${notice.id}`,
+    // T23: noticeNumber is always persisted at insert time (Rule #56) — no fallback needed
+    noticeNumber: notice.noticeNumber ?? `ABT-${notice.id}`,
     customerName: notice.customer?.name || 'Unknown',
     customerAddress: notice.customer?.address || 'Unknown',
     issueDate: notice.issuedDate,
@@ -271,15 +272,25 @@ export async function getAbatementNoticeById(noticeId: number) {
 export async function createAbatementNotice(data: {
   customerId: number;
   violationId?: number;
-  noticeNumber?: string;
+  // T23: noticeNumber removed from input — server generates ABT-{id} at insert time
   dueDate?: Date;
   notes?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  const result = await db.insert(abatementNotices).values(data);
-  return result;
+
+  // Insert without noticeNumber — column starts null
+  const insertResult = await db.insert(abatementNotices).values(data);
+  const insertId = (insertResult as any).insertId as number;
+
+  // Immediately write back the canonical ABT-{id} identifier (Rule #56)
+  const noticeNumber = `ABT-${insertId}`;
+  await db
+    .update(abatementNotices)
+    .set({ noticeNumber })
+    .where(eq(abatementNotices.id, insertId));
+
+  return { insertId, noticeNumber };
 }
 
 export async function getAbatementNoticesByCustomer(customerId: number) {

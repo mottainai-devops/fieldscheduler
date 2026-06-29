@@ -122,6 +122,12 @@ export const complianceRouter = router({
       violationTypeId: z.number(),
       reportedBy: z.number().optional(),
       notes: z.string().optional(),
+      // @drift-suppress: photo evidence capability operationally required per owner.
+      // UI wiring + S3 integration scoped as dedicated tranche (T24 candidate).
+      // DB column and Zod field remain as scaffolding pending the wiring work.
+      // NOTE: field name suggests multiple URLs but current type is z.string().
+      // T24 photo-evidence work should migrate to z.array(z.string()).optional()
+      // or document a clear single-URL-or-JSON-array convention.
       evidenceUrls: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
@@ -247,17 +253,20 @@ export const complianceRouter = router({
     .input(z.object({
       customerId: z.number(),
       violationId: z.number().optional(),
-      noticeNumber: z.string().optional(),
+      // T23: noticeNumber removed from client input — server generates ABT-{id}
+      // at insert time and persists it (Rule #56, Pattern #49).
       dueDate: z.date().optional(),
       notes: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
-      const result = await complianceDb.createAbatementNotice(input);
+      // T23: createAbatementNotice now returns { insertId, noticeNumber } where
+      // noticeNumber is the persisted ABT-{id} value written back at insert time.
+      const { noticeNumber } = await complianceDb.createAbatementNotice(input);
 
       setImmediate(async () => {
         try {
           const customer = await getCustomerWithEmail(input.customerId);
-          const noticeNumber = input.noticeNumber || `ABT-${Date.now()}`;
+          // T23: use persisted noticeNumber from DB (not a generated timestamp)
           let violationTypeName = 'Compliance Violation';
 
           if (input.violationId) {
@@ -302,7 +311,7 @@ export const complianceRouter = router({
         }
       });
 
-      return result;
+      return { noticeNumber };
     }),
 
   /**
