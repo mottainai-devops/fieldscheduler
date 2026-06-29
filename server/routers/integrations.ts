@@ -130,26 +130,23 @@ export const integrationsRouter = router({
   // Update a sync job
   // T14 Item 3: adminProcedure — sync job management is admin-tier
   // T16 Item 5: driftLogger applied
+  // T19 Item 2a: toggle-only edits supported. Full schedule reconfiguration via
+  //   createSyncJob (delete + recreate). scheduleType, scheduleTime, scheduleDay
+  //   removed from this schema deliberately (see ENGAGEMENT_RECORD T19).
   updateSyncJob: adminProcedure
     .use(driftLogger('updateSyncJob', {
       shape: {
-        jobId: true, enabled: true, scheduleType: true, scheduleTime: true, scheduleDay: true,
+        jobId: true, enabled: true,
       }
     }))
     .input(z.object({
       jobId: z.number(),
       enabled: z.boolean().optional(),
-      scheduleType: z.enum(['hourly', 'daily', 'weekly', 'monthly']).optional(),
-      scheduleTime: z.string().optional(),
-      scheduleDay: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       try {
         await scheduler.updateSyncJob(input.jobId, {
           enabled: input.enabled,
-          scheduleType: input.scheduleType,
-          scheduleTime: input.scheduleTime,
-          scheduleDay: input.scheduleDay,
         });
         return { success: true };
       } catch (error: any) {
