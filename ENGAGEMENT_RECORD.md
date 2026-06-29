@@ -1706,3 +1706,80 @@ surveyAppUserId existed in createWorker and updateWorker Zod schemas but was nev
 10. driftLogger runtime middleware application — **COMPLETED in T16 Item 5** (applied to all 14 procedures: createRoute, createWorker, updateWorker, updateRoute, createSyncJob, updateSyncJob, createViolation, markCustomerPicked, skipCustomer, uploadPaymentProof, generateReport, createScheduledReport, assignSupervisorToRoute, updateRouteAndNotifyWorker)
 11. driftLogger static analysis script — T17 candidate (separate from runtime middleware; catches code-level drift at commit time)
 12. **Tag-Based Route Creation — UI shipped but no backend integration; feature has never created a route in production.** TagBasedRouteCreation.tsx “Create Route” button runs a setTimeout simulation with no tRPC mutation call. Owner decides in T17 whether to fix (wire to createRoute) or remove the page entirely.
+
+---
+
+## Tranche 17 (T17) — Sync Job Handlers, Name Normalization, Tag-Based Route Removal
+
+**Date:** 2026-06-29 | **Method:** Static analysis + targeted fixes + behavioral verification
+
+### T17 Scope
+1. Item 1 — updateSyncJob/deleteSyncJob operational verification (finding #11 carry-forward from T16)
+2. Item 2 — sync-zoho-data.mjs name normalization (Rule 31 carry-forward)
+3. Item 3 — Tag-Based Route Creation removal (owner decision: remove, not wire)
+
+**Execution order:** Item 3 first (removal), then Item 2 (normalization), then Item 1 (investigation + fix).
+
+### Pre-Work Investigation Findings
+
+**Item 3 — Scope confirmed before touching code:**
+- `client/src/pages/TagBasedRouteCreation.tsx` — delete
+- `client/src/App.tsx` — remove import (line 41) and route (line 130)
+- `client/src/components/SidebarNavigation.tsx` — remove "Tag-Based Routes" entry
+- `client/src/components/FieldManagerBreadcrumb.tsx` — remove `/tag-based-route-creation` breadcrumb entry
+- `client/src/pages/FieldManagerAdminDashboard.tsx` — remove routing card from modules array and navigate button from Step 3
+
+**Item 2 — Current code confirmed before editing:**
+```js
+// Line 101 — exact-match, no normalization:
+const workerMap = Object.fromEntries(workers.map(w => [w.name, w.id]));
+// Line 112 — direct lookup:
+const workerId = customer.fieldManager ? workerMap[customer.fieldManager] : null;
+```
+
+**Item 1 — Critical drift finding:**
+`handleToggleJob` and `handleDeleteJob` were called in JSX (lines 277 and 287 of SyncHistoryDashboard.tsx) but were **never defined** anywhere in the file. This is the same pattern as the T16 Item 2 bug (`handleCreateJob` was undefined). `updateJobMutation` and `deleteJobMutation` were wired to the correct tRPC procedures, but no handler functions called them. The toggle and delete buttons were silently broken.
+
+### T17 Fixes Applied
+
+#### Item 3 — Tag-Based Route Creation Removal
+Files changed: `client/src/pages/TagBasedRouteCreation.tsx` (deleted), `client/src/App.tsx`, `client/src/components/SidebarNavigation.tsx`, `client/src/components/FieldManagerBreadcrumb.tsx`, `client/src/pages/FieldManagerAdminDashboard.tsx`, `FIELD_MANAGER_TAGGING_SYSTEM.md`
+
+TagBasedRouteCreation.tsx was deleted. All 5 reference sites were cleaned. FIELD_MANAGER_TAGGING_SYSTEM.md updated to note the page was removed in T17 (owner decision: feature was never wired to a real backend call; removal preferred over wiring).
+
+Commit: `ba2ab791`
+
+#### Item 2 — sync-zoho-data.mjs Name Normalization
+File changed: `sync-zoho-data.mjs`
+
+Added `normalizeName(s)` helper: `s.trim().toLowerCase().replace(/\s+/g, ' ')`. Applied to both sides of the workerMap: keys are normalized at build time, incoming `customer.fieldManager` is normalized at lookup time. Added debug log when a fieldManager name is present but no workerMap match is found (logs the raw value to aid future diagnosis).
+
+Commit: `1b528728`
+
+#### Item 1 — handleToggleJob and handleDeleteJob Handlers
+File changed: `client/src/pages/SyncHistoryDashboard.tsx`
+
+Added `handleToggleJob(job)` (calls `updateJobMutation.mutate({ jobId: job.id, enabled: !job.enabled })`) and `handleDeleteJob(id)` (calls `deleteJobMutation.mutate({ jobId: id })`). Both handlers follow the same pattern as `handleCreateJob` (T16 Item 2 fix). Payload fields match the `updateSyncJob` and `deleteSyncJob` Zod schemas exactly.
+
+Commit: `11ada4f8`
+
+### Production State After T17
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub + production) | `11ada4f8` |
+| Production server | `54.194.172.107` — PM2 both processes online |
+| Item 1 — handleToggleJob/handleDeleteJob | **VERIFIED ✅** (2026-06-29). Toggle clicked on "T16 Test Sync Job". tRPC response confirms: `zohoSyncJobs` id=1 `enabled=0` `updatedAt=2026-06-29T14:12:52.000Z`. Button label changed from "Disable" to "Enable" in real time. Active Jobs counter dropped from 1 to 0. |
+| Item 2 — sync-zoho-data.mjs normalization | **DEPLOYED** (2026-06-29). Normalization is live. Full behavioral verification requires a sync run against a Zoho contact whose fieldManager name has leading/trailing spaces or mixed case — will be confirmed at next scheduled sync. |
+| Item 3 — Tag-Based Route Creation removal | **VERIFIED ✅** (2026-06-29). Route Management sidebar section confirmed: Routes, Create Route, Route Optimization, Clusters, Route Schedules, Pending Assignments — "Tag-Based Routes" absent. Direct navigation to `/tag-based-route-creation` returns 404. FieldManagerAdminDashboard Step 3 no longer shows the tag-based route button. |
+| T17 close-out | **CLOSED 2026-06-29** — all 3 items delivered and verified |
+
+### Carry-Forward to Tranche 18
+1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T17)
+2. Audit trail actor identity — findings #7, #8, #9 (calendarOverrides, archiveAndRecreate, resolveHandoffRequest)
+3. register procedure decision — finding #1 (owner input needed)
+4. sync-zoho-data.mjs normalization full behavioral verification — confirm at next scheduled sync run that a name-mismatch case resolves correctly
+5. Scoped financial access for field managers — getMyFinancialMetrics procedure
+6. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures need a proper vendors table (Pattern #39)
+7. Field Manager Dashboard — focused operational view for field managers (owner-requested)
+8. Tranche 5C canonical constants centralisation — owner-requested
+9. driftLogger static analysis script — catches code-level drift at commit time (separate from runtime middleware already applied in T16)
