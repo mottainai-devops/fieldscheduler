@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, MapPin, FileText, DollarSign, AlertTriangle, Navigation, Link2 } from "lucide-react";
 import { useRoute, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -31,6 +32,8 @@ export default function WorkerMobileCustomerDetail() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [paymentFile, setPaymentFile] = useState<File | null>(null);
   const [paymentNotes, setPaymentNotes] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
 
   const { data: customer } = trpc.workerAuth.getCustomerById.useQuery(
     { customerId: customerId! },
@@ -109,6 +112,8 @@ export default function WorkerMobileCustomerDetail() {
       setPaymentUploadDialogOpen(false);
       setPaymentFile(null);
       setPaymentNotes("");
+      setPaymentAmount("");
+      setPaymentMethod("");
       setSelectedInvoiceId(null);
     },
     onError: (error) => {
@@ -150,6 +155,8 @@ export default function WorkerMobileCustomerDetail() {
           fileName: paymentFile.name,
           fileType: paymentFile.type,
           notes: paymentNotes || undefined,
+          amount: paymentAmount || undefined,
+          paymentMethod: paymentMethod || undefined,
         });
       };
       reader.onerror = () => {
@@ -727,9 +734,39 @@ export default function WorkerMobileCustomerDetail() {
               )}
             </div>
             
+            {/* Amount */}
+            <div>
+              <Label className="text-white">Amount Paid <span className="text-slate-400 font-normal">(Optional)</span></Label>
+              <Input
+                type="number"
+                placeholder="e.g. 5000"
+                value={paymentAmount}
+                onChange={(e) => setPaymentAmount(e.target.value)}
+                className="bg-slate-700 border-slate-600 text-white mt-1"
+              />
+            </div>
+
+            {/* Payment Method */}
+            <div>
+              <Label className="text-white">Payment Method <span className="text-slate-400 font-normal">(Optional)</span></Label>
+              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <SelectTrigger className="bg-slate-700 border-slate-600 text-white mt-1">
+                  <SelectValue placeholder="Select method…" />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="pos">POS</SelectItem>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                  <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Notes */}
             <div>
-              <Label className="text-white">Notes (Optional)</Label>
+              <Label className="text-white">Notes <span className="text-slate-400 font-normal">(Optional)</span></Label>
               <Textarea
                 placeholder="Add any notes about this payment..."
                 value={paymentNotes}
@@ -747,6 +784,8 @@ export default function WorkerMobileCustomerDetail() {
                 setPaymentUploadDialogOpen(false);
                 setPaymentFile(null);
                 setPaymentNotes("");
+                setPaymentAmount("");
+                setPaymentMethod("");
               }}
               className="border-slate-600"
             >

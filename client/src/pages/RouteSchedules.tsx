@@ -674,6 +674,12 @@ export default function RouteSchedules() {
     originalDate: string;
   } | null>(null);
   const [rescheduleNewDate, setRescheduleNewDate] = useState("");
+  const [rescheduleNotes, setRescheduleNotes] = useState("");
+  const [cancelDialog, setCancelDialog] = useState<{
+    scheduleId: number;
+    originalDate: string;
+  } | null>(null);
+  const [cancelNotes, setCancelNotes] = useState("");
 
   // Data
   const utils = trpc.useUtils();
@@ -689,7 +695,7 @@ export default function RouteSchedules() {
     onError: (e) => toast.error(e.message),
   });
   const cancelMutation = trpc.calendar.cancelOccurrence.useMutation({
-    onSuccess: () => { utils.calendar.getCalendarEvents.invalidate(); toast.success("Occurrence cancelled."); },
+    onSuccess: () => { utils.calendar.getCalendarEvents.invalidate(); setCancelDialog(null); toast.success("Occurrence cancelled."); },
     onError: (e) => toast.error(e.message),
   });
   const rescheduleMutation = trpc.calendar.rescheduleOccurrence.useMutation({
@@ -915,12 +921,14 @@ export default function RouteSchedules() {
           onClose={() => setDayDialog(null)}
           date={dayDialog.date}
           events={dayDialog.events}
-          onCancel={(scheduleId, originalDate) =>
-            cancelMutation.mutate({ scheduleId, originalDate })
-          }
+          onCancel={(scheduleId, originalDate) => {
+            setCancelDialog({ scheduleId, originalDate });
+            setCancelNotes("");
+          }}
           onReschedule={(scheduleId, originalDate) => {
             setRescheduleDialog({ scheduleId, originalDate });
             setRescheduleNewDate("");
+            setRescheduleNotes("");
           }}
           onManageCustomers={(instanceId, scheduleId) =>
             setCustomerOverrideDialog({ instanceId, scheduleId })
@@ -936,6 +944,50 @@ export default function RouteSchedules() {
           instanceId={customerOverrideDialog.instanceId}
           scheduleId={customerOverrideDialog.scheduleId}
         />
+      )}
+
+      {/* Cancel Dialog */}
+      {cancelDialog && (
+        <Dialog open={!!cancelDialog} onOpenChange={(o) => !o && setCancelDialog(null)}>
+          <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Cancel Occurrence</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <p className="text-slate-400 text-sm">
+                Date: <span className="text-white font-medium">{cancelDialog.originalDate}</span>
+              </p>
+              <div>
+                <Label className="text-slate-300">Reason / notes <span className="text-slate-500">(optional)</span></Label>
+                <Textarea
+                  value={cancelNotes}
+                  onChange={(e) => setCancelNotes(e.target.value)}
+                  placeholder="e.g. Public holiday, worker unavailable…"
+                  className="bg-slate-900 border-slate-700 text-white mt-1 resize-none"
+                  rows={3}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setCancelDialog(null)} className="text-slate-400">
+                Back
+              </Button>
+              <Button
+                onClick={() => {
+                  cancelMutation.mutate({
+                    scheduleId: cancelDialog.scheduleId,
+                    originalDate: cancelDialog.originalDate,
+                    notes: cancelNotes || undefined,
+                  });
+                }}
+                disabled={cancelMutation.isPending}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Confirm Cancel
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* Reschedule Dialog */}
@@ -958,6 +1010,16 @@ export default function RouteSchedules() {
                   className="bg-slate-900 border-slate-700 text-white mt-1"
                 />
               </div>
+              <div>
+                <Label className="text-slate-300">Reason / notes <span className="text-slate-500">(optional)</span></Label>
+                <Textarea
+                  value={rescheduleNotes}
+                  onChange={(e) => setRescheduleNotes(e.target.value)}
+                  placeholder="e.g. Moved to avoid bank holiday…"
+                  className="bg-slate-900 border-slate-700 text-white mt-1 resize-none"
+                  rows={3}
+                />
+              </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setRescheduleDialog(null)} className="text-slate-400">
@@ -970,6 +1032,7 @@ export default function RouteSchedules() {
                     scheduleId: rescheduleDialog.scheduleId,
                     originalDate: rescheduleDialog.originalDate,
                     newDate: rescheduleNewDate,
+                    notes: rescheduleNotes || undefined,
                   });
                 }}
                 disabled={rescheduleMutation.isPending}

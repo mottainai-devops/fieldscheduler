@@ -89,12 +89,7 @@ export default function AdminLogin() {
               >
                 Forgot password?
               </a>
-              <a 
-                href="/admin/register" 
-                className="text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                Create account
-              </a>
+
             </div>
           </CardContent>
           <CardFooter>

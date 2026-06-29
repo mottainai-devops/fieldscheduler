@@ -17,7 +17,7 @@
  *
  * Usage:
  *   npx tsx scripts/driftCheck.ts           # standard run
- *   npx tsx scripts/driftCheck.ts --verbose  # also list spread-suppressed procedures
+ *   npx tsx scripts/driftCheck.ts --verbose  # also list all suppressed items
  *   (or via package.json: pnpm drift:check)
  *
  * Exit codes:
@@ -26,28 +26,65 @@
  *
  * Performance target: under 10 seconds on the current codebase.
  *
- * ─── Known Limitation: Class A Spread Suppression ───────────────────────────
+ * ─── False-Positive Categories (Class A) ─────────────────────────────────────
  *
- * When a .mutate({...}) or .mutateAsync({...}) call site uses a spread operator
- * (e.g. `.mutate({ id, ...payload })`), the script cannot statically determine
- * which fields the spread expression sends. To avoid false positives, the script
- * conservatively treats any procedure whose call sites include a spread as
- * "covered" — it will not report ghost fields for that procedure even if a field
- * is genuinely never sent.
+ * Three categories of false positive can cause driftCheck to suppress or skip
+ * a finding that would otherwise appear. Each is handled differently:
  *
- * Rationale: A false negative (missed ghost field) is safer than a false positive
- * (incorrectly flagging a field that IS sent via spread). The trade-off is
- * intentional. Procedures with spread call sites require manual review.
+ * CATEGORY 1 — Spread-operator suppression (automatic)
+ *   When a .mutate({...}) or .mutateAsync({...}) call site uses a spread
+ *   operator (e.g. `.mutate({ id, ...payload })`), the script cannot
+ *   statically determine which fields the spread expression sends. To avoid
+ *   false positives, the script conservatively treats any procedure whose call
+ *   sites include a spread as "covered" — it will not report ghost fields for
+ *   that procedure even if a field is genuinely never sent.
  *
- * To see which procedures are currently excluded due to spread call sites, run:
- *   npx tsx scripts/driftCheck.ts --verbose
+ *   Rationale: A false negative (missed ghost field) is safer than a false
+ *   positive (incorrectly flagging a field that IS sent via spread). The
+ *   trade-off is intentional. Procedures with spread call sites require manual
+ *   review. Run --verbose to list spread-suppressed procedures.
  *
- * As of T21 (2026-06-29), zero procedures are suppressed by spread.
+ *   As of T21 (2026-06-29), zero procedures are suppressed by spread.
  *   Note: calendar.updateSchedule is excluded from Class A analysis for a
  *   different reason — its Zod schema uses an external reference (ScheduleInput)
  *   rather than an inline z.object({...}), so the script never parses its fields.
  *   This is a separate known limitation: external/composed Zod schemas are not
  *   resolved by the current implementation.
+ *
+ * CATEGORY 2 — Cross-repository client suppression (@drift-suppress marker)
+ *   The driftCheck scan covers only TypeScript/TSX client code in the
+ *   mottainai-devops/fieldscheduler repository. Procedures called by clients
+ *   in separate repositories are invisible to the scan:
+ *     - fieldscheduler-mobile (Flutter/Dart)
+ *     - mottainai-survey-app (Flutter/Dart)
+ *     - mottainai-platform-backend (TypeScript, separate repo)
+ *     - External API consumers (if any)
+ *
+ *   For fields that are legitimately sent by a cross-repo client, add a
+ *   @drift-suppress marker in a comment immediately preceding the field
+ *   declaration in the Zod schema. The marker suppresses the finding and
+ *   records the justification for --verbose output.
+ *
+ *   Marker syntax (any of these formats are accepted):
+ *     // @drift-suppress: <justification text>
+ *     // @drift-suppress <justification text>
+ *     /* @drift-suppress: <justification> *\/
+ *
+ *   Example:
+ *     // @drift-suppress: flutter-only — passed by fieldscheduler-mobile
+ *     // ApiService.requestHandoff when scheduleId is null (non-recurring
+ *     // routes). Not visible to driftCheck (Dart client, separate repo).
+ *     routeId: z.number().int().positive().optional(),
+ *
+ *   Run --verbose to list all @drift-suppress suppressed fields with their
+ *   justifications.
+ *
+ * CATEGORY 3 — External/composed Zod schema (not yet handled)
+ *   Procedures whose .input() receives a reference to an externally-defined
+ *   Zod schema (e.g. `.input(ScheduleInput)`) rather than an inline
+ *   z.object({...}) are silently skipped — the script never parses their
+ *   fields. This is a known limitation with no suppression mechanism yet.
+ *   Affected procedures require manual review.
  *
  * ─── Scope Boundaries (Class B) ─────────────────────────────────────────────
  *
@@ -109,6 +146,14 @@ interface HandlerDriftFinding {
   handlerName: string;
 }
 
+interface DriftSuppressedField {
+  procedure: string;   // "<namespace>.<procedureName>"
+  fieldName: string;
+  routerFile: string;
+  routerLine: number;
+  justification: string;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function relPath(absPath: string): string {
@@ -127,17 +172,79 @@ function isOptionalZodField(propNode: Node): boolean {
   return text.includes(".optional()") || text.includes(".nullable()");
 }
 
+/**
+ * Extracts the @drift-suppress justification from the source text immediately
+ * preceding a given line number. Looks back up to 5 lines for a comment
+ * containing "@drift-suppress". Returns the justification string if found,
+ * or null if no suppression marker is present.
+ *
+ * Accepted formats:
+ *   // @drift-suppress: <justification>
+ *   // @drift-suppress <justification>
+ *   /* @drift-suppress: <justification> *\/
+ */
+function extractDriftSuppress(sourceText: string, fieldLineNumber: number): string | null {
+  const lines = sourceText.split("\n");
+  // fieldLineNumber is 1-based. The field is at lines[fieldLineNumber-1] (0-based).
+  // Strategy: scan backwards from the line immediately before the field, collecting
+  // only contiguous comment lines. Stop at the first non-comment line. If any of
+  // those comment lines contains @drift-suppress, the field is suppressed.
+  // This ensures the marker only applies to the single field it immediately precedes,
+  // even when other comment lines (e.g. B3 fix notes) appear between the marker and
+  // the field declaration.
+  const fieldIdx = fieldLineNumber - 1; // 0-based index of the field line
+
+  // Walk backwards collecting contiguous comment lines
+  const commentBlock: string[] = [];
+  for (let i = fieldIdx - 1; i >= 0 && i >= fieldIdx - 15; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "") continue; // skip blank lines within comment block
+    if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) {
+      commentBlock.unshift(lines[i]); // prepend to maintain order
+    } else {
+      break; // hit a non-comment line — stop scanning
+    }
+  }
+
+  if (commentBlock.length === 0) return null;
+
+  // Check if any comment line in the block contains @drift-suppress
+  const suppressLineIdx = commentBlock.findIndex((l) => l.includes("@drift-suppress"));
+  if (suppressLineIdx === -1) return null;
+
+  // Collect multi-line justification: the @drift-suppress line + subsequent comment lines
+  const justificationParts: string[] = [];
+
+  // First line: everything after @drift-suppress
+  const firstLineMatch = commentBlock[suppressLineIdx]?.match(/@drift-suppress[:\s]+(.*)/);
+  if (firstLineMatch) justificationParts.push(firstLineMatch[1].trim());
+
+  // Subsequent lines: continuation comment lines (// text)
+  for (let i = suppressLineIdx + 1; i < commentBlock.length; i++) {
+    const contMatch = commentBlock[i].match(/^\s*\/\/\s*(.*)/);
+    if (contMatch) {
+      justificationParts.push(contMatch[1].trim());
+    } else {
+      break;
+    }
+  }
+
+  return justificationParts.join(" ").trim() || "no justification provided";
+}
+
 // ─── Class A: Schema Field Drift ─────────────────────────────────────────────
 
 function extractMutationSchemaFields(
   project: Project
-): Map<string, { fields: Map<string, { zodType: string; isOptional: boolean; line: number }>; file: string }> {
+): Map<string, { fields: Map<string, { zodType: string; isOptional: boolean; line: number; driftSuppress: string | null }>; file: string }> {
   /**
    * Returns a map keyed by "<namespace>.<procedureName>" → { fields, file }
-   * where fields is a map of fieldName → { zodType, isOptional, line }
+   * where fields is a map of fieldName → { zodType, isOptional, line, driftSuppress }
    *
    * Strategy: parse each router file, find .mutation( calls, walk backwards
    * to find .input(z.object({...})) on the same chain, extract property names.
+   * For each field, also check for a @drift-suppress marker in the preceding
+   * comment lines.
    */
 
   // First build the namespace map from routers.ts
@@ -158,7 +265,7 @@ function extractMutationSchemaFields(
 
   const result = new Map<
     string,
-    { fields: Map<string, { zodType: string; isOptional: boolean; line: number }>; file: string }
+    { fields: Map<string, { zodType: string; isOptional: boolean; line: number; driftSuppress: string | null }>; file: string }
   >();
 
   const routerFiles = project.getSourceFiles().filter(
@@ -168,6 +275,8 @@ function extractMutationSchemaFields(
   );
 
   for (const sf of routerFiles) {
+    const sourceText = sf.getFullText();
+
     // Determine namespace for this router file
     const fileName = path.basename(sf.getFilePath(), ".ts");
     // Try to find the exported router variable name
@@ -251,7 +360,7 @@ function extractMutationSchemaFields(
       if (!inputObjectNode || procedureName === "unknown") return;
 
       // Extract fields from the z.object({ ... }) argument
-      const fields = new Map<string, { zodType: string; isOptional: boolean; line: number }>();
+      const fields = new Map<string, { zodType: string; isOptional: boolean; line: number; driftSuppress: string | null }>();
 
       if (Node.isObjectLiteralExpression(inputObjectNode)) {
         for (const prop of inputObjectNode.getProperties()) {
@@ -262,7 +371,9 @@ function extractMutationSchemaFields(
             const zodType = getZodTypeName(prop);
             const optional = isOptionalZodField(prop);
             const line = prop.getStartLineNumber();
-            fields.set(fieldName, { zodType, isOptional: optional, line });
+            // Check for @drift-suppress marker in preceding comment lines
+            const driftSuppress = extractDriftSuppress(sourceText, line);
+            fields.set(fieldName, { zodType, isOptional: optional, line, driftSuppress });
           }
         }
       }
@@ -352,11 +463,15 @@ function extractClientMutateFields(project: Project): Map<string, CallSiteFields
 // Tracks procedures excluded from Class A due to spread call sites
 const spreadSuppressedProcedures: string[] = [];
 
+// Tracks fields excluded from Class A due to @drift-suppress markers
+const driftSuppressedFields: DriftSuppressedField[] = [];
+
 function runClassA(project: Project): SchemaDriftFinding[] {
   const schemaMap = extractMutationSchemaFields(project);
   const clientMap = extractClientMutateFields(project);
   const findings: SchemaDriftFinding[] = [];
   spreadSuppressedProcedures.length = 0; // reset on each run
+  driftSuppressedFields.length = 0;      // reset on each run
 
   for (const [key, { fields, file }] of schemaMap) {
     const callSites = clientMap.get(key);
@@ -367,7 +482,19 @@ function runClassA(project: Project): SchemaDriftFinding[] {
 
     const [namespace, procedureName] = key.split(".");
 
-    for (const [fieldName, { zodType, isOptional, line }] of fields) {
+    for (const [fieldName, { zodType, isOptional, line, driftSuppress }] of fields) {
+      // Check for @drift-suppress marker first — suppressed fields are never reported
+      if (driftSuppress !== null) {
+        driftSuppressedFields.push({
+          procedure: key,
+          fieldName,
+          routerFile: file,
+          routerLine: line,
+          justification: driftSuppress,
+        });
+        continue;
+      }
+
       // A field is a ghost if it is not sent by ANY call site.
       // For call sites that use spread, we cannot determine what they send,
       // so we conservatively assume they might send the field.
@@ -588,8 +715,7 @@ function printResults(
       lines.push(`  GHOST HANDLER`);
       lines.push(`  File      : ${relPath(f.componentFile)}:${f.jsxLine}`);
       lines.push(`  Attribute : ${f.attribute}`);
-      lines.push(`  Handler   : ${f.handlerName}`);
-      lines.push(`  Status    : Referenced in JSX, no matching definition in component file`);
+      lines.push(`  Status    : Handler referenced in JSX but never defined in component`);
       lines.push("");
     }
   }
@@ -611,18 +737,41 @@ function printResults(
     lines.push(`  ✗ ${total} finding(s) detected. Review above for details.`);
   }
 
-  // Spread suppression notice
+  // ── Suppression notices ──
+
+  // Category 1: Spread suppression
   if (spreadSuppressedProcedures.length > 0) {
     lines.push("");
     lines.push(
       `  NOTE: ${spreadSuppressedProcedures.length} procedure(s) excluded from Class A analysis` +
-      ` due to spread operator at call sites. Run --verbose to list.`
+      ` due to spread operator at call sites (Category 1).`
     );
     if (verbose) {
       lines.push("  Spread-suppressed procedures:");
       for (const proc of spreadSuppressedProcedures) {
         lines.push(`    - ${proc}`);
       }
+    } else {
+      lines.push("  Run --verbose to list excluded procedures.");
+    }
+  }
+
+  // Category 2: @drift-suppress markers
+  if (driftSuppressedFields.length > 0) {
+    lines.push("");
+    lines.push(
+      `  NOTE: ${driftSuppressedFields.length} field(s) excluded from Class A analysis` +
+      ` via @drift-suppress marker (Category 2 — cross-repo client).`
+    );
+    if (verbose) {
+      lines.push("  @drift-suppress suppressed fields:");
+      for (const s of driftSuppressedFields) {
+        lines.push(`    - ${s.procedure}.${s.fieldName}`);
+        lines.push(`      File    : ${relPath(s.routerFile)}:${s.routerLine}`);
+        lines.push(`      Reason  : ${s.justification}`);
+      }
+    } else {
+      lines.push("  Run --verbose to list suppressed fields with justifications.");
     }
   }
 

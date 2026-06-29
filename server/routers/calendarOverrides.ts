@@ -536,6 +536,9 @@ export const calendarOverridesRouter = router({
       z.object({
         scheduleId: z.number().int().positive().optional(),
         instanceId: z.number().int().positive().optional(),
+        // @drift-suppress: flutter-only — passed by fieldscheduler-mobile ApiService.requestHandoff
+        // when scheduleId is null (non-recurring routes). Server resolves scheduleId via
+        // routes→routeSchedules join. Not visible to driftCheck (Dart client, separate repo).
         // B3 fix: client may pass routeId when scheduleId is null (non-recurring routes).
         // Server resolves scheduleId via the same routes→routeSchedules join as
         // getScheduleIdForRoute, then falls back to null (non-recurring is valid).
