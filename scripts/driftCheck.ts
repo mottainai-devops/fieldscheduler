@@ -16,7 +16,8 @@
  *     ReferenceError only fires when the user triggers the event.
  *
  * Usage:
- *   npx tsx scripts/driftCheck.ts
+ *   npx tsx scripts/driftCheck.ts           # standard run
+ *   npx tsx scripts/driftCheck.ts --verbose  # also list spread-suppressed procedures
  *   (or via package.json: pnpm drift:check)
  *
  * Exit codes:
@@ -25,14 +26,31 @@
  *
  * Performance target: under 10 seconds on the current codebase.
  *
- * Known limitation (Class A):
- *   When a .mutate({...}) call site uses a spread operator (e.g. ...buildDepotPayload()),
- *   the script cannot determine what fields the spread sends. It conservatively assumes
- *   the spread may send any schema field, so procedures with spread call sites will not
- *   generate ghost field findings even if a field is genuinely never sent. This is a
- *   false-negative risk. Procedures with no spread call sites are fully covered.
+ * ─── Known Limitation: Class A Spread Suppression ───────────────────────────
  *
- * Scope boundaries (Class B):
+ * When a .mutate({...}) or .mutateAsync({...}) call site uses a spread operator
+ * (e.g. `.mutate({ id, ...payload })`), the script cannot statically determine
+ * which fields the spread expression sends. To avoid false positives, the script
+ * conservatively treats any procedure whose call sites include a spread as
+ * "covered" — it will not report ghost fields for that procedure even if a field
+ * is genuinely never sent.
+ *
+ * Rationale: A false negative (missed ghost field) is safer than a false positive
+ * (incorrectly flagging a field that IS sent via spread). The trade-off is
+ * intentional. Procedures with spread call sites require manual review.
+ *
+ * To see which procedures are currently excluded due to spread call sites, run:
+ *   npx tsx scripts/driftCheck.ts --verbose
+ *
+ * As of T21 (2026-06-29), zero procedures are suppressed by spread.
+ *   Note: calendar.updateSchedule is excluded from Class A analysis for a
+ *   different reason — its Zod schema uses an external reference (ScheduleInput)
+ *   rather than an inline z.object({...}), so the script never parses its fields.
+ *   This is a separate known limitation: external/composed Zod schemas are not
+ *   resolved by the current implementation.
+ *
+ * ─── Scope Boundaries (Class B) ─────────────────────────────────────────────
+ *
  *   IN SCOPE:  named identifier references — onClick={handleX}
  *   OUT OF SCOPE: inline arrows — onClick={() => ...}
  *                 call expressions — onClick={getHandler()}
@@ -331,10 +349,14 @@ function extractClientMutateFields(project: Project): Map<string, CallSiteFields
   return result;
 }
 
+// Tracks procedures excluded from Class A due to spread call sites
+const spreadSuppressedProcedures: string[] = [];
+
 function runClassA(project: Project): SchemaDriftFinding[] {
   const schemaMap = extractMutationSchemaFields(project);
   const clientMap = extractClientMutateFields(project);
   const findings: SchemaDriftFinding[] = [];
+  spreadSuppressedProcedures.length = 0; // reset on each run
 
   for (const [key, { fields, file }] of schemaMap) {
     const callSites = clientMap.get(key);
@@ -354,6 +376,14 @@ function runClassA(project: Project): SchemaDriftFinding[] {
       //   - No call site uses spread (which could be sending it implicitly)
       const sentByAny = callSites.some((cs) => cs.fields.has(fieldName));
       const coveredBySpread = callSites.some((cs) => cs.hasSpread);
+
+      // Track suppressed procedures (once per procedure, not per field)
+      if (coveredBySpread) {
+        const procKey = `${namespace}.${procedureName}`;
+        if (!spreadSuppressedProcedures.includes(procKey)) {
+          spreadSuppressedProcedures.push(procKey);
+        }
+      }
 
       if (!sentByAny && !coveredBySpread) {
         findings.push({
@@ -519,7 +549,8 @@ function runClassB(project: Project): HandlerDriftFinding[] {
 function printResults(
   schemaFindings: SchemaDriftFinding[],
   handlerFindings: HandlerDriftFinding[],
-  elapsedMs: number
+  elapsedMs: number,
+  verbose: boolean
 ): void {
   const lines: string[] = [];
 
@@ -580,6 +611,21 @@ function printResults(
     lines.push(`  ✗ ${total} finding(s) detected. Review above for details.`);
   }
 
+  // Spread suppression notice
+  if (spreadSuppressedProcedures.length > 0) {
+    lines.push("");
+    lines.push(
+      `  NOTE: ${spreadSuppressedProcedures.length} procedure(s) excluded from Class A analysis` +
+      ` due to spread operator at call sites. Run --verbose to list.`
+    );
+    if (verbose) {
+      lines.push("  Spread-suppressed procedures:");
+      for (const proc of spreadSuppressedProcedures) {
+        lines.push(`    - ${proc}`);
+      }
+    }
+  }
+
   lines.push("═══════════════════════════════════════════════════════════════════");
 
   console.log(lines.join("\n"));
@@ -589,6 +635,7 @@ function printResults(
 
 async function main(): Promise<void> {
   const startMs = Date.now();
+  const verbose = process.argv.includes("--verbose");
 
   const project = new Project({
     tsConfigFilePath: path.join(ROOT, "tsconfig.json"),
@@ -606,7 +653,7 @@ async function main(): Promise<void> {
 
   const elapsedMs = Date.now() - startMs;
 
-  printResults(schemaFindings, handlerFindings, elapsedMs);
+  printResults(schemaFindings, handlerFindings, elapsedMs, verbose);
 
   const total = schemaFindings.length + handlerFindings.length;
   process.exit(total === 0 ? 0 : 1);
