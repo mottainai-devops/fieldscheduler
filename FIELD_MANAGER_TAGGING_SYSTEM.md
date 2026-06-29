@@ -176,24 +176,7 @@ The system includes pre-loaded field manager-to-CUSTOMERMAF mappings:
 5. View and export results
 
 ### 3. Tag-Based Route Creation
-**Route:** `/tag-based-route-creation`
-**Component:** `TagBasedRouteCreation.tsx`
-
-**Features:**
-- Create routes by selecting tags
-- Visual tag selector with customer counts
-- Route naming and date scheduling
-- Real-time customer count display
-- Route summary with all metrics
-- Optimized for batch operations
-
-**Workflow:**
-1. Enter route name
-2. Select field manager
-3. Choose building IDs (tags)
-4. Set scheduled date
-5. Review summary
-6. Create route
+**REMOVED in T17 (2026-06-29).** The page existed but its "Create Route" button ran a setTimeout simulation with no tRPC mutation call. It never created a route in production. Removed per owner direction. Use `/create-route` (Manual Selection) instead.
 
 ## Usage Workflow
 
@@ -217,15 +200,9 @@ The system includes pre-loaded field manager-to-CUSTOMERMAF mappings:
 5. Optional: Search or filter by priority
 6. Export as CSV if needed
 
-### Scenario 3: Creating a Tag-Based Route
+### Scenario 3: Creating a Route
 
-1. Navigate to `/tag-based-route-creation`
-2. Enter route name (e.g., "Downtown Route A")
-3. Select field manager
-4. Select building IDs to include
-5. Set scheduled date
-6. Review route summary
-7. Click "Create Route"
+Use `/create-route` (Manual Selection). Tag-Based Route Creation was removed in T17 — it never created routes in production.
 
 ## API Integration Points
 

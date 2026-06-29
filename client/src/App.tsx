@@ -38,7 +38,6 @@ import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
 import FieldManagerTagging from "./pages/FieldManagerTagging";
 import DynamicCustomerFiltering from "./pages/DynamicCustomerFiltering";
-import TagBasedRouteCreation from "./pages/TagBasedRouteCreation";
 import FieldManagerAdminDashboard from "./pages/FieldManagerAdminDashboard";
 import RealTimeTracking from "./pages/RealTimeTracking";
 import PerformanceDashboard from "./pages/PerformanceDashboard";
@@ -127,7 +126,7 @@ function Router() {
       {/* T14 Item 4: admin tier — MAF tagging is admin-tier (superadmin + admin) */}
       <LayoutRoute path={"/field-manager-tagging"} component={FieldManagerTagging} requireAdmin />
       <LayoutRoute path={"/dynamic-customer-filtering"} component={DynamicCustomerFiltering} />
-      <LayoutRoute path={"/tag-based-route-creation"} component={TagBasedRouteCreation} />
+      {/* T17 Item 3: TagBasedRouteCreation removed — page never created routes in production (setTimeout simulation, no tRPC call) */}
       {/* T14 Item 4: superadmin only — field manager admin is system-level */}
       <LayoutRoute path={"/field-manager-admin"} component={FieldManagerAdminDashboard} requireSuperadmin />
       <LayoutRoute path={"/real-time-tracking"} component={RealTimeTracking} />

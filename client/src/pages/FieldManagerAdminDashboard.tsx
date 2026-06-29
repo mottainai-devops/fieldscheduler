@@ -57,26 +57,7 @@ export default function FieldManagerAdminDashboard() {
       action: "Filter Customers",
       route: "/dynamic-customer-filtering",
     },
-    {
-      id: "routing",
-      title: "Tag-Based Route Creation",
-      description: "Create optimized routes by selecting building ID tags",
-      icon: Route,
-      color: "from-green-600 to-green-400",
-      stats: [
-        { label: "Route Status", value: "Active" },
-        { label: "Optimization", value: "Real-time" },
-      ],
-      features: [
-        "Visual tag selector",
-        "Real-time customer count",
-        "Route date scheduling",
-        "Summary metrics",
-      ],
-      action: "Create Route",
-      route: "/tag-based-route-creation",
-    },
-  ];
+  ]; // T17 Item 3: Tag-Based Route Creation card removed (page never created routes in production)
 
   const stats = [
     {
@@ -282,15 +263,15 @@ export default function FieldManagerAdminDashboard() {
                   <div className="flex-1">
                     <h3 className="text-white font-semibold mb-2">Create Routes</h3>
                     <p className="text-slate-400 text-sm mb-3">
-                      Build optimized routes by selecting tags for each field manager.
+                      Build optimized routes using Manual Selection or Cluster Selection.
                     </p>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigate("/tag-based-route-creation")}
+                      onClick={() => navigate("/create-route")}
                       className="border-slate-600 text-slate-300 hover:text-white hover:bg-slate-700"
                     >
-                      Open Routes →
+                      Create Route →
                     </Button>
                   </div>
                 </div>

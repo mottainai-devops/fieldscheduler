@@ -23,11 +23,6 @@ const breadcrumbMap: Record<string, Breadcrumb[]> = {
     { label: "Field Manager", path: "/field-manager-admin" },
     { label: "Customer Filtering", path: "/dynamic-customer-filtering" },
   ],
-  "/tag-based-route-creation": [
-    { label: "Dashboard", path: "/dashboard", icon: <Home className="w-4 h-4" /> },
-    { label: "Field Manager", path: "/field-manager-admin" },
-    { label: "Route Creation", path: "/tag-based-route-creation" },
-  ],
 };
 
 export default function FieldManagerBreadcrumb() {

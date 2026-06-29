@@ -83,7 +83,6 @@ const navigationGroups: NavGroup[] = [
     items: [
       { label: "Routes", href: "/routes", icon: Route, minRole: "fieldManager" },
       { label: "Create Route", href: "/create-route", icon: Route, minRole: "fieldManager" },
-      { label: "Tag-Based Routes", href: "/tag-based-route-creation", icon: Route },
       { label: "Route Optimization", href: "/route-optimization", icon: Navigation },
       { label: "Clusters", href: "/clusters", icon: Route },
       { label: "Route Schedules", href: "/route-schedules", icon: Route, minRole: "fieldManager" },
