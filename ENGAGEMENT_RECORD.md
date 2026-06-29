@@ -2011,3 +2011,109 @@ New file `SECURITY_DEBT.md` added to repo root in commit `0bd48dee`. Documents a
 12. LOW driftCheck findings — 5 items (T19 Item 3)
 
 **T19 is closed. T20 may begin.**
+
+---
+
+## Tranche 20 (T20) — Security Debt Resolution: workerProcedure Bearer Token Authentication
+
+**Date:** 2026-06-29
+**Commit:** `055f90a0`
+**Production HEAD:** `055f90a0` ✅ (deployed and verified)
+
+### Scope
+
+Resolve the security debt accumulated since T14: 12 write mutations in `workerAuth.ts` and `workerNotificationsRouter.ts` were `publicProcedure` with client-sent identity fields (`workerId`, `requestedBy`, `reportedBy`) as the only security constraint. Any caller could impersonate any worker by sending an arbitrary value. The fix: implement `workerProcedure` middleware that validates a Bearer token against the Survey App (`/users/me`) and derives worker identity server-side.
+
+### Investigation Findings (a–e)
+
+**(a) Mobile transport:** `fieldscheduler-mobile/lib/services/api_service.dart` — `_getHeaders()` already sends `Authorization: Bearer <surveyToken>` on every request when a token is present. No mobile rebuild required.
+
+**(b) Survey App token format:** JWT validated by `https://upwork.kowope.xyz/users/me`. Returns `{ id: string }` where `id` is the `surveyAppUserId` stored in the `workers` table.
+
+**(c) Server auth primitives:** `protectedProcedure` uses Manus OAuth session cookies — incompatible with mobile. No existing Bearer token middleware existed.
+
+**(d) supervisorLogin response:** Returns `{ success, worker }` — no token issued by fieldscheduler. Token lives in Survey App only.
+
+**(e) Three architectural paths surfaced:** Path X (server validates token against Survey App — chosen), Path Y (workerId whitelist — not a real fix), Path Z (mobile sends workerId in header — requires mobile rebuild).
+
+### Implementation
+
+**`server/_core/trpc.ts`:** Added `workerProcedure` with:
+- 5-minute in-process token cache (Map with TTL) — avoids Survey App round-trip on every call
+- `resolveWorkerFromToken(token)` — calls `SURVEY_API/users/me`, maps `surveyUser.id` → `workers.surveyAppUserId` → `workers.id`
+- Rejected tokens are NOT cached (Decision 3e)
+- Cache miss/hit/store logs at `[token cache]` prefix for observability
+- `ctx.workerId` and `ctx.workerSurveyAppUserId` injected into procedure context
+
+**`server/routers/workerAuth.ts`:** 10 procedures migrated to `workerProcedure`:
+- `createLinkageRequest` — `requestedBy` removed from Zod; derived from `ctx.workerId`
+- `createViolation` — `reportedBy` removed from Zod; derived from `ctx.workerId`
+- `setWebhookPreference` — `workerId` removed from Zod; derived from `ctx.workerId`
+- `markCustomerPicked`, `markCustomerComplete`, `markCustomerIncomplete`, `completeRoute`, `startRoute` — `publicProcedure` → `workerProcedure`
+- `skipCustomer` — `workerId` removed from Zod; all `input.workerId` references replaced with `ctx.workerId` (3 notification message strings + C1 fallback path)
+- `addCustomerNote` — `workerId` removed from Zod; derived from `ctx.workerId`
+- `deleteCustomerNote` — `publicProcedure` → `workerProcedure` (no identity check existed before)
+
+**`server/routers/workerNotificationsRouter.ts`:** 2 procedures migrated:
+- `markAsRead` — `workerId` removed from Zod; derived from `ctx.workerId`
+- `markAllAsRead` — entire input schema removed; `workerId` derived from `ctx.workerId`
+
+**Scope expansion:** Original SECURITY_DEBT.md listed 8 procedures. Investigation revealed 12 total (4 additional: `createLinkageRequest`, `createViolation`, `setWebhookPreference`, `deleteCustomerNote`). All 12 fixed in this tranche.
+
+### Behavioral Verification
+
+**Negative tests (13/13 PASS):** All 13 procedures return HTTP 401 without Bearer token. Gate is closed.
+
+```
+✅ PASS  workerAuth.createLinkageRequest   → HTTP 401
+✅ PASS  workerAuth.createViolation        → HTTP 401
+✅ PASS  workerAuth.setWebhookPreference   → HTTP 401
+✅ PASS  workerAuth.markCustomerPicked     → HTTP 401
+✅ PASS  workerAuth.markCustomerComplete   → HTTP 401
+✅ PASS  workerAuth.markCustomerIncomplete → HTTP 401
+✅ PASS  workerAuth.completeRoute          → HTTP 401
+✅ PASS  workerAuth.startRoute             → HTTP 401
+✅ PASS  workerAuth.skipCustomer           → HTTP 401
+✅ PASS  workerAuth.addCustomerNote        → HTTP 401
+✅ PASS  workerAuth.deleteCustomerNote     → HTTP 401
+✅ PASS  workerNotifications.markAsRead    → HTTP 401
+✅ PASS  workerNotifications.markAllAsRead → HTTP 401
+```
+
+**Positive tests (deferred):** Requires a real Survey App Bearer token for a worker whose `surveyAppUserId` is populated in the DB. Only T16 test workers have `surveyAppUserId` set (SAU-T16-001, SAU-WALE-001 — both test artifacts). Real workers will be verified on first mobile app use after production workers are registered in the Survey App and their `surveyAppUserId` values are backfilled.
+
+### Patterns and Rules Added in T20
+
+**Pattern #46 — Client-Sent Identity as Security Constraint**
+A write mutation accepts `workerId` (or equivalent identity field) as a client-sent Zod input field and uses it as the security boundary (e.g., `WHERE workerId = input.workerId`). Any caller can impersonate any worker by sending an arbitrary value. The defect is invisible in normal operation — the app sends the correct `workerId` — and only becomes a vulnerability when an adversary sends a different one. Canonical instances: all 12 procedures in `workerAuth.ts` and `workerNotificationsRouter.ts` from T14 through T19. Fix: derive identity server-side from an authenticated token; never trust client-sent identity for security decisions.
+
+**Rule added (Rule 53):** When adding a write mutation to a mobile-facing router, never accept `workerId`, `userId`, or any identity field as a client-sent Zod input for security purposes. Identity must be derived from an authenticated token in the middleware context (`ctx.workerId`). If no authenticated middleware exists for the transport type, create one before shipping the procedure.
+
+### SECURITY_DEBT.md Update
+
+Security debt count: **12 → 0**. All procedures resolved. SECURITY_DEBT.md updated to reflect closed status.
+
+### Production State at T20 Close
+
+| Item | Status |
+|------|--------|
+| T20 implementation | `055f90a0` — GitHub + production |
+| T19 Items 1 + 2a | Deployed (SSH recovered) |
+| T19 Item 4 drift-check.yml | Pushed via PAT (`9f5ac48a`) |
+| T18 driftCheck script | Deployed (`4df8742e`) |
+| SECURITY_DEBT.md | 12 → 0 resolved |
+
+### Carry-Forward to Tranche 21
+
+1. **Positive test verification** — confirm `workerProcedure` end-to-end with real Survey App token (first mobile app use after surveyAppUserId backfill)
+2. **Audit trail actor identity** — findings #7, #8, #9 (calendarOverrides, archiveAndRecreate, resolveHandoffRequest)
+3. `register` procedure decision — owner input needed
+4. **T17 Item 2 normalization** — sync-zoho-data.mjs behavioral verification at next scheduled sync
+5. Scoped financial access for field managers — `getMyFinancialMetrics`
+6. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+7. Field Manager Dashboard
+8. Tranche 5C canonical constants centralisation
+9. `uploadPaymentProof` amount/paymentMethod — owner decision needed (T19 Item 2b)
+10. LOW driftCheck findings — 5 items (T19 Item 3)
+
+**T20 is closed. T21 may begin.**
