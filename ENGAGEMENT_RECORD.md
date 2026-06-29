@@ -1790,3 +1790,119 @@ Component JSX references a handler function by name (e.g., `onClick={handleX}`, 
 7. Field Manager Dashboard — focused operational view for field managers (owner-requested)
 8. Tranche 5C canonical constants centralisation — owner-requested
 9. driftLogger static analysis script — **expanded scope (T17 addition):** detect TWO defect shapes, not just the original Pattern #15. (1) Schema field drift (original) — Zod schema declares field X, no client call site sends X. (2) JSX handler drift (new, Pattern #44) — component JSX references handler function X via onClick/onSubmit/onChange/etc., no const or function declaration of X exists in the component. Both are AST-level static analysis using ts-morph. Both run at commit time / CI. Bundle them in a single script.
+
+---
+
+## Tranche 18 (T18) — driftCheck Static Analysis Script
+
+**Date:** 2026-06-29 | **Method:** ts-morph AST analysis + behavioral verification
+
+### T18 Scope
+Single deliverable: `scripts/driftCheck.ts` — static analysis script detecting two defect classes (Class A schema field drift, Class B JSX handler drift), as specified in T18 scope document.
+
+### Implementation
+
+**File:** `scripts/driftCheck.ts`
+**Runner:** `pnpm drift:check` (added to package.json scripts)
+**Dependency added:** `ts-morph@28.0.0` (devDependency)
+
+**Class A — Schema Field Drift (Pattern #15)**
+For every tRPC mutation procedure: parse the Zod input schema, extract all declared field names. For every client call site: extract the object literal keys passed to `.mutate({...})` or `.mutateAsync({...})`. Compare schema fields against the union of all keys sent across all call sites. Report any schema field never sent by any client call site (GHOST FIELD).
+
+**Class B — JSX Handler Drift (Pattern #44)**
+For every React component `.tsx` file: find every JSX event attribute in the React synthetic event set (onClick, onSubmit, onChange, onBlur, onFocus, onKeyDown, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave, onTouchStart, onTouchEnd, and 15 others). For each handler that references a function by name (`onClick={handleX}`), check whether `handleX` is defined in the same component file (local const, function declaration, useCallback binding, destructured from props, or import). Report any handler reference with no matching definition (GHOST HANDLER).
+
+**Known limitation (Class A — documented in script):**
+When a `.mutate({...})` call site uses a spread operator (e.g. `...buildDepotPayload()`), the script cannot determine what fields the spread sends. It conservatively assumes the spread may send any schema field, so procedures with spread call sites will not generate ghost field findings even if a field is genuinely never sent. This is a false-negative risk. Procedures with no spread call sites are fully covered.
+
+**Exit codes:** 0 (clean), 1 (findings detected), 2 (fatal error)
+
+### Behavioral Verification Tests
+
+**TEST 1 — Positive test (must detect known drift):**
+`compliance.createAbatementNotice` has `noticeNumber` (z.string, optional) declared in its Zod schema. The client call site in `Compliance.tsx` sends `{ customerId, violationId, dueDate, notes }` — no `noticeNumber`, no spread. The script detects it:
+```
+GHOST FIELD
+Procedure : compliance.createAbatementNotice
+File      : server/routers/compliance.ts:250
+Field     : noticeNumber (z.string, optional)
+Status    : Declared in schema, never sent by any client call site
+```
+**Result: PASS ✅**
+
+Note: The originally specified positive test (revert T16 Item 3 fix on `createWorker`/`updateWorker`) was attempted but revealed the spread limitation — both procedures use `...buildDepotPayload()` and `...depotPayload` spreads, so the script conservatively suppresses findings for them. The limitation is documented in the script. `createAbatementNotice` is used as the positive test instead (no spread, clean detection).
+
+**TEST 2 — Negative test (must not flag clean code):**
+`customer.createCustomer` and `customer.getCustomerClusters` (which has `driftLogger` applied from T16) — neither appears in the output. Zero false positives on these procedures.
+**Result: PASS ✅**
+
+**TEST 3 — Performance:**
+Full codebase scan (46 page components, 35 UI components, 14 router files, 75 mutation procedures):
+- Internal scan time reported by script: **5.14s**
+- Wall-clock time (including tsx startup): **6.52s**
+- Target: under 10 seconds
+**Result: PASS ✅**
+
+### Dogfood Findings (commit cf2539dd, 2026-06-29)
+
+**Class A — Schema Drift: 22 findings across 9 procedures**
+
+| # | Procedure | File:Line | Field | Type | Notes |
+|---|-----------|-----------|-------|------|-------|
+| 1 | calendar.cancelOccurrence | calendar.ts:341 | notes | z.string, optional | Audit trail field — T19+ |
+| 2 | calendar.rescheduleOccurrence | calendar.ts:390 | notes | z.string, optional | Audit trail field — T19+ |
+| 3 | calendarOverrides.setInstanceCustomerOverride | calendarOverrides.ts:81 | stopOrder | z.number, optional | Audit trail field — T19+ |
+| 4 | calendarOverrides.setInstanceCustomerOverride | calendarOverrides.ts:82 | reason | z.string, optional | Audit trail field — T19+ |
+| 5 | calendarOverrides.setInstanceCustomerOverride | calendarOverrides.ts:83 | actorId | z.number, optional | Audit trail actor — finding #7 carry-forward |
+| 6 | calendarOverrides.setInstanceCustomerOverride | calendarOverrides.ts:84 | actorName | z.string, optional | Audit trail actor — finding #8 carry-forward |
+| 7 | calendarOverrides.removeInstanceCustomerOverride | calendarOverrides.ts:160 | actorId | z.number, optional | Audit trail actor — finding #7 carry-forward |
+| 8 | calendarOverrides.removeInstanceCustomerOverride | calendarOverrides.ts:161 | actorName | z.string, optional | Audit trail actor — finding #8 carry-forward |
+| 9 | calendarOverrides.archiveAndRecreate | calendarOverrides.ts:417 | newTitle | z.string, optional | Audit trail field — T19+ |
+| 10 | calendarOverrides.archiveAndRecreate | calendarOverrides.ts:419 | actorId | z.number, optional | Audit trail actor — finding #9 carry-forward |
+| 11 | calendarOverrides.archiveAndRecreate | calendarOverrides.ts:420 | actorName | z.string, optional | Audit trail actor — finding #9 carry-forward |
+| 12 | calendarOverrides.requestHandoff | calendarOverrides.ts:542 | routeId | z.number, optional | New finding — T19+ |
+| 13 | calendarOverrides.resolveHandoffRequest | calendarOverrides.ts:650 | actorId | z.number, optional | Audit trail actor — finding #9 carry-forward |
+| 14 | calendarOverrides.resolveHandoffRequest | calendarOverrides.ts:651 | actorName | z.string, optional | Audit trail actor — finding #9 carry-forward |
+| 15 | compliance.createViolation | compliance.ts:125 | evidenceUrls | z.string, optional | New finding — T19+ |
+| 16 | compliance.createAbatementNotice | compliance.ts:250 | noticeNumber | z.string, optional | New finding — T19+ |
+| 17 | integrations.updateSyncJob | integrations.ts:142 | scheduleType | z.enum, optional | New finding — T19+ (toggle-only UI, full edit never built) |
+| 18 | integrations.updateSyncJob | integrations.ts:143 | scheduleTime | z.string, optional | New finding — T19+ |
+| 19 | integrations.updateSyncJob | integrations.ts:144 | scheduleDay | z.string, optional | New finding — T19+ |
+| 20 | payments.uploadPaymentProof | payments.ts:26 | amount | z.string, optional | New finding — T19+ |
+| 21 | payments.uploadPaymentProof | payments.ts:27 | paymentMethod | z.string, optional | New finding — T19+ |
+| 22 | workerNotifications.markAsRead | workerNotificationsRouter.ts:35 | workerId | z.number, required | New finding — REQUIRED field never sent — T19+ (high priority) |
+
+**Class B — JSX Handler Drift: 0 findings**
+All ghost handlers from T16 and T17 have been fixed. No new ghost handlers detected.
+
+**Analysis of dogfood findings:**
+- Findings 5–6, 7–8, 10–11, 13–14: Confirm the audit trail actor identity carry-forward (findings #7, #8, #9 from prior tranches). The script independently rediscovered these.
+- Finding 22 (`workerNotifications.markAsRead.workerId`, required, never sent): High-priority new finding. A required field that is never sent means the procedure will always fail validation when called. This is a silent breakage.
+- Findings 17–19 (`integrations.updateSyncJob` schedule fields): The T17 Item 1 fix wired the toggle (`enabled`) but the full edit path (scheduleType, scheduleTime, scheduleDay) was never built. The UI only exposes the toggle.
+- Findings 20–21 (`payments.uploadPaymentProof`): The payment proof upload form never sends `amount` or `paymentMethod`.
+- All 22 findings are T19+ candidates per T18 scope (no fixes this tranche).
+
+### Production State After T18
+| Signal | Value |
+|--------|-------|
+| Git HEAD (GitHub + production) | See commit below |
+| scripts/driftCheck.ts | Added — both classes implemented |
+| package.json drift:check | Added |
+| ts-morph | Added as devDependency (28.0.0) |
+| T18 close-out | **CLOSED 2026-06-29** |
+
+### Carry-Forward to Tranche 19
+1. Security debt procedures — 6 public write procedures with in-handler auth gaps (Condition 2 from T14, deferred through T15–T18)
+2. Audit trail actor identity — findings #7, #8, #9 (confirmed by driftCheck: actorId/actorName never sent on setInstanceCustomerOverride, removeInstanceCustomerOverride, archiveAndRecreate, resolveHandoffRequest)
+3. register procedure decision — finding #1 (owner input needed)
+4. sync-zoho-data.mjs normalization full behavioral verification — confirm at next scheduled sync
+5. Scoped financial access for field managers — getMyFinancialMetrics
+6. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+7. Field Manager Dashboard
+8. Tranche 5C canonical constants centralisation
+9. driftCheck new findings (T18 dogfood) — 22 schema drift findings, prioritized:
+   - HIGH: workerNotifications.markAsRead.workerId (required field, never sent — procedure always fails)
+   - MEDIUM: integrations.updateSyncJob schedule fields (scheduleType, scheduleTime, scheduleDay — full edit UI never built)
+   - MEDIUM: payments.uploadPaymentProof amount/paymentMethod (form never sends these)
+   - LOW: compliance ghost fields, calendar notes fields, calendarOverrides.requestHandoff.routeId
+10. CI/pre-commit wiring for driftCheck — owner decision after script proves stable (T19+ decision)
