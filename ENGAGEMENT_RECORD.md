@@ -2749,3 +2749,96 @@ Field Manager personal dashboard: 4 server procedures + client page + sidebar na
 3. Tranche 5C canonical constants centralisation
 4. workerProcedure positive test verification (real Survey App token)
 5. T17 Zoho sync behavioral verification
+
+
+---
+
+## Tranche 26 — Production Deploy + Carry-Forward Reconciliation (Jun 30 2026)
+
+### Carry-Forward Reconciliation: "Scoped financial access — getMyFinancialMetrics"
+
+**Verdict: PARTIALLY covered. Item renamed and split.**
+
+T26 delivered `getMyRevenue` (invoiced total + invoice count by date range) and
+`getMyOutstandingBalances` (per-invoice outstanding balance table). These cover
+the original "scoped financial access" intent for the FM Dashboard.
+
+However, `getMyFinancialMetrics` as originally noted in financialRouter.ts
+referred to a broader set of financial analytics that T26 did NOT cover:
+
+- **Payments table investigation** — only 1 payment row exists in production;
+  the payments table is structurally unreliable for FM-level reporting. Needs
+  separate investigation before any payment-side procedure is built.
+- **Collection rate** — % of invoiced amount actually collected (requires
+  payments table to be reliable).
+- **Per-MAF breakdown** — revenue/outstanding by MAF (subcontractor group).
+- **Comparison to targets** — no target/quota data exists in schema yet.
+
+**Updated carry-forward items replacing the old "getMyFinancialMetrics" entry:**
+
+1. **Payments table investigation** — determine why only 1 row exists; is this
+   a data entry gap or a structural issue? Decide whether to build
+   collection-rate procedures or defer until payments data is populated.
+2. **Per-MAF financial breakdown** — `getMyRevenue` and
+   `getMyOutstandingBalances` currently aggregate all invoices for the FM.
+   A per-MAF breakdown (revenue/outstanding per subcontractor group) is a
+   separate, higher-complexity procedure.
+
+The original "Scoped financial access — getMyFinancialMetrics" item is REMOVED
+from the carry-forward queue. The two items above replace it.
+
+---
+
+### T26 Production Deploy
+
+**Deployed by:** Manus agent via SSH (54.194.172.107, ubuntu@ip-10-0-9-249)
+**Deployed at:** Jun 30 2026
+
+#### Resolution: Divergent Branch
+Production server had a divergent commit `dd2e3fa6` (deployment close-out note
+committed locally on the server during T25 deploy). GitHub had `26925bb1` with
+identical content (same message, author, timestamp, diff — zero content
+difference). Resolved with `git reset --hard origin/main` (safe: no code
+changes lost, only duplicate history pointer resolved).
+
+#### Actions
+1. `git reset --hard origin/main` — fast-forwarded to `58e6fe89` (T26 close-out)
+2. `pnpm install --frozen-lockfile` — no new packages (already up to date)
+3. `pnpm run build` — clean build, 29.12s, dist/index.js 377.6kb
+4. `pm2 restart field-worker-scheduler` — online, 130.5mb, 0 crash restarts
+5. `curl https://app.fieldscheduler.net/` — **HTTP 200** ✓
+6. `curl https://app.fieldscheduler.net/api/trpc/fieldManager.getMyMetrics` — **HTTP 403** ✓
+   (403 = unauthenticated call correctly rejected by protectedProcedure + requireFieldManagerId)
+
+#### Production Health at Deploy
+| Check | Result |
+|---|---|
+| https://app.fieldscheduler.net/ | HTTP 200 |
+| fieldManager.getMyMetrics (unauthenticated) | HTTP 403 (correct) |
+| PM2 field-worker-scheduler | online, 130.5mb, stable |
+| Git HEAD | 58e6fe89 (T26 close-out) |
+
+---
+
+### Owner Behavioral Verification Gates (T26 not fully closed until these pass)
+
+**POSITIVE — Bukola (worker id 8):**
+- Log in as Bukola → navigate to /field-manager/dashboard
+- Customer count ≈ 2,326
+- Unrouted count ≈ 284
+- Pending routes: 1
+- Completion rate: "No routes yet" (null state — no completed routes)
+- Revenue: some amount (Bukola's invoices)
+- Outstanding balances: Bukola-scoped invoices only
+- Recent routes: Bukola's routes only
+
+**NEGATIVE — Halleluyah (worker id 7):**
+- Log in as Halleluyah → navigate to /field-manager/dashboard
+- Customer count ≈ 2,452 (different from Bukola's)
+- NONE of Bukola's data visible
+
+**ROLE GUARD — Wale (admin):**
+- "My Dashboard" sidebar entry NOT visible
+- Direct URL /field-manager/dashboard → redirect or 403
+
+**Post these results to confirm T26 is fully closed.**
