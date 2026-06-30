@@ -75,9 +75,22 @@ function routeStatusBadge(status: string): "default" | "secondary" | "destructiv
   switch (status) {
     case "completed": return "default";
     case "in_progress": return "secondary";
+    case "assigned": return "secondary";
     case "pending_assignment": return "outline";
     case "cancelled": return "destructive";
     default: return "outline";
+  }
+}
+
+/** Explicit colour overrides so badges are readable on the dark slate-800 background. */
+function routeStatusClass(status: string): string {
+  switch (status) {
+    case "completed": return "bg-emerald-600/20 text-emerald-300 border-emerald-500/40";
+    case "in_progress": return "bg-blue-600/20 text-blue-300 border-blue-500/40";
+    case "assigned": return "bg-blue-600/20 text-blue-300 border-blue-500/40";
+    case "pending_assignment": return "bg-amber-500/20 text-amber-300 border-amber-500/40";
+    case "cancelled": return "bg-red-600/20 text-red-300 border-red-500/40";
+    default: return "bg-slate-600/20 text-slate-300 border-slate-500/40";
   }
 }
 
@@ -449,7 +462,7 @@ export default function FieldManagerDashboard() {
                           <td className="py-2.5 pl-3">
                             <Badge
                               variant={routeStatusBadge(route.status)}
-                              className="text-xs capitalize"
+                              className={`text-xs capitalize ${routeStatusClass(route.status)}`}
                             >
                               {route.status.replace(/_/g, " ")}
                             </Badge>
