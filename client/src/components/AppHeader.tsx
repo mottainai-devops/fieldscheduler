@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
+import { trpc } from "@/lib/trpc";
 
 interface BreadcrumbItem {
   label: string;
@@ -42,7 +42,9 @@ export default function AppHeader({
 }: AppHeaderProps) {
   const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
-  const { logout } = useAuth();
+  const logoutMutation = trpc.auth.logout.useMutation({
+    onSuccess: () => setLocation("/admin/login"),
+  });
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,10 +54,7 @@ export default function AppHeader({
     }
   };
 
-  const handleLogout = async () => {
-    await logout();
-    setLocation("/admin/login");
-  };
+  const handleLogout = () => logoutMutation.mutate();
 
   return (
     <>

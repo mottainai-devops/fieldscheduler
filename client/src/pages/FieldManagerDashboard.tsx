@@ -16,7 +16,6 @@
  * account linked" message (server returns FORBIDDEN, caught below).
  */
 import { useState } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -146,13 +145,12 @@ function MetricCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function FieldManagerDashboard() {
-  const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
+  const logoutMutation = trpc.auth.logout.useMutation({
+    onSuccess: () => setLocation("/admin/login"),
+  });
 
-  const handleSignOut = async () => {
-    await logout();
-    setLocation("/admin/login");
-  };
+  const handleSignOut = () => logoutMutation.mutate();
 
   // Date range state for revenue panel — defaults to current month
   const now = new Date();
@@ -263,7 +261,7 @@ export default function FieldManagerDashboard() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48 bg-slate-800 border-slate-700">
                 <DropdownMenuLabel className="text-white text-sm">
-                  {user?.name ?? "Field Manager"}
+                  Field Manager
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator className="bg-slate-700" />
                 <DropdownMenuItem
