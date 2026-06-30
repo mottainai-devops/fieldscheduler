@@ -67,7 +67,8 @@ const navigationGroups: NavGroup[] = [
       { label: "Workers", href: "/workers", icon: Users, minRole: "superadmin" },
       { label: "Field Manager Admin", href: "/field-manager-admin", icon: UserCog, minRole: "superadmin" },
       { label: "Field Manager Tagging", href: "/field-manager-tagging", icon: UserCog, minRole: "admin" },
-      { label: "Manager Dashboard", href: "/manager", icon: UserCog },
+      // T26 final: minRole admin — field managers don't see this (was causing /manager → /dashboard → /field-manager/dashboard redirect loop)
+      { label: "Manager Dashboard", href: "/manager", icon: UserCog, minRole: "admin" },
     ],
   },
   {

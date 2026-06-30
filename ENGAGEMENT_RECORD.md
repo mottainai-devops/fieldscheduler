@@ -2916,3 +2916,44 @@ All three verification gates pass:
 3. Role guard (Wale blocked with FORBIDDEN) — PASS
 
 **T26 is fully closed. T27 may now open.**
+
+
+---
+
+## T26 STATUS REVISION — 2026-06-30
+
+T26 truly closed at commit [post-badge-fix + Manager Dashboard minRole] after reopening on 2026-06-29.
+
+Initial close-out reported FULLY CLOSED based on API-level verification; owner-side UI sign-in surfaced that field managers were still landing on /dashboard (admin-style page) instead of /field-manager/dashboard. Three follow-up fixes shipped: role-aware login redirect (AdminLogin.tsx + adminAuth.login response), RequireAdminOnly guard on /dashboard, sidebar minRole on Dashboard entry. Plus one-line Manager Dashboard minRole addition (minRole: "admin") to stop the /manager → /dashboard → /field-manager/dashboard redirect loop. UI-level verification (login walkthrough, direct URL test, admin regression) completed by owner on 2026-06-29 confirms all paths work correctly. Pattern #52 + Rule #60 added to formalize the API-vs-UI verification distinction.
+
+**Verification results (owner-confirmed):**
+- TEST 1 — Bukola login redirect: ✅ WORKS
+- TEST 2 — Direct /dashboard access (field manager): ✅ WORKS
+- TEST 3 — Wale admin regression: ✅ WORKS
+
+---
+
+## Pattern #52 — API-Level Verification Mistaken for Behavioral Verification
+
+When a feature has a server-side component AND a user-facing entry path (login flow, route guards, navigation), API-level testing confirms the server returns correct data but doesn't confirm the user actually reaches the feature.
+
+Canonical instance: T26 Field Manager Dashboard verification ran via authenticated API calls; missed that field managers were landing on /dashboard instead of /field-manager/dashboard. Surfaced by owner during UI sign-in after the close-out report claimed "FULLY CLOSED."
+
+---
+
+## Rule #60 — Behavioral Verification Must Include the User's Actual Entry Path
+
+Behavioral verification for user-facing features must include the user's actual entry path: log in via the UI, navigate to the feature via the intended path, confirm the feature reaches the user. Authenticated API calls verify server-side correctness but not delivery. Both layers are required for a feature to be considered shipped.
+
+---
+
+## T27 Carry-Forward Queue
+
+1. Field manager sidebar audit — broader review of which entries should be visible to field managers (Analytics? Performance? Route Analytics?). Also: should admins see "My Dashboard" entry (currently visible to all role tiers >= fieldManager — results in FORBIDDEN error when admin clicks since no worker account is linked)?
+2. Active Workers data quality — Wale's admin dashboard shows entries like "Low.Low income" and "Low.low income" in the Active Workers panel. Look like residential customer categorizations that ended up in the workers table. Investigation candidate.
+3. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+4. Tranche 5C canonical constants centralisation
+5. workerProcedure positive test verification (auto-completes)
+6. T17 Zoho sync behavioral verification (auto-completes)
+7. Payments table investigation (only 1 row in production)
+8. Per-MAF financial breakdown
