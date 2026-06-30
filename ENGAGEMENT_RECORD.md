@@ -2376,3 +2376,108 @@ driftCheck now runs against a known-clean baseline. New drift is caught the mome
 - `workerProcedure` positive test verification (real Survey App token)
 - T17 Item 2 normalization — sync-zoho-data.mjs behavioral verification
 - `deleteCustomerNote` ownership rules
+
+---
+
+## Tranche 24 (T24) — Compliance Photo Evidence
+
+**Commits:**
+- `8151f5c1` — fieldscheduler (server + React + test)
+- `a41ca43` — fieldscheduler-mobile (Flutter)
+
+**Scope:** Deliver the compliance photo evidence feature identified as a T24 candidate in T23. Resolve the last `@drift-suppress` marker by wiring `evidenceUrls` to both clients. Confirm T23 backfill status.
+
+---
+
+### T23 Backfill Status (Pattern #42 follow-up)
+
+Dev database (`fedbcvtajnmsfbjdip7js8`) does not contain the `abatementNotices` table — it is a dev-only database without compliance tables. The backfill query cannot be executed from the sandbox. Status: **pending owner execution on production DB**.
+
+SQL to run on production:
+```sql
+UPDATE abatementNotices SET noticeNumber = CONCAT('ABT-', id) WHERE noticeNumber IS NULL;
+```
+Verify with:
+```sql
+SELECT COUNT(*) - COUNT(noticeNumber) AS still_null FROM abatementNotices;
+```
+
+---
+
+### T24 Deliverables
+
+**Server — `server/routers/compliance.ts`**
+- New `compliance.uploadViolationPhoto` procedure (`workerProcedure`)
+  - Input: `{ fileData: z.string().min(1), fileName: z.string().min(1), fileType: z.string().min(1) }`
+  - Calls `storageService.uploadViolationPhoto()` → S3 key `violation-photos/worker-{workerId}/{timestamp}-{randomSuffix}.{ext}`
+  - Returns `{ fileUrl, fileKey }`
+- Updated `createViolation`: `evidenceUrls` changed from `z.string().optional()` to `z.array(z.string().url()).max(5).optional()`
+  - Serialized as `JSON.stringify(urls)` before DB insert
+  - `@drift-suppress` marker retained (Flutter also wires this field — cross-repo, not a ghost)
+
+**DB helpers — `server/complianceDb.ts`**
+- `getAllViolations` and `getViolationsByCustomer`: deserialize `evidenceUrls` from JSON string → `string[]` on read
+- `getAbatementNoticeById`: safety fallback `?? \`ABT-${notice.id}\`` retained for historical null rows
+
+**React — `WorkerMobileReportViolation.tsx`**
+- `uploadViolationPhoto` mutation added
+- Photo state: `selectedPhotos: File[]`, max 5, 5MB client-side limit
+- `handleSubmit`: upload photos first → collect S3 URLs → pass to `createViolation`
+- UI: thumbnail grid (3-column), remove button overlay, "Add Photo" button with count indicator
+
+**React — `Compliance.tsx`**
+- Evidence photo thumbnail strip added to violation cards
+- Thumbnails link to full S3 URL, `object-cover` 64×64px
+
+**Flutter — `lib/services/api_service.dart`**
+- `uploadViolationPhoto()` method added (mirrors `uploadPaymentProof` pattern)
+- `reportViolation()` updated: accepts `List<String>? evidenceUrls`, passes to `createViolation` when non-empty
+
+**Flutter — `lib/screens/report_violation_screen.dart`**
+- Added `dart:convert`, `dart:io`, `image_picker` imports
+- Photo state: `List<File> _photos`, max 5, 5MB limit
+- `_addPhoto()`: `ImagePicker.camera`, size validation
+- `_submit()`: upload loop → collect S3 URLs → pass to `reportViolation`
+- UI: Evidence Photos section with GridView thumbnail preview, remove buttons, Take Photo button
+
+**Tests — `server/compliance.photoEvidence.test.ts`**
+- 14 tests: 5 uploadViolationPhoto input validation, 6 createViolation evidenceUrls, 3 JSON round-trip
+- All 14/14 pass
+
+**driftCheck:** `✓ CLEAN — 0 findings` (2 `@drift-suppress` markers: `requestHandoff.routeId` Flutter-only, `createViolation.evidenceUrls` cross-repo wired)
+
+---
+
+### Pattern #49 (updated from T23)
+
+**Pattern #49 — Server-side auto-generation for system identifiers**
+
+When a Zod field is named as a system identifier (e.g., `noticeNumber`, `caseId`, `referenceCode`) but is accepted from the client, it is almost always a design error. System identifiers should be:
+1. Generated server-side (insert → capture `insertId` → UPDATE with derived value)
+2. Removed from the Zod input schema
+3. Never accepted from the client
+
+The T23 `noticeNumber` fix is the canonical example.
+
+---
+
+### Rule 57 — evidenceUrls serialization contract
+
+When storing `string[]` in a MySQL `TEXT` column:
+- **Write path:** `JSON.stringify(urls)` before insert/update
+- **Read path:** `urls ? JSON.parse(urls) as string[] : undefined` after select
+- **Safety fallback:** wrap in `try/catch` if the column may contain legacy non-JSON values
+- **Schema type:** `z.array(z.string().url()).max(N).optional()` — never `z.string()` for multi-URL fields
+
+---
+
+### Carry-Forward to T25+
+
+1. T23 backfill — run `UPDATE abatementNotices SET noticeNumber = CONCAT('ABT-', id) WHERE noticeNumber IS NULL` on production (owner action required)
+2. Scoped financial access — `getMyFinancialMetrics`
+3. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+4. Field Manager Dashboard
+5. Tranche 5C canonical constants centralisation
+6. `workerProcedure` positive test verification (real Survey App token)
+7. T17 Zoho sync behavioral verification
+8. `deleteCustomerNote` ownership rules
