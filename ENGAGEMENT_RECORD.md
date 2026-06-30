@@ -2481,3 +2481,138 @@ When storing `string[]` in a MySQL `TEXT` column:
 6. `workerProcedure` positive test verification (real Survey App token)
 7. T17 Zoho sync behavioral verification
 8. `deleteCustomerNote` ownership rules
+
+---
+
+## Tranche 25 — T25 (CLOSED 2026-06-30)
+
+### Scope
+1. T23 backfill execution (deferred — production DB only, owner action required)
+2. `uploadPaymentProof` migrated from `publicProcedure` to `workerProcedure`
+3. `deleteCustomerNote` ownership rules + `CustomerDetail.tsx` undefined-mutation fix + driftCheck Class B improvement
+
+---
+
+### T25 Deliverables
+
+**Item 1 — T23 backfill (deferred)**
+- Production DB is not reachable from sandbox.
+- SQL ready: `UPDATE abatementNotices SET noticeNumber = CONCAT('ABT-', id) WHERE noticeNumber IS NULL;`
+- Owner must execute on production DB.
+
+**Item 2 — `uploadPaymentProof` → `workerProcedure` (DONE)**
+- `workerId` removed from Zod input schema (was a SECURITY_DEBT item — worker could pass any workerId)
+- Procedure now uses `ctx.workerId` from the authenticated worker context
+- React call site (`WorkerMobileCustomerDetail.tsx`) updated to not pass `workerId`
+- `SECURITY_DEBT.md` updated: item marked resolved
+
+**Item 3a — `deleteCustomerNote` ownership check (DONE)**
+- `getCustomerNoteById(id)` helper added to `server/notesDb.ts`
+- `workerAuth.deleteCustomerNote` now fetches the note and throws `FORBIDDEN` if `note.workerId !== ctx.workerId`
+- `NOT_FOUND` thrown if note does not exist
+
+**Item 3b — `CustomerDetail.tsx` undefined mutations fix (DONE)**
+- `addNoteMutation` wired to `trpc.customer.addAdminNote.useMutation`
+- `deleteNoteMutation` wired to `trpc.customer.deleteCustomerNote.useMutation`
+- `refetchNotes` wired from `getCustomerNotes.refetch`
+- Previously these were used in JSX but never defined — silent runtime errors on click
+
+**Item 3c — driftCheck Class B improvement — Phase 4 (DONE)**
+
+Root cause of false negative: `getDefinedIdentifiersInComponent` scanned the **entire source file**,
+so `addNoteMutation` in `ReplyBox`'s parameter destructuring (`{ addNoteMutation }`) polluted the
+`defined` set for `CustomerDetail`, masking the undefined reference.
+
+Fix:
+- `getDefinedIdentifiersInComponent` refactored to accept a `Node` (component) instead of `SourceFile`
+- `getFileImports(sf)` helper added — imports are always in scope for all components
+- `getEnclosingScopes(node)` walks the full lexical scope chain (outermost → innermost) from a JSX attribute
+- `runClassB` now builds the `defined` set by merging file imports + all ancestor scope declarations
+- This correctly handles `.map()` callbacks: outer-scope variables are visible inside the callback
+- No false positives introduced (verified against `FieldManagerTagging.tsx` `.map()` case)
+
+`customerRouter.ts` — `@drift-suppress` markers added for three optional fields in `addAdminNote`:
+- `routeId`: future-use — route-linked notes not yet implemented in admin UI
+- `photoUrl`: future-use — photo attachment for admin notes not yet implemented
+- `authorName`: server-side fallback — used as `ctx.user.name` override; not sent by client
+
+**Tests — `server/customerNotes.ownership.test.ts`**
+- 5 tests: Case 1 (own note → success), Case 2 (other worker's note → FORBIDDEN),
+  Case 3 (admin delete → success, no ownership check), Case 4 (admin add note → success),
+  Bonus (non-existent note → NOT_FOUND)
+- All 5/5 pass; total suite: **50 tests passing**
+
+**driftCheck:** `✓ CLEAN — 0 findings`
+(4 `@drift-suppress` markers: `requestHandoff.routeId` Flutter-only, `createViolation.evidenceUrls`
+cross-repo, `addAdminNote.routeId` future-use, `addAdminNote.photoUrl` future-use,
+`addAdminNote.authorName` server-side fallback; 1 spread-suppressed procedure)
+
+---
+
+### Pattern #50 — Component-scoped lexical analysis for JSX handler drift
+
+When performing static analysis of JSX handler references, the `defined` set must be scoped to
+the **lexical scope chain** of the JSX attribute site — not the entire source file.
+
+**Why file-level scope fails:**
+A sibling component defined in the same file may have a parameter with the same name as an
+undefined reference in the target component. File-level scanning includes that sibling's
+parameters in the `defined` set, masking the bug.
+
+**Correct approach:**
+1. Walk up the AST from the JSX attribute to collect all enclosing function scopes (outermost first)
+2. Merge each scope's own variable declarations and parameters into the `defined` set
+3. Always include module-level imports (always in scope for all components in the file)
+4. This correctly handles `.map()` callbacks: outer-scope variables are visible inside the callback
+
+**Implementation pattern:**
+```typescript
+function getEnclosingScopes(node: Node): Node[] {
+  const scopes: Node[] = [];
+  let current: Node | undefined = node.getParent();
+  while (current) {
+    if (isFunctionNode(current)) scopes.unshift(current); // outermost first
+    current = current.getParent?.();
+  }
+  return scopes;
+}
+// Then merge: fileImports + each scope's declarations/params
+```
+
+---
+
+### Rule #58 — Worker ownership check pattern for note/record deletion
+
+When a `workerProcedure` allows deletion of records that are authored by workers:
+1. Always fetch the record first (`getRecordById`)
+2. Throw `NOT_FOUND` if the record does not exist
+3. Throw `FORBIDDEN` if `record.workerId !== ctx.workerId`
+4. Only then proceed with deletion
+
+Admin-tier procedures (`adminProcedure`) do NOT need ownership checks — admins can delete any record.
+
+**Canonical implementation:**
+```typescript
+deleteRecord: workerProcedure
+  .input(z.object({ id: z.number() }))
+  .mutation(async ({ input, ctx }) => {
+    const record = await db.getRecordById(input.id);
+    if (!record) throw new TRPCError({ code: 'NOT_FOUND', message: 'Record not found' });
+    if (record.workerId !== ctx.workerId) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete records you authored' });
+    }
+    await db.deleteRecord(input.id);
+    return { success: true };
+  }),
+```
+
+---
+
+### Carry-Forward to T26+
+1. T23 backfill — run `UPDATE abatementNotices SET noticeNumber = CONCAT('ABT-', id) WHERE noticeNumber IS NULL` on production (owner action required)
+2. Scoped financial access — `getMyFinancialMetrics`
+3. Company/vendor entity model — AFT Okuleye & Sons, Dalco Ventures
+4. Field Manager Dashboard
+5. Tranche 5C canonical constants centralisation
+6. `workerProcedure` positive test verification (real Survey App token)
+7. T17 Zoho sync behavioral verification
