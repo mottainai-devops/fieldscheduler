@@ -2616,3 +2616,72 @@ deleteRecord: workerProcedure
 5. Tranche 5C canonical constants centralisation
 6. `workerProcedure` positive test verification (real Survey App token)
 7. T17 Zoho sync behavioral verification
+
+---
+
+## Production Deployment — T21–T25 (Jun 30 2026)
+
+**Executed by:** Manus agent via SSH (54.194.172.107, ubuntu@ip-10-0-9-249)
+
+### Actions Performed
+
+1. **T23 backfill executed** —  — 1 row updated (, , ). Zero NULL noticeNumbers remain.
+
+2. **T21–T25 deployed** —  fast-forwarded from  (T20) to  (T25). 25 files changed, 2070 insertions.
+
+3. ** ERR_PNPM_NO_PKG_MANIFEST  No package.json found in /home/ubuntu** —  added as devDependency (driftCheck Class B improvement).
+
+4. **Production build** —  ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND  No package.json (or package.yaml, or package.json5) was found in "/home/ubuntu". completed cleanly (vite + esbuild, 29s). Bundle:  369.2kb.
+
+5. **PM2 restart** —  (id=0) restarted, uptime stable, port 3002 listening.
+
+### Production Health at Close
+
+| Check | Result |
+|---|---|
+|  | HTTP 200 |
+| PM2  | online, 117mb, 0 crash restarts since deploy |
+| driftCheck | ✓ CLEAN — 0 schema drift, 0 JSX handler drift |
+| Test suite | ✓ 50 tests passing (4 test files) |
+|  NULL count | 0 (T23 backfill complete) |
+
+### Observation:  PM2 Process (id=1)
+
+A second PM2 process (, id=1) is running from  on port 3000. It is **not proxied by nginx** (nginx routes to port 3002 only) and is crashing with  because  is not installed in . This process is **not serving production traffic** — it appears to be a legacy/orphaned process. No action taken; owner should decide whether to stop it ().
+
+**T21–T25 are now live on production.**
+
+
+---
+
+## Production Deployment -- T21-T25 (Jun 30 2026)
+
+**Executed by:** Manus agent via SSH (54.194.172.107, ubuntu@ip-10-0-9-249)
+
+### Actions Performed
+
+1. **T23 backfill executed** -- 1 row updated (id=1, noticeNumber=ABT-1, customerId=9830). Zero NULL noticeNumbers remain.
+
+2. **T21-T25 deployed** -- git pull fast-forwarded from d2a4ab3b (T20) to 568875f6 (T25). 25 files changed, 2070 insertions.
+
+3. **pnpm install** -- ts-morph 28.0.0 added as devDependency (driftCheck Class B improvement).
+
+4. **Production build** -- pnpm run build completed cleanly (vite + esbuild, 29s). Bundle: dist/index.js 369.2kb.
+
+5. **PM2 restart** -- field-worker-scheduler (id=0) restarted, uptime stable, port 3002 listening.
+
+### Production Health at Close
+
+| Check | Result |
+|---|---|
+| https://app.fieldscheduler.net/ | HTTP 200 |
+| PM2 field-worker-scheduler | online, 117mb, 0 crash restarts since deploy |
+| driftCheck | CLEAN -- 0 schema drift, 0 JSX handler drift |
+| Test suite | 50 tests passing (4 test files) |
+| abatementNotices NULL count | 0 (T23 backfill complete) |
+
+### Observation: Orphaned fieldscheduler PM2 Process (id=1)
+
+A second PM2 process (fieldscheduler, id=1) runs from /home/ubuntu/dist/index.js on port 3000. It is NOT proxied by nginx and crashes with ERR_MODULE_NOT_FOUND: nodemailer. This process is not serving production traffic -- it is a legacy orphaned process. Owner should run: pm2 delete fieldscheduler
+
+**T21-T25 are now live on production.**
