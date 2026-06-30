@@ -16,6 +16,8 @@
  * account linked" message (server returns FORBIDDEN, caught below).
  */
 import { useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +36,17 @@ import {
   ClipboardList,
   MapPin,
   Loader2,
+  LogOut,
+  User,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -134,6 +146,14 @@ function MetricCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function FieldManagerDashboard() {
+  const { user, logout } = useAuth();
+  const [, setLocation] = useLocation();
+
+  const handleSignOut = async () => {
+    await logout();
+    setLocation("/admin/login");
+  };
+
   // Date range state for revenue panel — defaults to current month
   const now = new Date();
   const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -216,20 +236,46 @@ export default function FieldManagerDashboard() {
               Your personal field manager overview
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-slate-600 text-slate-300 hover:bg-slate-700 gap-2"
-            onClick={() => {
-              refetchMetrics();
-              refetchRevenue();
-              refetchOutstanding();
-              refetchRoutes();
-            }}
-          >
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-slate-600 text-slate-300 hover:bg-slate-700 gap-2"
+              onClick={() => {
+                refetchMetrics();
+                refetchRevenue();
+                refetchOutstanding();
+                refetchRoutes();
+              }}
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-slate-300 hover:text-white hover:bg-slate-700"
+                >
+                  <User className="w-5 h-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48 bg-slate-800 border-slate-700">
+                <DropdownMenuLabel className="text-white text-sm">
+                  {user?.name ?? "Field Manager"}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator className="bg-slate-700" />
+                <DropdownMenuItem
+                  onClick={handleSignOut}
+                  className="text-red-400 hover:text-red-300 hover:bg-slate-700 cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
 

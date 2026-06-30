@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 interface BreadcrumbItem {
   label: string;
@@ -39,22 +40,21 @@ export default function AppHeader({
   backLabel = "Back",
   breadcrumbs
 }: AppHeaderProps) {
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
+  const { logout } = useAuth();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      // Navigate to search results or filter current page
-      console.log("Searching for:", searchQuery);
       // TODO: Implement global search functionality
+      console.log("Searching for:", searchQuery);
     }
   };
 
-  const handleLogout = () => {
-    // TODO: Implement logout functionality
-    console.log("Logging out...");
-    setLocation("/");
+  const handleLogout = async () => {
+    await logout();
+    setLocation("/admin/login");
   };
 
   return (
