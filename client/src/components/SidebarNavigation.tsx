@@ -52,6 +52,8 @@ const navigationGroups: NavGroup[] = [
     icon: LayoutDashboard,
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      // T26: Field Manager personal dashboard — scoped to ctx.user.fieldManagerId (Pattern #51)
+      { label: "My Dashboard", href: "/field-manager/dashboard", icon: LayoutDashboard, minRole: "fieldManager" },
       { label: "Analytics", href: "/analytics", icon: BarChart3, minRole: "fieldManager" },
       { label: "Performance", href: "/performance-dashboard", icon: BarChart3 },
       { label: "Route Analytics", href: "/route-analytics-dashboard", icon: BarChart3 },
