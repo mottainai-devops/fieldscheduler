@@ -55,6 +55,8 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import RequireAuth from "./components/RequireAuth";
 import RequireFieldManager from "./components/RequireFieldManager";
 import RequireAdmin from "./components/RequireAdmin";
+// T26 Fix 2: RequireAdminOnly restricts /dashboard to admin/superadmin; redirects field_managers
+import RequireAdminOnly from "./components/RequireAdminOnly";
 import InactivityLogout from "./components/InactivityLogout";
 
 
@@ -67,12 +69,14 @@ function Router() {
       <Route path={"/login"} component={Login} />
       <Route path={"/admin/login"} component={AdminLogin} />
       <Route path={"/admin/dashboard"} component={AdminDashboard} />
+      {/* T26 Fix 2: /dashboard restricted to admin/superadmin only.
+           field_manager role → RequireAdminOnly redirects to /field-manager/dashboard */}
       <Route path={"/dashboard"}>
-        <RequireAuth>
+        <RequireAdminOnly>
           <MainLayout>
             <Dashboard />
           </MainLayout>
-        </RequireAuth>
+        </RequireAdminOnly>
       </Route>
       {/* T14 Item 4: fieldManager tier — customers accessible to all admin-tier roles */}
       <Route path={"/customers"}>

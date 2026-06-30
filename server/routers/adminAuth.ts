@@ -98,6 +98,10 @@ export const adminAuthRouter = router({
         
         return {
           success: true,
+          // T26 Fix 1: include role so AdminLogin.tsx can redirect by role
+          // field_manager → /field-manager/dashboard
+          // admin/superadmin → /dashboard (current behaviour)
+          role: usersRole,
           worker: {
             id: worker.id,
             name: worker.name,

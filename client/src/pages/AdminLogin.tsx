@@ -15,8 +15,15 @@ export default function AdminLogin() {
   const [error, setError] = useState("");
 
   const loginMutation = trpc.adminAuth.login.useMutation({
-    onSuccess: () => {
-      setLocation("/dashboard");
+    onSuccess: (data) => {
+      // T26 Fix 1: redirect by role
+      // field_manager → /field-manager/dashboard (their dedicated scoped view)
+      // admin / superadmin → /dashboard (system-wide admin view)
+      if (data.role === 'field_manager') {
+        setLocation('/field-manager/dashboard');
+      } else {
+        setLocation('/dashboard');
+      }
     },
     onError: (error) => {
       setError(error.message);

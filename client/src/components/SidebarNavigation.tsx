@@ -51,7 +51,8 @@ const navigationGroups: NavGroup[] = [
     title: "Dashboard & Analytics",
     icon: LayoutDashboard,
     items: [
-      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      // T26 Fix 3: Dashboard is admin/superadmin only — field managers see only "My Dashboard"
+      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, minRole: "admin" },
       // T26: Field Manager personal dashboard — scoped to ctx.user.fieldManagerId (Pattern #51)
       { label: "My Dashboard", href: "/field-manager/dashboard", icon: LayoutDashboard, minRole: "fieldManager" },
       { label: "Analytics", href: "/analytics", icon: BarChart3, minRole: "fieldManager" },
