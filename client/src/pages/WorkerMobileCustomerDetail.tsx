@@ -132,14 +132,6 @@ export default function WorkerMobileCustomerDetail() {
       return;
     }
 
-    // Get worker ID from localStorage
-    const workerData = localStorage.getItem("currentWorker");
-    if (!workerData) {
-      toast.error("Worker session not found");
-      return;
-    }
-    const workerId = JSON.parse(workerData).id;
-    
     try {
       // Convert file to base64
       const reader = new FileReader();
@@ -150,7 +142,7 @@ export default function WorkerMobileCustomerDetail() {
         await uploadPaymentMutation.mutateAsync({
           customerId: customerId,
           invoiceId: selectedInvoiceId || undefined,
-          workerId: workerId,
+          // T25: workerId removed — now derived from Bearer token (ctx.workerId) server-side
           fileData: base64Data,
           fileName: paymentFile.name,
           fileType: paymentFile.type,

@@ -1,16 +1,16 @@
-import { publicProcedure, adminProcedure, router, driftLogger } from "../_core/trpc";
+import { publicProcedure, adminProcedure, workerProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 
 export const paymentsRouter = router({
-  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
-  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
-  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
-  // validation inside the handler. See SECURITY_DEBT.md.
+  // T25: Migrated from publicProcedure to workerProcedure (closes SECURITY_DEBT.md item).
+  // workerId now derived from ctx (Bearer token) — not accepted from client.
+  // Flutter client still sends workerId in payload (legacy) — silently stripped by Zod
+  // (same harmless drift as T20 procedures). React client updated to not send workerId.
   // T16 Item 5: driftLogger applied
-  uploadPaymentProof: publicProcedure
+  uploadPaymentProof: workerProcedure
     .use(driftLogger('uploadPaymentProof', {
       shape: {
-        customerId: true, invoiceId: true, workerId: true,
+        customerId: true, invoiceId: true,
         fileData: true, fileName: true, fileType: true,
         notes: true, amount: true, paymentMethod: true,
       }
@@ -18,7 +18,6 @@ export const paymentsRouter = router({
     .input(z.object({
       customerId: z.number(),
       invoiceId: z.string().optional(),
-      workerId: z.number(),
       fileData: z.string(), // base64 encoded
       fileName: z.string(),
       fileType: z.string(),
@@ -26,7 +25,7 @@ export const paymentsRouter = router({
       amount: z.string().optional(),
       paymentMethod: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { uploadPaymentProof } = await import("../storageService");
       const { createPaymentEvidence, createNotification } = await import("../paymentEvidenceDb");
       const { getCustomerById, getWorkerById } = await import("../fieldWorkerDb");
@@ -41,7 +40,7 @@ export const paymentsRouter = router({
       const evidenceId = await createPaymentEvidence({
         customerId: input.customerId,
         invoiceId: input.invoiceId,
-        workerId: input.workerId,
+        workerId: ctx.workerId,
         fileUrl,
         fileName: input.fileName,
         fileType: input.fileType,
@@ -51,12 +50,12 @@ export const paymentsRouter = router({
       });
 
       const customer = await getCustomerById(input.customerId);
-      const worker = await getWorkerById(input.workerId);
+      const worker = await getWorkerById(ctx.workerId);
 
       await createNotification({
         type: "payment_upload",
         title: "New Payment Proof Uploaded",
-        message: `${worker?.name || "Worker"} uploaded payment proof for ${customer?.name || "customer"}${input.amount ? ` - Amount: \u20a6${input.amount}` : ""}`,
+        message: `${worker?.name || "Worker"} uploaded payment proof for ${customer?.name || "customer"}${input.amount ? ` - Amount: ₦${input.amount}` : ""}`,
         relatedId: evidenceId,
       });
 

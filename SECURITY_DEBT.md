@@ -1,20 +1,28 @@
 # Security Debt — Public Write Procedures
 
 **Created:** T19 (2026-06-29)
-**Resolved:** T20 (2026-06-29)
-**Status:** ✅ ALL PROCEDURES RESOLVED — `workerProcedure` Bearer token middleware implemented in commit `055f90a0`
+**Resolved:** T20 (2026-06-29) — 12 procedures; T25 (2026-06-30) — 1 remaining procedure
+**Status:** ✅ ALL PUBLIC WRITE PROCEDURES RESOLVED — 13/13 migrated to `workerProcedure`
 
 ---
 
 ## Resolution Summary (T20)
 
-All 12 procedures below were migrated from `publicProcedure` to `workerProcedure` in commit `055f90a0`.
+12 procedures migrated from `publicProcedure` to `workerProcedure` in commit `055f90a0`.
 
 `workerProcedure` validates the `Authorization: Bearer <token>` header against the Survey App (`/users/me`), derives `workerId` and `workerSurveyAppUserId` server-side, and injects them into `ctx`. Client-sent identity fields have been removed from all Zod schemas.
 
 **Negative verification (13/13 PASS):** All 13 procedures return HTTP 401 without a Bearer token. Gate is closed.
 
 **Positive verification:** Deferred — requires a real Survey App Bearer token for a worker with a populated `surveyAppUserId` in the DB. To be verified on first mobile app use after production workers are registered in the Survey App.
+
+---
+
+## Resolution Summary (T25)
+
+`payments.uploadPaymentProof` migrated from `publicProcedure` to `workerProcedure`. `workerId` removed from Zod schema; derived from `ctx.workerId` (Bearer token). React client updated to not send `workerId`. Flutter client still sends `workerId` in payload (legacy) — silently stripped by Zod (same harmless drift as T20 procedures).
+
+**All 13 public write procedures are now resolved.**
 
 ---
 
@@ -35,7 +43,7 @@ Security was handled at the application layer:
 
 ---
 
-## Procedures Resolved (12 total)
+## Procedures Resolved (13 total)
 
 ### Original 6 (identified T14, resolved T20)
 
@@ -64,11 +72,16 @@ Security was handled at the application layer:
 | 11 | `setWebhookPreference` | `workerAuth` | `workerId` from client | `ctx.workerId` from Bearer token |
 | 12 | `deleteCustomerNote` | `workerAuth` | No identity check at all | `workerProcedure` required |
 
+### Identified T19 Item 2b, resolved T25
+
+| # | Procedure | Router | Old Constraint | Fix |
+|---|-----------|--------|----------------|-----|
+| 13 | `uploadPaymentProof` | `payments` | `workerId` from client | `ctx.workerId` from Bearer token |
+
 ---
 
 ## Notes (Post-Resolution)
 
 - `workerAuth.login`, `workerAuth.supervisorLogin`, `workerAuth.verifyPin`, `workerAuth.logout` remain `publicProcedure` — they ARE the auth flow.
 - `workerAuth.getWorker`, `workerAuth.getRoutesByWorkerId`, and other read-only queries remain `publicProcedure` — lower risk; migration deferred to T21+.
-- `payments.uploadPaymentProof` remains `publicProcedure` — T19 Item 2b deferred; owner decision needed on amount/paymentMethod fields.
 - `addCustomerNote` was also resolved in T20 (workerId derived from ctx) — not in the original 8 but fixed as part of the same sweep.

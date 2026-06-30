@@ -844,10 +844,17 @@ export const workerAuthRouter = router({
     }),
 
   // T20: workerProcedure — no identity check existed before; now authenticated
+  // T25: ownership check — workers can only delete notes they authored (ctx.workerId === note.workerId)
   deleteCustomerNote: workerProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const notesDb = await import('../notesDb');
+      const { TRPCError } = await import('@trpc/server');
+      const note = await notesDb.getCustomerNoteById(input.id);
+      if (!note) throw new TRPCError({ code: 'NOT_FOUND', message: 'Note not found' });
+      if (note.workerId !== ctx.workerId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete notes you authored' });
+      }
       await notesDb.deleteCustomerNote(input.id);
       return { success: true };
     }),

@@ -72,6 +72,14 @@ export async function addCustomerNote(data: {
   return result;
 }
 
+export async function getCustomerNoteById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { customerVisitNotes } = await import("../drizzle/schema");
+  const rows = await db.select().from(customerVisitNotes).where(eq(customerVisitNotes.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
 export async function deleteCustomerNote(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

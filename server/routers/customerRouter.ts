@@ -49,10 +49,13 @@ export const customerRouter = router({
   addAdminNote: adminProcedure
     .input(z.object({
       customerId: z.number(),
+      // @drift-suppress: future-use — route-linked notes not yet implemented in admin UI
       routeId: z.number().optional().nullable(),
       noteText: z.string().optional(),
+      // @drift-suppress: future-use — photo attachment for admin notes not yet implemented
       photoUrl: z.string().optional(),
       parentNoteId: z.number().optional().nullable(),
+      // @drift-suppress: server-side fallback — used as ctx.user.name override; not sent by client
       authorName: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {

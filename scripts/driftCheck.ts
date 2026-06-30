@@ -122,6 +122,11 @@ const JSX_EVENT_ATTRS = new Set([
   "onDragStart", "onDragEnd", "onDrop", "onDragOver",
 ]);
 
+// Suffixes for custom props that pass mutation/handler objects as bare identifiers
+// e.g. addNoteMutation={addNoteMutation}, onConfirm={handleConfirm}
+// These are NOT synthetic events but still represent undefined-reference bugs
+const MUTATION_PROP_SUFFIXES = ["Mutation", "Handler", "Callback", "Action", "Fn"];
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CallSiteFields {
@@ -531,18 +536,28 @@ function runClassA(project: Project): SchemaDriftFinding[] {
 
 // ─── Class B: JSX Handler Drift ──────────────────────────────────────────────
 
-function getDefinedIdentifiersInComponent(sf: SourceFile): Set<string> {
-  /**
-   * Returns all identifiers that are "defined" in the component file:
-   * - local const/let/var declarations
-   * - function declarations
-   * - import bindings (default, named, namespace)
-   * - destructured from props (const { x } = props / const { x } = someObj)
-   * - useCallback bindings
-   */
-  const defined = new Set<string>();
+/**
+ * Returns all identifiers that are "defined" within a specific component node
+ * (a function declaration or arrow function). Scoped to the component only —
+ * NOT the whole file — so that sibling components' parameters don't pollute
+ * the defined set.
+ *
+ * Collects:
+ * - local const/let/var declarations (including destructuring)
+ * - nested function declarations
+ * - own parameters (props destructuring)
+ * - module-level imports (always in scope for any component in the file)
+ *
+ * NOTE: imports are collected separately from the SourceFile and merged in,
+ * since they are always in scope for all components.
+ */
+function getDefinedIdentifiersInComponent(
+  componentNode: Node,
+  fileImports: Set<string>
+): Set<string> {
+  const defined = new Set<string>(fileImports); // imports always in scope
 
-  sf.forEachDescendant((node) => {
+  componentNode.forEachDescendant((node) => {
     // Variable declarations: const x = ..., let x = ...
     if (Node.isVariableDeclaration(node)) {
       const nameNode = node.getNameNode();
@@ -568,51 +583,81 @@ function getDefinedIdentifiersInComponent(sf: SourceFile): Set<string> {
       }
     }
 
-    // Function declarations: function handleX() {}
+    // Nested function declarations: function handleX() {}
     if (Node.isFunctionDeclaration(node)) {
       const name = node.getName();
       if (name) defined.add(name);
     }
+  });
 
-    // Import declarations
-    if (Node.isImportDeclaration(node)) {
-      const clause = node.getImportClause();
-      if (!clause) return;
-      // Default import: import handleX from '...'
-      const defaultBinding = clause.getDefaultImport();
-      if (defaultBinding) defined.add(defaultBinding.getText());
-      // Named imports: import { handleX, handleY } from '...'
-      const namedBindings = clause.getNamedBindings();
-      if (namedBindings && Node.isNamedImports(namedBindings)) {
-        for (const specifier of namedBindings.getElements()) {
-          defined.add(specifier.getAliasNode()?.getText() ?? specifier.getName());
-        }
-      }
-      // Namespace import: import * as handlers from '...'
-      if (namedBindings && Node.isNamespaceImport(namedBindings)) {
-        defined.add(namedBindings.getName());
-      }
-    }
-
-    // Parameters of function/arrow expressions (props destructuring)
-    if (Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node)) {
-      for (const param of node.getParameters()) {
-        const nameNode = param.getNameNode();
-        if (Node.isIdentifier(nameNode)) {
-          defined.add(nameNode.getText());
-        } else if (Node.isObjectBindingPattern(nameNode)) {
-          for (const element of nameNode.getElements()) {
-            const binding = element.getNameNode();
-            if (Node.isIdentifier(binding)) {
-              defined.add(binding.getText());
-            }
+  // Own parameters (props destructuring) — only the direct parameters of this
+  // component, not nested functions
+  if (
+    Node.isFunctionDeclaration(componentNode) ||
+    Node.isArrowFunction(componentNode) ||
+    Node.isFunctionExpression(componentNode)
+  ) {
+    for (const param of componentNode.getParameters()) {
+      const nameNode = param.getNameNode();
+      if (Node.isIdentifier(nameNode)) {
+        defined.add(nameNode.getText());
+      } else if (Node.isObjectBindingPattern(nameNode)) {
+        for (const element of nameNode.getElements()) {
+          const binding = element.getNameNode();
+          if (Node.isIdentifier(binding)) {
+            defined.add(binding.getText());
           }
         }
       }
     }
-  });
+  }
 
   return defined;
+}
+
+/** Collect all import bindings from a source file (always in scope for every component). */
+function getFileImports(sf: SourceFile): Set<string> {
+  const imports = new Set<string>();
+  for (const decl of sf.getImportDeclarations()) {
+    const clause = decl.getImportClause();
+    if (!clause) continue;
+    const defaultBinding = clause.getDefaultImport();
+    if (defaultBinding) imports.add(defaultBinding.getText());
+    const namedBindings = clause.getNamedBindings();
+    if (namedBindings && Node.isNamedImports(namedBindings)) {
+      for (const specifier of namedBindings.getElements()) {
+        imports.add(specifier.getAliasNode()?.getText() ?? specifier.getName());
+      }
+    }
+    if (namedBindings && Node.isNamespaceImport(namedBindings)) {
+      imports.add(namedBindings.getName());
+    }
+  }
+  return imports;
+}
+
+/**
+ * Walk up the AST from a node and collect all enclosing function scopes
+ * (function declarations, arrow functions, function expressions) up to the
+ * file root. Returns them ordered from outermost to innermost.
+ *
+ * This is used to build the full lexical scope chain for a JSX attribute:
+ * identifiers defined in any ancestor scope are in scope at the attribute site.
+ */
+function getEnclosingScopes(node: Node): Node[] {
+  const scopes: Node[] = [];
+  let current: Node | undefined = node.getParent();
+  while (current) {
+    if (
+      Node.isFunctionDeclaration(current) ||
+      Node.isArrowFunction(current) ||
+      Node.isFunctionExpression(current)
+    ) {
+      scopes.unshift(current); // prepend so outermost is first
+    }
+    current = current.getParent?.();
+  }
+  return scopes;
 }
 
 function runClassB(project: Project): HandlerDriftFinding[] {
@@ -626,14 +671,18 @@ function runClassB(project: Project): HandlerDriftFinding[] {
   );
 
   for (const sf of componentFiles) {
-    const defined = getDefinedIdentifiersInComponent(sf);
+    const fileImports = getFileImports(sf);
 
     sf.forEachDescendant((node) => {
       // Find JSX attributes
       if (!Node.isJsxAttribute(node)) return;
 
       const attrName = node.getNameNode().getText();
-      if (!JSX_EVENT_ATTRS.has(attrName)) return;
+      // IN SCOPE: synthetic event attrs (onClick etc.) AND custom props that pass
+      // mutation/handler objects by suffix (e.g. addNoteMutation, onConfirm, handleFn)
+      const isEventAttr = JSX_EVENT_ATTRS.has(attrName);
+      const isMutationProp = MUTATION_PROP_SUFFIXES.some((suffix) => attrName.endsWith(suffix));
+      if (!isEventAttr && !isMutationProp) return;
 
       const initializer = node.getInitializer();
       if (!initializer) return;
@@ -656,6 +705,20 @@ function runClassB(project: Project): HandlerDriftFinding[] {
         handlerName === "true" ||
         handlerName === "false"
       ) return;
+
+      // Compute defined set from the full lexical scope chain:
+      // collect identifiers from all ancestor function scopes (outermost first),
+      // so that variables defined in outer components are visible in inner callbacks.
+      // This prevents sibling components' parameters from masking undefined refs
+      // while still allowing outer-scope variables to be referenced in .map() callbacks.
+      const enclosingScopes = getEnclosingScopes(node);
+      const defined = new Set<string>(fileImports);
+      for (const scope of enclosingScopes) {
+        // Merge each scope's own declarations and parameters into the defined set
+        for (const id of getDefinedIdentifiersInComponent(scope, new Set())) {
+          defined.add(id);
+        }
+      }
 
       if (!defined.has(handlerName)) {
         findings.push({

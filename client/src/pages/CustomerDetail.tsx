@@ -76,10 +76,18 @@ export default function CustomerDetail() {
     { enabled: !!customerId }
   );
 
-  const { data: customerNotes } = trpc.customer.getCustomerNotes.useQuery(
+  const { data: customerNotes, refetch: refetchNotes } = trpc.customer.getCustomerNotes.useQuery(
     { customerId: customerId! },
     { enabled: !!customerId }
   );
+
+  // T25 fix: wire admin note mutations (were undefined — caused runtime errors on Notes tab)
+  const addNoteMutation = trpc.customer.addAdminNote.useMutation({
+    onSuccess: () => refetchNotes(),
+  });
+  const deleteNoteMutation = trpc.customer.deleteCustomerNote.useMutation({
+    onSuccess: () => refetchNotes(),
+  });
 
   if (!customerId || !customer) {
     return (
