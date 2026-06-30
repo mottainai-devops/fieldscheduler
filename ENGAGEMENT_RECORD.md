@@ -2685,3 +2685,67 @@ A second PM2 process (, id=1) is running from  on port 3000. It is **not proxied
 A second PM2 process (fieldscheduler, id=1) runs from /home/ubuntu/dist/index.js on port 3000. It is NOT proxied by nginx and crashes with ERR_MODULE_NOT_FOUND: nodemailer. This process is not serving production traffic -- it is a legacy orphaned process. Owner should run: pm2 delete fieldscheduler
 
 **T21-T25 are now live on production.**
+
+
+---
+
+## Tranche 26 — Field Manager Dashboard (Jun 30 2026)
+
+### Scope
+Field Manager personal dashboard: 4 server procedures + client page + sidebar nav entry + route guard + 22 behavioral verification tests.
+
+### Owner Decisions (pre-implementation)
+| Decision | Choice |
+|---|---|
+| Procedure shape | 4 procedures: getMyMetrics, getMyRevenue, getMyOutstandingBalances, getMyRecentRoutes |
+| Revenue source | invoices table only (payments table excluded — only 1 row, unreliable) |
+| Completion rate denominator | routeCustomers (all stops), not routes |
+| completionRate when no routes | null (not 0%) |
+| Outstanding balances scope | balance > 0 AND status != 'void' |
+| Revenue VARCHAR cast | CAST(fieldManagerId AS CHAR) = CAST(workers.id AS CHAR) |
+
+### Server (server/routers/fieldManager.ts)
+- `fieldManager.getMyMetrics` (void): customer count, pending route count, unrouted customer count, completion rate (last 30 days). completionRate.percentage is null when total=0.
+- `fieldManager.getMyRevenue` (startDate?, endDate?): invoiced total + invoice count for date range. Defaults: first of current month → today.
+- `fieldManager.getMyOutstandingBalances` (void): per-invoice rows with balance > 0, status != 'void', sorted by balance DESC. Summary: totalOutstanding, totalCount.
+- `fieldManager.getMyRecentRoutes` (void): last 10 routes by scheduledDate DESC, with supervisor name (JOIN workers) and customer count (COUNT routeCustomers).
+- All 4 procedures call `requireFieldManagerId(ctx)` — throws FORBIDDEN if ctx.user.fieldManagerId is null/undefined/0.
+- No workerId or fieldManagerId in any input schema (Pattern #51 / Rule #59).
+- Registered in server/routers.ts as `fieldManager: fieldManagerRouter`.
+
+### Client (client/src/pages/FieldManagerDashboard.tsx)
+- Route: /field-manager/dashboard, guarded by RequireFieldManager.
+- Sidebar: 'My Dashboard' entry in Dashboard & Analytics group, minRole: fieldManager.
+- Panel 1: Metrics strip (4 cards: customers, pending routes, unrouted, completion rate).
+- Panel 2: Revenue card with date-range picker (Apply button triggers re-query).
+- Panel 3: Outstanding balances table (invoice number, customer name/MAF, balance, status badge).
+- Panel 4: Recent routes table (date, stop count, supervisor name, status badge).
+- FORBIDDEN error state: 'No Worker Account Linked' card for admin/superadmin without fieldManagerId.
+- All panels show skeleton loaders while loading.
+
+### Behavioral Verification Tests (server/fieldManager.dashboard.test.ts — 22 tests)
+- requireFieldManagerId: FORBIDDEN for null/undefined/0/null-user (5 cases)
+- getMyRevenue date range defaults (4 cases)
+- getMyRevenue input schema validation (3 cases)
+- Payload injection guard: no workerId/fieldManagerId in any input (4 cases)
+- completionRate null semantics: null when total=0, 0%, 100%, rounding (4 cases)
+- Scope isolation: ctx-derived, not input-derived (2 cases)
+
+### Pattern / Rule Additions
+- **Pattern #51**: Field Manager Scoped Procedures — all fieldManager.* procedures derive scope from ctx.user.fieldManagerId via requireFieldManagerId(ctx). No workerId or fieldManagerId in any Zod input schema.
+- **Rule #59**: Never accept workerId or fieldManagerId as input in field-manager-scoped procedures. Scope must be derived from ctx exclusively. Any input field named workerId or fieldManagerId in a fieldManager.* procedure is a security defect.
+
+### Final State
+| Metric | Result |
+|---|---|
+| driftCheck | CLEAN -- 0 findings |
+| Test suite | 72 tests passing (5 test files, +22 new) |
+| Commits | 3 (server router, client page+nav+route, tests) |
+| GitHub push | Pending (push after close-out commit) |
+
+### Carry-Forward to T27+
+1. Scoped financial access -- getMyFinancialMetrics
+2. Company/vendor entity model -- AFT Okuleye & Sons, Dalco Ventures
+3. Tranche 5C canonical constants centralisation
+4. workerProcedure positive test verification (real Survey App token)
+5. T17 Zoho sync behavioral verification
