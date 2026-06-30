@@ -19,6 +19,7 @@ import { workerNotificationsRouter } from "./routers/workerNotificationsRouter";
 import { adminNotificationsRouter } from "./routers/adminNotificationsRouter";
 import { COOKIE_NAME } from "@shared/const";
 import { customerRouter } from './routers/customerRouter';
+import { fieldManagerRouter } from './routers/fieldManager';
 import { calendarRouter } from './routers/calendar';
 import { calendarOverridesRouter } from './routers/calendarOverrides';
 import * as fieldWorkerDb from "./fieldWorkerDb";
@@ -135,6 +136,8 @@ export const appRouter = router({
   customer: customerRouter,
   calendar: calendarRouter,
   calendarOverrides: calendarOverridesRouter,
+  // T26: Field Manager Dashboard procedures (ctx-derived scoping, Pattern #51 / Rule #59)
+  fieldManager: fieldManagerRouter,
   // T14 Condition 5: Mount previously orphaned routers
   analytics: analyticsRouter,
   financial: financialRouter,
