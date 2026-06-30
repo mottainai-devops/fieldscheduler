@@ -25,6 +25,10 @@ export default function WorkerMobileReportViolation() {
   );
 
   const createViolation = trpc.compliance.createViolation.useMutation();
+  const uploadViolationPhoto = trpc.compliance.uploadViolationPhoto.useMutation();
+
+  const MAX_PHOTOS = 5;
+  const MAX_PHOTO_SIZE_MB = 5;
 
   // Monitor online/offline status
   useEffect(() => {
@@ -49,9 +53,25 @@ export default function WorkerMobileReportViolation() {
   };
 
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setPhotos(prev => [...prev, ...Array.from(e.target.files!)]);
+    if (!e.target.files) return;
+    const incoming = Array.from(e.target.files);
+    const oversized = incoming.filter(f => f.size > MAX_PHOTO_SIZE_MB * 1024 * 1024);
+    if (oversized.length > 0) {
+      toast.error(`Photos must be under ${MAX_PHOTO_SIZE_MB}MB each`);
+      return;
     }
+    setPhotos(prev => {
+      const combined = [...prev, ...incoming];
+      if (combined.length > MAX_PHOTOS) {
+        toast.error(`Maximum ${MAX_PHOTOS} photos per violation`);
+      }
+      return combined.slice(0, MAX_PHOTOS);
+    });
+    e.target.value = '';
+  };
+
+  const handleRemovePhoto = (index: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async () => {
@@ -83,13 +103,32 @@ export default function WorkerMobileReportViolation() {
         return;
       }
 
-      // Online: submit immediately
+      // Online: upload photos first, then submit violations
+      let uploadedUrls: string[] = [];
+      if (photos.length > 0) {
+        for (const photo of photos) {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(photo);
+          });
+          const { fileUrl } = await uploadViolationPhoto.mutateAsync({
+            fileData: base64,
+            fileName: photo.name,
+            fileType: photo.type,
+          });
+          uploadedUrls.push(fileUrl);
+        }
+      }
+
       for (const violationTypeId of selectedViolations) {
         await createViolation.mutateAsync({
           customerId,
           violationTypeId,
           notes,
           reportedBy: parseInt(localStorage.getItem('selectedWorkerId') || '0'),
+          ...(uploadedUrls.length > 0 ? { evidenceUrls: uploadedUrls } : {}),
         });
       }
 
@@ -267,9 +306,20 @@ export default function WorkerMobileReportViolation() {
                       alt={`Evidence ${index + 1}`}
                       className="w-full h-full object-cover rounded-lg"
                     />
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePhoto(index)}
+                      className="absolute top-1 right-1 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs leading-none"
+                      aria-label="Remove photo"
+                    >
+                      ×
+                    </button>
                   </div>
                 ))}
               </div>
+            )}
+            {photos.length < MAX_PHOTOS && (
+              <p className="text-xs text-slate-500 text-center">{photos.length}/{MAX_PHOTOS} photos</p>
             )}
           </div>
         </div>
@@ -279,9 +329,9 @@ export default function WorkerMobileReportViolation() {
           className="w-full"
           size="lg"
           onClick={handleSubmit}
-          disabled={selectedViolations.length === 0 || createViolation.isPending}
+          disabled={selectedViolations.length === 0 || createViolation.isPending || uploadViolationPhoto.isPending}
         >
-          {createViolation.isPending ? 'Submitting...' : 'Submit Report'}
+          {uploadViolationPhoto.isPending ? 'Uploading photos...' : createViolation.isPending ? 'Submitting...' : 'Submit Report'}
         </Button>
 
         {!isOnline && (

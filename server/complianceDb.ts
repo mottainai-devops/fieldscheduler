@@ -119,8 +119,12 @@ export async function getAllViolations() {
     .leftJoin(violationTypes, eq(complianceViolations.violationTypeId, violationTypes.id))
     .leftJoin(workers, eq(complianceViolations.reportedBy, workers.id))
     .orderBy(desc(complianceViolations.reportedAt));
-  
-  return result;
+
+  // T24: deserialize evidenceUrls JSON string to string[] for client consumption
+  return result.map(row => ({
+    ...row,
+    evidenceUrls: row.evidenceUrls ? (() => { try { return JSON.parse(row.evidenceUrls!); } catch { return []; } })() : [],
+  }));
 }
 
 export async function getViolationsByCustomer(customerId: number) {
@@ -145,8 +149,12 @@ export async function getViolationsByCustomer(customerId: number) {
     .leftJoin(workers, eq(complianceViolations.reportedBy, workers.id))
     .where(eq(complianceViolations.customerId, customerId))
     .orderBy(desc(complianceViolations.reportedAt));
-  
-  return result;
+
+  // T24: deserialize evidenceUrls JSON string to string[] for client consumption
+  return result.map(row => ({
+    ...row,
+    evidenceUrls: row.evidenceUrls ? (() => { try { return JSON.parse(row.evidenceUrls!); } catch { return []; } })() : [],
+  }));
 }
 
 export async function createViolation(data: {

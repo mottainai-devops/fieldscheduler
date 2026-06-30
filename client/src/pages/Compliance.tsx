@@ -279,6 +279,20 @@ export default function Compliance() {
                           {violation.notes && (
                             <p className="text-sm text-slate-300 mb-2">{violation.notes}</p>
                           )}
+                          {/* T24: evidence photo thumbnails */}
+                          {violation.evidenceUrls && violation.evidenceUrls.length > 0 && (
+                            <div className="flex gap-2 mb-2 flex-wrap">
+                              {violation.evidenceUrls.map((url: string, i: number) => (
+                                <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                                  <img
+                                    src={url}
+                                    alt={`Evidence ${i + 1}`}
+                                    className="w-16 h-16 object-cover rounded border border-slate-600 hover:border-slate-400 transition-colors"
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          )}
                           <div className="flex items-center gap-4 text-xs text-slate-500">
                             <span>Reported: {new Date(violation.reportedAt).toLocaleDateString()}</span>
                             {violation.reporter && <span>By: {violation.reporter.name}</span>}

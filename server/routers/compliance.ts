@@ -1,6 +1,7 @@
-import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManagerProcedure } from '../_core/trpc';
+import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManagerProcedure, workerProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import * as complianceDb from '../complianceDb';
+import { uploadViolationPhoto as storageUploadViolationPhoto } from '../storageService';
 import * as notificationDb from '../notificationDb';
 import * as emailService from '../emailService';
 import { getDb } from '../db';
@@ -63,6 +64,28 @@ async function getViolationWithWorker(violationId: number) {
 
 export const complianceRouter = router({
   /**
+   * T24 — Upload a single violation photo to S3.
+   * workerProcedure: Bearer token required. workerId derived from ctx (Rule 53).
+   * Client sends one photo at a time; caller loops for multiple photos.
+   * Max 5 photos per violation enforced at createViolation input level.
+   */
+  uploadViolationPhoto: workerProcedure
+    .input(z.object({
+      fileData: z.string(),   // base64-encoded image (may include data URL prefix)
+      fileName: z.string(),
+      fileType: z.string(),   // MIME type e.g. 'image/jpeg'
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const { fileUrl, fileKey } = await storageUploadViolationPhoto(
+        input.fileData,
+        input.fileName,
+        input.fileType,
+        ctx.workerId,
+      );
+      return { fileUrl, fileKey };
+    }),
+
+  /**
    * Get all violation types
    */
   getViolationTypes: publicProcedure
@@ -122,17 +145,20 @@ export const complianceRouter = router({
       violationTypeId: z.number(),
       reportedBy: z.number().optional(),
       notes: z.string().optional(),
-      // @drift-suppress: photo evidence capability operationally required per owner.
-      // UI wiring + S3 integration scoped as dedicated tranche (T24 candidate).
-      // DB column and Zod field remain as scaffolding pending the wiring work.
-      // NOTE: field name suggests multiple URLs but current type is z.string().
-      // T24 photo-evidence work should migrate to z.array(z.string()).optional()
-      // or document a clear single-URL-or-JSON-array convention.
-      evidenceUrls: z.string().optional(),
+      // T24: wired to client. Array of S3 URLs uploaded via uploadViolationPhoto.
+      // Serialized as JSON string in TEXT column. Max 5 photos per violation.
+      evidenceUrls: z.array(z.string()).max(5).optional(),
     }))
     .mutation(async ({ input }) => {
-      // 1. Create the violation
-      const result = await complianceDb.createViolation(input);
+      // 1. Serialize evidenceUrls array to JSON string for TEXT column storage
+      const dbInput = {
+        ...input,
+        evidenceUrls: input.evidenceUrls && input.evidenceUrls.length > 0
+          ? JSON.stringify(input.evidenceUrls)
+          : undefined,
+      };
+      // 2. Create the violation
+      const result = await complianceDb.createViolation(dbInput);
 
       // 2. Fire notifications asynchronously (don't block the response)
       setImmediate(async () => {
