@@ -461,9 +461,27 @@ export async function syncZohoContacts() {
     let fieldManagerCount = 0;
     let customermafCount = 0;
     const fieldManagerMap = new Map<string, number>();
-    
+
+    // Rule #31 / Pattern #26 fix — Pre-load fieldManagerMap from existing workers
+    // before the contact loop so that workers who already exist in the DB are
+    // found by name lookup rather than triggering ER_DUP_ENTRY on re-sync.
+    // Without this, every sync after the first fails for any FM whose worker
+    // row already exists (duplicate email unique constraint).
+    try {
+      const dbPreload = await getDb();
+      if (dbPreload) {
+        const existingWorkers = await dbPreload.select({ id: workers.id, name: workers.name }).from(workers);
+        for (const w of existingWorkers) {
+          if (w.name) fieldManagerMap.set(w.name, w.id);
+        }
+        console.log(`[Zoho] Pre-loaded ${fieldManagerMap.size} existing workers into fieldManagerMap`);
+      }
+    } catch (preloadErr) {
+      console.warn('[Zoho] Could not pre-load workers into fieldManagerMap:', preloadErr);
+    }
+
     const processedContacts = [];
-    
+
     for (const contact of contacts) {
       try {
         const { latitude, longitude, fieldManager } = extractCoordinates(contact);
