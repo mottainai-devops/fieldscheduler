@@ -2957,3 +2957,201 @@ Behavioral verification for user-facing features must include the user's actual 
 6. T17 Zoho sync behavioral verification (auto-completes)
 7. Payments table investigation (only 1 row in production)
 8. Per-MAF financial breakdown
+
+---
+
+## Tranche 27 — T27 Round-Off Tranche (Jul 1 2026)
+
+**Scope:** Sidebar access control audit, active workers data quality cleanup, payments table investigation, carry-forward documentation, and engagement session close-out.
+
+**Commits:** `fix(t27-item1)` (sidebar minRole + admin redirect), `fix(t27-item3)` (Financial Dashboard stale-data banner).
+
+---
+
+### T27 Item 1 — Sidebar Access Control Audit
+
+**Findings:** 12 sidebar entries had incorrect or undocumented minRole values. Root cause: entries added over T13–T26 without a consistent access-control review step.
+
+**Changes applied:**
+
+| Entry | Before | After | Reason |
+|---|---|---|---|
+| Analytics | `fieldManager` | `admin` | No confirmed field-manager operational use |
+| Performance | none (all) | `admin` | Operational analytics — admin-tier |
+| Route Analytics | none (all) | `admin` | Operational analytics — admin-tier |
+| Building Groups | none (all) | `admin` | Admin-level config |
+| Customer Filtering | none (all) | `admin` | Admin-level config |
+| Route Optimization | none (all) | `admin` | Admin-tier tool |
+| Clusters | none (all) | `admin` | Admin-tier tool |
+| Geofencing Alerts | none (all) | `admin` | Alert config is admin-tier |
+| Compliance | none (all) | `admin` | Admin-tier |
+| Tags | none (all) | `admin` | Tag management is admin-tier |
+| Filter | none (all) | `admin` | Admin-tier |
+| Modular Dashboard | none (all) | `admin` | Admin-tier |
+| Real-Time Tracking | none (all) | `fieldManager` | Field managers may monitor supervisors — intent now explicit |
+| Tracking | none (all) | `fieldManager` | Same as above |
+| Create Route | `fieldManager` | `fieldManager` | **Intentionally unchanged** — T15 architecture: field managers are route creators; admins complete via /pending-assignments |
+
+**My Dashboard QUIRK (Option C applied):** `FieldManagerDashboard.tsx` now detects admin/superadmin via `trpc.auth.me` and calls `setLocation("/dashboard")` after all hooks, before any data query fires. Field managers are unaffected. The FORBIDDEN error path for admins is no longer reachable.
+
+**Pattern #53 added** (see below).
+
+---
+
+### T27 Item 2 — Active Workers Data Quality Cleanup
+
+**Finding:** Workers 2243 (`Low.low income`) and 2282 (`Low.Low income.`) were phantom workers created by the pre-T11/T12 Zoho sync auto-create behavior (Pattern #26). Both created 2026-06-29 14:03, 7 seconds apart. Names are residential income-category labels, not real field manager names.
+
+**FK discovery:** 245 real customers were assigned to these phantom workers (`customers.fieldManager`). The FK was not surfaced in the initial investigation because the initial check queried `routes`, `workerLocations`, and `fieldManagerTags` — not `customers`. This is a gap in the FK check procedure.
+
+**Fix sequence executed:**
+1. Pre-fix baseline confirmed: 245 customers assigned, 484 already NULL.
+2. `UPDATE customers SET fieldManager = NULL WHERE fieldManager IN (2243, 2282)` — 245 rows nulled.
+3. `DELETE FROM workers WHERE id IN (2243, 2282)` — 2 rows deleted.
+4. Post-fix verification: workers gone, null count = 729 (484 + 245 ✓), orphaned refs = 0.
+
+**Current state:** 245 customers are temporarily unassigned (`fieldManager = NULL`). They will be re-assigned when the Zoho sync next runs successfully. The Zoho sync job (`zohoSyncJobs` id=1, "T16 Test Sync Job") is currently **disabled** (`enabled = 0`). The `nextRunAt` is stale (2026-06-30 00:00:00). A superadmin must re-enable the job for the 245 customers to recover their correct field manager assignments.
+
+**Zoho sync binary note:** PM2 error logs show the running binary (`dist/index.js`) is still attempting to auto-create workers from Zoho name strings (`Error creating worker for Bukola`). This suggests the deployed binary may predate the T11/T12 sync hardening. The source code has Rule #31 applied; the binary may not. **T28 item: verify deployed binary matches current source, redeploy if needed.**
+
+**Rule #61 added** (see below).
+
+---
+
+### T27 Item 3 — Payments Table Investigation
+
+**Finding:** The `payments` table has 1 row — a single 2024 test record (`zohoPaymentId: 5300119000000243125`, amount ₦41,925, inserted 2025-11-15). The `zohoPayments` and `paymentEvidence` tables have 0 rows.
+
+**Root cause:** `zohoFinancialSync.ts` has `syncAllPayments()` fully implemented with correct Zoho Books upsert logic, but the function has **zero callers** — no router, no cron job, no UI trigger. The `sync-zoho-data.mjs` production script handles invoices and contacts only; it never calls `syncAllPayments()`. The Financial Dashboard at `/financial-dashboard` queries the `payments` table for its totals — it currently shows ₦41,925 total, which is the single stale test record.
+
+**Immediate action:** Amber stale-data warning banner added to `FinancialDashboard.tsx` (commit `fix(t27-item3)`). Banner explains that payments sync is inactive and totals do not represent live data. Banner to remain until the payments sync disposition decision is made.
+
+**Pattern #54 added** (see below).
+
+---
+
+### Pattern #53 — Sidebar Entry Added Without Access-Control Review
+
+**Instance:** T13–T26 added 14 sidebar entries with `minRole: undefined` (visible to all authenticated users) or incorrect minRole values. Discovered in T27 audit: 12 entries were too permissive for their operational tier.
+
+**No rule added** — this is a process pattern, not a code defect. Detection requires periodic sidebar audits. The T27 audit establishes the baseline; future tranches should re-audit when adding new sidebar entries.
+
+**Canonical instance:** `Performance`, `Route Analytics`, `Building Groups`, `Customer Filtering`, `Route Optimization`, `Clusters`, `Geofencing Alerts`, `Compliance`, `Tags`, `Filter`, `Modular Dashboard` — all added without explicit minRole, defaulting to all-authenticated visibility.
+
+---
+
+### Pattern #54 — Fully-Implemented Feature with Zero Callers
+
+**Instance:** `zohoFinancialSync.syncAllPayments()` — fully implemented Zoho payment sync function with correct upsert logic, never called from any scheduler or router. Financial Dashboard displays stale data as a downstream consequence.
+
+**No rule added** — this is a tool-limitation and process pattern more than a discipline. Detection is non-trivial without static caller analysis; documenting the shape helps future forensic investigations recognize it.
+
+**Canonical instance:** `zohoFinancialSync.ts → syncAllPayments()` [T27 discovery]. The function is complete, correct, and deployable but not integrated into any active flow. The `zohoSyncJobs` table has one job (`T16 Test Sync Job`, `enabled = 0`) that also has no active callers. Financial Dashboard shows ₦41,925 total (one 2024 test record) as a downstream consequence.
+
+---
+
+### Rule #61 — FK Check for Worker Deletion Must Include `customers.fieldManager`
+
+**Context:** T27 Item 2 initial FK check queried `routes`, `workerLocations`, and `fieldManagerTags` — all returned 0. The `customers.fieldManager` FK was not in the initial check list, causing a false "safe to delete" assessment. The actual deletion attempt surfaced the constraint.
+
+**Rule:** Before deleting any worker record, the FK check must explicitly include `customers WHERE fieldManager = <id>`. The full required check list for worker deletion is:
+1. `routes WHERE workerId = <id> OR supervisorId = <id>`
+2. `workerLocations WHERE workerId = <id>`
+3. `fieldManagerTags WHERE fieldManagerId = <id>`
+4. `handoffRequests WHERE supervisorId = <id>`
+5. `routeSchedules WHERE supervisorId = <id>`
+6. **`customers WHERE fieldManager = <id>`** ← newly added
+
+---
+
+## T27 Carry-Forward Queue
+
+Items deferred from T27 to future tranches:
+
+### CRITICAL — Payments Sync Activation
+
+**Description:** Payments table sync activation — CRITICAL for financial dashboard accuracy. `zohoFinancialSync.ts` has `syncAllPayments()` fully implemented but with zero callers. Financial Dashboard at `/financial-dashboard` is currently showing ₦41,925 total (one stale test record from 2024). Real Mottainai payment data exists in Zoho but is not being synced.
+
+**Disposition options:**
+1. Wire `syncAllPayments()` into `sync-zoho-data.mjs` cron so payments sync alongside invoices [recommended if financial dashboard accuracy matters operationally]
+2. Remove dead `payments` table and `zohoFinancialSync.syncAllPayments` if payments live in Zoho only for operational purposes
+3. Repurpose
+
+**Owner decision required before T28+ can proceed on this.** Small implementation work once decision is made (~1 cron call addition).
+
+**Temporary mitigation:** Amber stale-data banner added to Financial Dashboard (T27 commit `fix(t27-item3)`).
+
+---
+
+### HIGH — Zoho Sync Job Re-Enablement + Binary Verification
+
+**Description:** The Zoho sync job (`zohoSyncJobs` id=1) is currently disabled (`enabled = 0`). 245 customers are temporarily unassigned (fieldManager = NULL) pending the next successful sync run. Additionally, the running PM2 binary may predate T11/T12 sync hardening — PM2 error logs show auto-create attempts for workers from Zoho name strings, which should have been blocked by Rule #31.
+
+**Actions required:**
+1. Verify deployed binary (`dist/index.js`) matches current source (check git hash vs build timestamp)
+2. If binary is stale, rebuild and redeploy: `pnpm build && pm2 restart field-worker-scheduler`
+3. Re-enable the sync job: `UPDATE zohoSyncJobs SET enabled = 1 WHERE id = 1`
+4. Monitor next sync run for the 245 customers to recover correct field manager assignments
+5. Post-sync verification: `SELECT fieldManager, COUNT(*) FROM customers WHERE id IN (<sample IDs>) GROUP BY fieldManager` — expect IDs 7, 8, or 9 (real field managers)
+
+---
+
+### MEDIUM — FinancialDashboard.tsx Type Alignment
+
+**Description:** 14 pre-existing TypeScript errors in `FinancialDashboard.tsx` — field name mismatches between the component and tRPC procedure return types (`totalInvoiceAmount`, `totalPaymentAmount`, `outstandingBalance`, `fieldManagerName` do not exist on the server response shapes). These are not introduced by T27. The dashboard renders because TypeScript errors are compile-time only and the component uses optional chaining, but the displayed values for these fields are `undefined`.
+
+**Action:** Align component field names with actual procedure return shapes. Low risk, medium effort.
+
+---
+
+### MEDIUM — Worker Creation UI Double-Submit Investigation
+
+**Description:** Workers 2243 and 2282 were created 7 seconds apart on 2026-06-29. Two possibilities: (a) UI double-submit in the worker creation dialog, or (b) developer test data. If (a), the worker creation UI may lack debounce/submit-once protection.
+
+**Action:** Check worker creation dialog for submit button debounce and duplicate prevention. If missing, add `disabled` state after first submit or use `useMutation`'s `isPending` to prevent double-fire.
+
+---
+
+### DEFERRED — Company/Vendor Entity Model
+
+Items 3–8 from the T27 carry-forward queue (AFT Okuleye & Sons, Dalco Ventures entity model; Tranche 5C canonical constants; workerProcedure positive test; T17 Zoho sync behavioral verification; per-MAF financial breakdown) remain deferred as in prior tranches.
+
+---
+
+## Engagement Session Close-Out — T13 through T27
+
+This section closes the T13–T27 engagement arc. The engagement opened with T13 (Pickup Outcome Hardening) and closes with T27 (Round-Off Tranche). Fourteen tranches were completed over the arc.
+
+**Arc summary:**
+
+| Tranche | Focus | Status |
+|---|---|---|
+| T13 | Pickup outcome hardening, routing reasons, read path | Closed |
+| T14 | Role architecture remediation (superadmin/admin/field_manager/supervisor) | Closed |
+| T15 | Supervisor lifecycle + pending assignment workflow | Closed |
+| T16 | Pattern #15 forensic audit + drift remediation | Closed |
+| T17 | Sync job handlers, name normalization, tag-based route removal | Closed |
+| T18 | driftCheck static analysis script | Closed |
+| T19 | driftCheck dogfood remediation (priority items) | Closed |
+| T20 | Security debt resolution: workerProcedure bearer token authentication | Closed |
+| T21 | Compliance photo evidence + notice number | Closed |
+| T22 | Actor identity wiring + calendarOverrides ghost field | Closed |
+| T23 | Zero schema drift milestone | Closed |
+| T24 | Compliance photo evidence (full implementation) | Closed |
+| T25 | Customer notes ownership + compliance hardening | Closed |
+| T26 | Field manager dashboard (scoped personal dashboard) | Closed |
+| T27 | Round-off tranche: sidebar audit, worker cleanup, payments investigation | Closed |
+
+**Engagement state at close:**
+- driftCheck: 0 findings (Class A schema drift, Class B JSX handler drift)
+- Test suite: 72 tests passing (5 test files)
+- Production DB: clean (phantom workers deleted, FK integrity verified)
+- Financial Dashboard: stale-data banner active (pending payments sync decision)
+- Sidebar: all 14 minRole corrections applied, Create Route correctly preserved at fieldManager
+- My Dashboard: admin redirect (Option C) implemented
+
+**Open items at close:** See T27 Carry-Forward Queue above. All items are documented with disposition options and owner decision points. No blocking issues remain for T28 to open.
+
+**Engagement record completeness:** Patterns #1–#54 documented. Rules #1–#61 documented (with gaps at #33–#47, #55, #57 which were not assigned in prior tranches). All tranches have close-out entries. The record is the authoritative reference for "why we do things this way" for the duration of this system's development.
+
+---
