@@ -45,6 +45,12 @@ interface NavGroup {
  * T14 Item 4: Role-based sidebar filtering.
  * minRole hierarchy: superadmin > admin > fieldManager > (any authenticated)
  * Items with no minRole are visible to all authenticated users.
+ *
+ * T27 Item 1 audit: applied minRole: "admin" to all entries that were
+ * previously unrestricted but operationally admin-only. Real-Time Tracking
+ * and Tracking set to explicit minRole: "fieldManager" (was accidental "none").
+ * Create Route intentionally left at minRole: "fieldManager" per T15 architecture
+ * (field managers are the route creators; admins complete via /pending-assignments).
  */
 const navigationGroups: NavGroup[] = [
   {
@@ -54,10 +60,14 @@ const navigationGroups: NavGroup[] = [
       // T26 Fix 3: Dashboard is admin/superadmin only — field managers see only "My Dashboard"
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, minRole: "admin" },
       // T26: Field Manager personal dashboard — scoped to ctx.user.fieldManagerId (Pattern #51)
+      // T27: Admin/superadmin clicking this redirects gracefully to /dashboard (Option C)
       { label: "My Dashboard", href: "/field-manager/dashboard", icon: LayoutDashboard, minRole: "fieldManager" },
-      { label: "Analytics", href: "/analytics", icon: BarChart3, minRole: "fieldManager" },
-      { label: "Performance", href: "/performance-dashboard", icon: BarChart3 },
-      { label: "Route Analytics", href: "/route-analytics-dashboard", icon: BarChart3 },
+      // T27 Item 1: restrict to admin (was fieldManager — no confirmed field manager use)
+      { label: "Analytics", href: "/analytics", icon: BarChart3, minRole: "admin" },
+      // T27 Item 1: restrict to admin (was unrestricted — operational analytics, not field-manager-facing)
+      { label: "Performance", href: "/performance-dashboard", icon: BarChart3, minRole: "admin" },
+      // T27 Item 1: restrict to admin (was unrestricted)
+      { label: "Route Analytics", href: "/route-analytics-dashboard", icon: BarChart3, minRole: "admin" },
     ],
   },
   {
@@ -67,7 +77,7 @@ const navigationGroups: NavGroup[] = [
       { label: "Workers", href: "/workers", icon: Users, minRole: "superadmin" },
       { label: "Field Manager Admin", href: "/field-manager-admin", icon: UserCog, minRole: "superadmin" },
       { label: "Field Manager Tagging", href: "/field-manager-tagging", icon: UserCog, minRole: "admin" },
-      // T26 final: minRole admin — field managers don't see this (was causing /manager → /dashboard → /field-manager/dashboard redirect loop)
+      // T26 final: minRole admin — field managers don't see this
       { label: "Manager Dashboard", href: "/manager", icon: UserCog, minRole: "admin" },
     ],
   },
@@ -77,8 +87,10 @@ const navigationGroups: NavGroup[] = [
     items: [
       { label: "Customers", href: "/customers", icon: Building2, minRole: "fieldManager" },
       { label: "Add Customer", href: "/add-customer", icon: Building2, minRole: "admin" },
-      { label: "Building Groups", href: "/building-groups", icon: Building2 },
-      { label: "Customer Filtering", href: "/dynamic-customer-filtering", icon: Building2 },
+      // T27 Item 1: restrict to admin (was unrestricted — admin-level config)
+      { label: "Building Groups", href: "/building-groups", icon: Building2, minRole: "admin" },
+      // T27 Item 1: restrict to admin (was unrestricted — admin-level config)
+      { label: "Customer Filtering", href: "/dynamic-customer-filtering", icon: Building2, minRole: "admin" },
     ],
   },
   {
@@ -86,9 +98,13 @@ const navigationGroups: NavGroup[] = [
     icon: Route,
     items: [
       { label: "Routes", href: "/routes", icon: Route, minRole: "fieldManager" },
+      // T15 architecture: field managers create routes; admins complete via /pending-assignments
+      // T27 audit confirmed: intentionally stays at fieldManager (NOT restricted to admin)
       { label: "Create Route", href: "/create-route", icon: Route, minRole: "fieldManager" },
-      { label: "Route Optimization", href: "/route-optimization", icon: Navigation },
-      { label: "Clusters", href: "/clusters", icon: Route },
+      // T27 Item 1: restrict to admin (was unrestricted)
+      { label: "Route Optimization", href: "/route-optimization", icon: Navigation, minRole: "admin" },
+      // T27 Item 1: restrict to admin (was unrestricted)
+      { label: "Clusters", href: "/clusters", icon: Route, minRole: "admin" },
       { label: "Route Schedules", href: "/route-schedules", icon: Route, minRole: "fieldManager" },
       // T15 Item 5: Pending Assignments — admin tier (superadmin + admin)
       { label: "Pending Assignments", href: "/pending-assignments", icon: ClockAlert, minRole: "admin" },
@@ -98,25 +114,32 @@ const navigationGroups: NavGroup[] = [
     title: "Logistics & Tracking",
     icon: Truck,
     items: [
-      { label: "Real-Time Tracking", href: "/real-time-tracking", icon: MapPin },
-      { label: "Tracking", href: "/tracking", icon: MapPin },
-      { label: "Geofencing Alerts", href: "/geofencing-alerts", icon: MapPin },
+      // T27 Item 1: explicit minRole: "fieldManager" (was accidental "none" — field managers may monitor supervisors)
+      { label: "Real-Time Tracking", href: "/real-time-tracking", icon: MapPin, minRole: "fieldManager" },
+      // T27 Item 1: explicit minRole: "fieldManager" (was accidental "none")
+      { label: "Tracking", href: "/tracking", icon: MapPin, minRole: "fieldManager" },
+      // T27 Item 1: restrict to admin (was unrestricted — alert config is admin-tier)
+      { label: "Geofencing Alerts", href: "/geofencing-alerts", icon: MapPin, minRole: "admin" },
     ],
   },
   {
     title: "Compliance & Quality",
     icon: CheckSquare,
     items: [
-      { label: "Compliance", href: "/compliance", icon: ClipboardCheck },
-      { label: "Tags", href: "/tags", icon: ClipboardCheck },
-      { label: "Filter", href: "/filter", icon: ClipboardCheck },
+      // T27 Item 1: restrict to admin (was unrestricted)
+      { label: "Compliance", href: "/compliance", icon: ClipboardCheck, minRole: "admin" },
+      // T27 Item 1: restrict to admin (was unrestricted — tag management is admin-tier)
+      { label: "Tags", href: "/tags", icon: ClipboardCheck, minRole: "admin" },
+      // T27 Item 1: restrict to admin (was unrestricted)
+      { label: "Filter", href: "/filter", icon: ClipboardCheck, minRole: "admin" },
     ],
   },
   {
     title: "System Management",
     icon: Settings,
     items: [
-      { label: "Modular Dashboard", href: "/modular-dashboard", icon: Settings },
+      // T27 Item 1: restrict to admin (was unrestricted)
+      { label: "Modular Dashboard", href: "/modular-dashboard", icon: Settings, minRole: "admin" },
     ],
   },
   {

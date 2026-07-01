@@ -152,6 +152,14 @@ export default function FieldManagerDashboard() {
 
   const handleSignOut = () => logoutMutation.mutate();
 
+  // T27 Item 1 — Option C: admin/superadmin graceful redirect
+  // RequireFieldManager lets admins through; but /field-manager/dashboard is
+  // scoped to fieldManagerId which is null for admins → server returns FORBIDDEN.
+  // Instead of showing FORBIDDEN, redirect admins to /dashboard immediately.
+  const { data: meUser } = trpc.auth.me.useQuery();
+  const isAdminOrAbove = meUser?.role === "admin" || meUser?.role === "superadmin";
+  // Redirect is handled in the render path below — see early return after hooks
+
   // Date range state for revenue panel — defaults to current month
   const now = new Date();
   const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
@@ -193,6 +201,12 @@ export default function FieldManagerDashboard() {
   } = trpc.fieldManager.getMyRecentRoutes.useQuery(undefined, {
     refetchOnWindowFocus: false,
   });
+
+  // ── Option C: admin/superadmin redirect (after all hooks) ─────────────────
+  if (isAdminOrAbove) {
+    setLocation("/dashboard");
+    return null;
+  }
 
   // ── Error: no fieldManagerId linked ──────────────────────────────────────
   if (metricsError?.data?.code === "FORBIDDEN") {
