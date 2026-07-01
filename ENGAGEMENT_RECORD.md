@@ -3010,7 +3010,9 @@ Behavioral verification for user-facing features must include the user's actual 
 3. `DELETE FROM workers WHERE id IN (2243, 2282)` — 2 rows deleted.
 4. Post-fix verification: workers gone, null count = 729 (484 + 245 ✓), orphaned refs = 0.
 
-**Current state:** 245 customers are temporarily unassigned (`fieldManager = NULL`). They will be re-assigned when the Zoho sync next runs successfully. The Zoho sync job (`zohoSyncJobs` id=1, "T16 Test Sync Job") is currently **disabled** (`enabled = 0`). The `nextRunAt` is stale (2026-06-30 00:00:00). A superadmin must re-enable the job for the 245 customers to recover their correct field manager assignments.
+**Current state:** 245 customers are temporarily unassigned (`fieldManager = NULL`). **Recovery path (corrected):** These 245 customers had no field manager or MAF set in Zoho — that is why their FieldScheduler assignment pointed to phantom workers in the first place. Re-enabling the Zoho sync alone will not restore their assignments; Zoho itself has no field manager or MAF set for them. The correct recovery path is: (1) owner manually tags each of the 245 in Zoho with the correct field manager + MAF, then (2) triggers a manual sync in the FieldScheduler admin UI or waits for the next scheduled cron run. The sync is the propagation mechanism, not the recovery mechanism. This is ongoing operational work, not automated. Progress is observable via the `(No field manager set)` customer count decreasing from 729 toward the pre-T27 baseline of 484.
+
+The Zoho sync job (`zohoSyncJobs` id=1, "T16 Test Sync Job") is currently **disabled** (`enabled = 0`). Re-enabling it is a separate T28 item (binary verification + re-enable) that serves the ~7,619 non-orphaned customers with normal Zoho updates — it is not tied to the 245-customer recovery.
 
 **Zoho sync binary note:** PM2 error logs show the running binary (`dist/index.js`) is still attempting to auto-create workers from Zoho name strings (`Error creating worker for Bukola`). This suggests the deployed binary may predate the T11/T12 sync hardening. The source code has Rule #31 applied; the binary may not. **T28 item: verify deployed binary matches current source, redeploy if needed.**
 
@@ -3083,16 +3085,23 @@ Items deferred from T27 to future tranches:
 
 ---
 
-### HIGH — Zoho Sync Job Re-Enablement + Binary Verification
+### HIGH (T28 standalone) — Zoho Sync Job Re-Enablement + Binary Verification
 
-**Description:** The Zoho sync job (`zohoSyncJobs` id=1) is currently disabled (`enabled = 0`). 245 customers are temporarily unassigned (fieldManager = NULL) pending the next successful sync run. Additionally, the running PM2 binary may predate T11/T12 sync hardening — PM2 error logs show auto-create attempts for workers from Zoho name strings, which should have been blocked by Rule #31.
+**Description:** The Zoho sync job (`zohoSyncJobs` id=1) is currently disabled (`enabled = 0`). Re-enabling it serves the ~7,619 non-orphaned customers with normal Zoho updates. **This is NOT tied to the 245-customer recovery** — those customers require manual Zoho tagging by the owner first (see corrected Item 2 narrative above). The running PM2 binary may also predate T11/T12 sync hardening — PM2 error logs show auto-create attempts for workers from Zoho name strings, which should have been blocked by Rule #31.
 
 **Actions required:**
-1. Verify deployed binary (`dist/index.js`) matches current source (check git hash vs build timestamp)
+1. Verify deployed binary (`dist/index.js`) has T11/T12 sync hardening — confirm `sync-zoho-data.mjs` does NOT auto-create workers from Zoho name strings (Rule #31)
 2. If binary is stale, rebuild and redeploy: `pnpm build && pm2 restart field-worker-scheduler`
 3. Re-enable the sync job: `UPDATE zohoSyncJobs SET enabled = 1 WHERE id = 1`
-4. Monitor next sync run for the 245 customers to recover correct field manager assignments
-5. Post-sync verification: `SELECT fieldManager, COUNT(*) FROM customers WHERE id IN (<sample IDs>) GROUP BY fieldManager` — expect IDs 7, 8, or 9 (real field managers)
+4. Monitor first sync run: no errors, no new phantom workers created
+5. Post-first-sync verification: `SELECT COUNT(*) FROM customers WHERE fieldManager IS NULL` — **expected: still 729** (no change from sync alone, confirming that sync does not recover the 245 without prior Zoho tagging)
+6. Sample non-orphaned customers to confirm normal Zoho updates are propagating
+
+---
+
+### OPERATIONAL (owner task, not engineering) — Manual Reassignment of 245 Customers
+
+**Description:** Owner will work through the `(No field manager set)` filter in FieldScheduler to identify the 245 orphaned customers, tag each in Zoho with the correct field manager + MAF, then trigger a manual sync or wait for the next scheduled cron run. No engineering tranche required. Progress observable via the `(No field manager set)` count decreasing from 729 toward 484 (the pre-T27 baseline of pre-existing orphans unrelated to the phantom workers).
 
 ---
 
@@ -3149,8 +3158,9 @@ This section closes the T13–T27 engagement arc. The engagement opened with T13
 - Financial Dashboard: stale-data banner active (pending payments sync decision)
 - Sidebar: all 14 minRole corrections applied, Create Route correctly preserved at fieldManager
 - My Dashboard: admin redirect (Option C) implemented
+- 245 orphaned customers: NULL fieldManager, recovery is owner operational task (manual Zoho tagging → sync propagation); not engineering-blocked
 
-**Open items at close:** See T27 Carry-Forward Queue above. All items are documented with disposition options and owner decision points. No blocking issues remain for T28 to open.
+**Open items at close:** See T27 Carry-Forward Queue above. All items are documented with disposition options and owner decision points. No blocking issues remain for T28 to open. The 245-customer recovery is an ongoing operational task on the owner’s timeline, independent of all engineering tranches.
 
 **Engagement record completeness:** Patterns #1–#54 documented. Rules #1–#61 documented (with gaps at #33–#47, #55, #57 which were not assigned in prior tranches). All tranches have close-out entries. The record is the authoritative reference for "why we do things this way" for the duration of this system's development.
 
