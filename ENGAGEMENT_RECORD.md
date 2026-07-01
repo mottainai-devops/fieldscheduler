@@ -3335,11 +3335,13 @@ Items deferred from T28 to future tranches:
 
 ---
 
-### T29 Small — Invoice Outstanding Balance Status Filter
+### ~~T29 Small — Invoice Outstanding Balance Status Filter~~ **COMPLETED IN T29**
 
-**Description:** `getMetrics` `SUM(balance)` query includes `void` (10 invoices, ₦3.1M) and `draft` (51 invoices, ₦497K) in the outstanding total. Inflation: ₦3,641,025. Fix: add `WHERE status NOT IN ('void', 'draft')` to the outstanding balance query in `financialRouter.ts`.
+~~**Description:** `getMetrics` `SUM(balance)` query includes `void` (10 invoices, ₦3.1M) and `draft` (51 invoices, ₦497K) in the outstanding total. Inflation: ₦3,641,025. Fix: add `WHERE status NOT IN ('void', 'draft')` to the outstanding balance query in `financialRouter.ts`.~~
 
-**Risk:** Low. 2-line SQL change. No schema migration required.
+~~**Risk:** Low. 2-line SQL change. No schema migration required.~~
+
+Completed: `fix(t29)` commit. Void excluded from all three outstanding balance queries. Draft retained per T22 semantics. Outstanding balance reduced by ₦3,143,300.
 
 ---
 
@@ -3371,4 +3373,78 @@ Carried from prior tranches. Per-MAF financial breakdown is now unblocked (real 
 - Financial Dashboard: live data, no stale-data banner
 - driftCheck: 0 findings
 - Tests: 72 passing (5 files)
+
+
+---
+
+## T29 Tranche Record
+
+**Scope:** Single item — apply invoice outstanding balance status filter to admin Financial Dashboard.
+
+**Item — Outstanding Balance Filter (financialRouter.ts)**
+
+**Pre-fix state (step a):**
+
+```sql
+-- getMetrics (line 35-41) — NO status filter:
+SELECT COALESCE(SUM(balance), 0) as outstanding FROM invoices
+-- Returns ₦14,714,462.50 (includes void + draft)
+
+-- getMetricsByFieldManager (line 93-102) — NO status filter:
+SELECT COALESCE(SUM(balance), 0) as outstanding FROM invoices WHERE fieldManagerId IS NOT NULL GROUP BY fieldManagerId
+
+-- getMetricsByMAF (line 189-198) — NO status filter:
+SELECT COALESCE(SUM(balance), 0) as outstanding FROM invoices WHERE maf IS NOT NULL GROUP BY maf
+```
+
+**Fix applied (step b):** `CASE WHEN status != 'void' THEN balance ELSE 0 END` applied to all three `SUM(balance)` expressions. Draft retained — matches Field Manager Dashboard semantics (T22 decision: drafts represent real amounts owed not yet formalized).
+
+**Behavioral verification (step c):**
+
+| Query | Amount |
+|---|---|
+| Pre-fix (all statuses) | ₦14,714,462.50 |
+| Post-fix (void excluded) | ₦11,571,162.50 |
+| Void balance removed | ₦3,143,300.00 |
+| Draft balance retained | ₦497,725.00 |
+
+Difference = ₦3,143,300.00 ✅ (matches T28 Item 3 void invoice sum exactly)
+
+**UI verification (step d):** Browser session required admin login (not available in sandbox). DB query is authoritative — Financial Dashboard will display ₦11,571,162.50 as outstanding balance.
+
+**Commit:** `fix(t29): exclude void invoices from outstanding balance in financialRouter (Rule #63)`
+
+---
+
+### T29 Pattern Observation — Calculation Logic Duplicated Across Code Paths
+
+Same conceptual metric ("invoices with outstanding balance") implemented separately in `financialRouter.ts` (admin) and `getMyOutstandingBalances` (Field Manager Dashboard). The two implementations drifted: Field Manager Dashboard applied the correct void filter (T22), admin dashboard did not. Root cause: no shared constant or helper for "outstanding invoice" definition. Canonical constants centralization (T30+) addresses the root cause.
+
+Not assigned a pattern number — the observation is noted here. The substantive fix (canonical constants) is a T30+ item.
+
+---
+
+## T29 Engagement Session Close-Out
+
+**Session arc:** T29 is the smallest tranche in the engagement — a single 2-line SQL fix that closes the outstanding balance inflation found during T28 Item 3 investigation.
+
+**What was done:**
+- Applied `CASE WHEN status != 'void' THEN balance ELSE 0 END` to all three `SUM(balance)` expressions in `financialRouter.ts` (`getMetrics`, `getMetricsByFieldManager`, `getMetricsByMAF`)
+- Draft invoices retained in outstanding total (consistent with Field Manager Dashboard T22 decision)
+- Outstanding balance reduced by ₦3,143,300 (10 void invoices)
+- Behavioral verification: pre-fix ₦14,714,462.50 → post-fix ₦11,571,162.50 ✅
+
+**Production state at T29 close:**
+- PM2: online, restarts: 215
+- Outstanding balance: ₦11,571,162.50 (void excluded)
+- driftCheck: 0 findings
+- Tests: 72 passing (5 files)
+
+**Open items for T30+:**
+- Canonical constants centralization (root cause of the drift between admin and field manager outstanding balance calculations)
+- TiDB decommissioning / `sync-zoho-data.mjs` cleanup
+- `payments` table retirement (`DROP TABLE payments`)
+- Vendor/company entity model
+- Per-MAF financial breakdown (unblocked since T28 payments sync)
+- Worker creation UI double-submit investigation
 
