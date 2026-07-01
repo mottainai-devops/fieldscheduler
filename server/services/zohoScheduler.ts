@@ -1,4 +1,5 @@
 import { syncZohoContacts } from "./zoho";
+import { syncAllPayments } from "./zohoFinancialSync";
 import { getDb } from "../db";
 import { zohoSyncHistory, zohoSyncJobs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -113,6 +114,15 @@ async function executeSyncJob(jobId: number, jobName: string) {
 
     // Execute the sync
     syncResult = await syncZohoContacts();
+    // T28 Path A: wire payments sync after contacts sync.
+    // Payments reference invoices semantically; contacts must be current first.
+    console.log('[Zoho Scheduler] Starting payments sync...');
+    try {
+      const paymentResult = await syncAllPayments();
+      console.log(`[Zoho Scheduler] Payments sync complete: ${paymentResult.success} synced, ${paymentResult.failed} failed`);
+    } catch (paymentError) {
+      console.error('[Zoho Scheduler] Payments sync failed (non-fatal):', paymentError);
+    }
 
     const durationMs = Date.now() - startTime;
 

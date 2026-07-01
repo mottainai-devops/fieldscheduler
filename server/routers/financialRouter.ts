@@ -40,11 +40,13 @@ export const financialRouter = router({
           FROM invoices
         `);
 
+        // T28 Path A: query zohoPayments (populated by syncAllPayments) instead of
+        // the aspirational payments table (Pattern #55 — FK columns never populated).
         const paymentResult = await db.execute(sql`
           SELECT 
             COALESCE(SUM(amount), 0) as total,
             COUNT(*) as count
-          FROM payments
+          FROM zohoPayments
         `);
 
         console.log('[Financial Router] invoiceResult:', JSON.stringify(invoiceResult));
@@ -155,12 +157,14 @@ export const financialRouter = router({
       if (!db) return [];
 
       try {
+        // T28 Path A: query zohoPayments instead of payments (see getMetrics note).
         const result = await db.execute(sql`
           SELECT *
-          FROM payments
+          FROM zohoPayments
           ORDER BY paymentDate DESC
           LIMIT ${input.limit}
         `);
+
 
         return result[0] as any[];
       } catch (error) {
