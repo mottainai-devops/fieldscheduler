@@ -32,10 +32,12 @@ export const financialRouter = router({
         console.log('[Financial Router] db:', !!db);
         
         // Execute raw SQL query
+        // T29: exclude void invoices from outstanding balance (Rule #63).
+        // Include draft — matches Field Manager Dashboard semantics (T22 decision).
         const invoiceResult = await db.execute(sql`
           SELECT 
             COALESCE(SUM(total), 0) as total,
-            COALESCE(SUM(balance), 0) as outstanding,
+            COALESCE(SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END), 0) as outstanding,
             COUNT(*) as count
           FROM invoices
         `);
@@ -95,10 +97,11 @@ export const financialRouter = router({
             fieldManagerId,
             COUNT(*) as invoiceCount,
             COALESCE(SUM(total), 0) as invoiceTotal,
-            COALESCE(SUM(balance), 0) as outstanding
+            COALESCE(SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END), 0) as outstanding
           FROM invoices
           WHERE fieldManagerId IS NOT NULL
           GROUP BY fieldManagerId
+          -- T29: void excluded from outstanding (Rule #63)
         `);
 
         return (result[0] as any[]).map((row: any) => ({
@@ -191,10 +194,11 @@ export const financialRouter = router({
             maf,
             COUNT(*) as invoiceCount,
             COALESCE(SUM(total), 0) as invoiceTotal,
-            COALESCE(SUM(balance), 0) as outstanding
+            COALESCE(SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END), 0) as outstanding
           FROM invoices
           WHERE maf IS NOT NULL
           GROUP BY maf
+          -- T29: void excluded from outstanding (Rule #63)
         `);
 
         return (result[0] as any[]).map((row: any) => ({
