@@ -73,27 +73,7 @@ export function FinancialDashboard() {
       />
 
       <div className="p-6 space-y-6">
-        {/* T27 Item 3 — Temporary stale-data warning banner
-             Payment data is sourced from the `payments` table which is populated by
-             zohoFinancialSync.syncAllPayments(). That function has zero active callers —
-             the sync job is disabled. The table contains one record from 2024 (₦41,925).
-             This banner must remain until the payments sync decision is made in T28+.
-             See ENGAGEMENT_RECORD.md carry-forward for full context. */}
-        <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3">
-          <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <div>
-            <p className="text-sm font-semibold text-amber-800">Payment data may not be current</p>
-            <p className="text-sm text-amber-700 mt-0.5">
-              The payments sync from Zoho Books is currently inactive. Totals shown here reflect the last
-              successful sync only and do not represent live payment data. Contact a superadmin to
-              re-enable the Zoho sync job before relying on payment figures for operational decisions.
-            </p>
-          </div>
-        </div>
-
-        {/* Date Range Filter */}
+        {/* Date Range Filter — T28: stale-data banner removed; payments sync active (zohoPayments) */}
         <div className="bg-white rounded-lg shadow p-4">
           <h3 className="text-lg font-semibold mb-4">Filter Options</h3>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
