@@ -3018,6 +3018,10 @@ The Zoho sync job (`zohoSyncJobs` id=1, "T16 Test Sync Job") is currently **disa
 
 **Rule #61 added** (see below).
 
+> **T28 correction (surfaced during T28 Thread 1 investigation):** The phantom worker deletion and 245-customer nulling was applied to the **TiDB legacy database** via the `sync-zoho-data.mjs` script's hardcoded connection — not to the local MySQL database (`localhost:3306/fieldworker_db`) that the app actually reads from. Local MySQL never contained phantom workers 2243/2282 or the linked 245 customers. From the app's perspective (Bukola's dashboard, admin views), T27 Item 2 was a **no-op** — no state change occurred in the DB users interact with.
+>
+> Post-T28 sync activation, local MySQL now contains phantom workers **9683** (`Low.low income`) and **9722** (`Low.Low income.`), created by the sync's correct Rule #31 behavior (create worker for any unmatched name in Zoho's Field Manager field). The Zoho-side cleanup task (updating those contacts to use real field manager names) remains an owner operational task, moved to T29+ carry-forward.
+
 ---
 
 ### T27 Item 3 — Payments Table Investigation
@@ -3165,3 +3169,144 @@ This section closes the T13–T27 engagement arc. The engagement opened with T13
 **Engagement record completeness:** Patterns #1–#54 documented. Rules #1–#61 documented (with gaps at #33–#47, #55, #57 which were not assigned in prior tranches). All tranches have close-out entries. The record is the authoritative reference for "why we do things this way" for the duration of this system's development.
 
 ---
+
+---
+
+## T28 — Zoho Sync Activation + Financial Dashboard Payments Wiring
+
+**Tranche goal:** Activate the Zoho main sync (zohoScheduler) and wire the payments sync so the Financial Dashboard reflects real operational data.
+
+**Items:**
+1. Sync activation — verify build hardening, enable zohoSyncJobs, monitor first run
+2. Payments sync wiring — Path A (financialRouter queries `zohoPayments`, `syncAllPayments()` wired into scheduler)
+3. Invoice status safety check
+4. Two-DB architecture documentation
+
+---
+
+### T28 Item 1 — Zoho Sync Activation
+
+**Pre-activation state:**
+- `zohoSyncJobs` id=1: `enabled = 0`, `nextRunAt` stale (2026-06-30)
+- Rule #31 fix (`fix(rule31)` commit) deployed during T27 sync-error investigation
+- Production binary confirmed to have pre-load block: `fieldManagerMap` populated from DB before sync loop
+
+**Activation sequence:**
+1. `UPDATE zohoSyncJobs SET enabled = 1, nextRunAt = NOW() + INTERVAL 2 MINUTE WHERE id = 1`
+2. PM2 restart to re-read DB
+3. Scheduler log: `Scheduling job T16 Test Sync Job to run in 104s`
+4. Sync completed: **7,704 contacts synced, 2,509 errors** (contacts without `CustomerMAF` — expected), duration 672s
+5. Next run: 2026-07-02 00:00:00 (daily midnight)
+
+**Post-sync DB state:**
+- Customers: 7,864 (unchanged — all already synced)
+- Workers: 11 → **13** (phantom workers 9683 `Low.low income`, 9722 `Low.Low income.` created by Rule #31 correct behavior)
+- NULL fieldManager: 196 (local MySQL baseline — unrelated to T27 TiDB cleanup)
+
+**Rule #31 confirmed working:** All existing workers found by name lookup, no `ER_DUP_ENTRY` errors.
+
+**Sync error root cause (surfaced during T27 "Sync Now" failure):** `syncZohoContacts` initialised `fieldManagerMap` as empty `Map()` on every run. On re-sync, existing workers were not found → `INSERT` attempted → `ER_DUP_ENTRY` on `workers.email` unique constraint → crash → HTML 500 returned to frontend → `Unexpected token '<'` error in UI. Fix: pre-load all existing workers into `fieldManagerMap` before loop. Committed as `fix(rule31)`.
+
+---
+
+### T28 Thread 1 — Two-DB Architecture (Investigation)
+
+**Finding:** Production infrastructure has two separate databases:
+
+| Database | Host | Used by | Schema status |
+|---|---|---|---|
+| **Local MySQL** (canonical) | `localhost:3306/fieldworker_db` | Node.js app, PM2 `field-worker-scheduler`, zohoScheduler, all tRPC procedures | Full schema — all tables including `invoices`, `zohoInvoices`, `zohoPayments`, `payments`, `routeSchedules`, `calendarAuditLog`, etc. |
+| **TiDB Cloud** (legacy) | `gateway02.us-east-1.prod.aws.tidbcloud.com:4000` | `scripts/sync-zoho-data.mjs` (hardcoded credentials) — **not scheduled** | Partial schema — missing all tables added after migration |
+
+**TiDB status:** Legacy infrastructure from a pre-engagement database migration. `sync-zoho-data.mjs` has hardcoded TiDB credentials but is not scheduled to run (no crontab entry). TiDB is idle — last meaningful write was T27 phantom worker cleanup. The script would sync to the wrong DB if executed.
+
+**Impact on prior tranches:**
+- T27 Item 2 (phantom worker deletion): applied to TiDB — **no-op from app's perspective** (see T27 Item 2 correction note above)
+- T25 abatementNotices backfill: applied to local MySQL — **correct**
+- T26 dashboard work: applied to local MySQL — **correct**
+- T28 Item 1 sync activation: applied to local MySQL — **correct**
+
+**Recommendation for T29+:** Remove `sync-zoho-data.mjs` or reconfigure its connection to local MySQL to eliminate divergence risk. Consider TiDB decommissioning.
+
+---
+
+### T28 Item 2 — Payments Sync Wiring (Path A)
+
+**Architecture decision:** Path A — update `financialRouter.ts` to query `zohoPayments` instead of `payments`; wire `syncAllPayments()` into zohoScheduler; retire `payments` table as dead code in T29+.
+
+**Rationale:** `payments` table FK columns (`invoiceId`, `customerId`) were aspirational schema — never populated. Financial Dashboard is the only consumer, using 2 simple aggregate queries. `zohoPayments` has all required fields. Path A rework: 3 lines of SQL. Path B/C (FK resolution): 30–50 lines with new failure modes.
+
+**Implementation:**
+
+*(Completed in this tranche — see commits below)*
+
+---
+
+### T28 Item 3 — Invoice Status Safety Check
+
+*(Investigation results appended after implementation)*
+
+---
+
+### T28 Pattern #55 — Aspirational Schema Without Writers
+
+**Description:** A table exists in schema with FK columns suggesting normalized relationships, but those columns are never populated because the sync/write path that would populate them has zero callers. Downstream queries either bypass the aspirational structure (raw SQL against denormalized fields) or return stale data.
+
+**Canonical instance:** `payments` table — had `invoiceId` and `customerId` FK columns that were never populated because `syncAllPayments()` (the intended writer) had zero callers. Financial Dashboard queried `payments` directly, returning stale data.
+
+**Distinguished from Pattern #54** (fully-implemented feature with zero callers): Pattern #54 is about a feature that works correctly but is never triggered. Pattern #55 is about schema shape that declares intent without the code to give it meaning — the FK columns exist, the table exists, but the data that would make the FKs meaningful is never written.
+
+**Rule #62 added:** Verify writers before trusting schema shape. A FK column doesn't guarantee data integrity; it declares intent. Before building queries against a FK-normalized schema, verify the sync/write path is actually populating those FKs consistently. Check `db.insert(tableName)` call sites in the codebase before assuming a table's FK columns are populated.
+
+---
+
+## T28 Carry-Forward Queue
+
+Items deferred from T28 to future tranches:
+
+### T29 Small — TiDB Decommissioning / sync-zoho-data.mjs Cleanup
+
+**Description:** Legacy DB serves no active purpose. `sync-zoho-data.mjs` has hardcoded TiDB credentials — if executed, it would sync to the wrong DB. Small work: either remove the script or reconfigure its connection to local MySQL. Consider TiDB decommissioning.
+
+**Risk:** Low. TiDB is not scheduled; no active reads or writes from the app.
+
+---
+
+### T29 Small — payments Table Retirement
+
+**Description:** After Path A implementation, `payments` table is dead code. Contains 0 rows (stale test row deleted in T28). Safe to drop in T29+ cleanup.
+
+**Action:** `DROP TABLE payments;` + remove from `drizzle/schema.ts` + run `pnpm db:push`.
+
+---
+
+### OPERATIONAL (owner task) — Phantom Worker Zoho Cleanup
+
+**Description:** Local MySQL now contains workers 9683 (`Low.low income`) and 9722 (`Low.Low income.`) — created by Rule #31 correct behavior during the first T28 sync run. These names exist in Zoho's `Field Manager` free-text field for some contacts. The sync will continue creating/finding these workers on every run until the Zoho contacts are updated.
+
+**Owner action:** Update Zoho contacts currently showing `Low.low income` variants in the Field Manager field to real field manager names (Halleluyah, Bukola, or Juwon). After that + next sync run, phantom workers stop being created. The existing workers 9683/9722 can then be deleted (no customers will be assigned to them after the Zoho cleanup).
+
+---
+
+### OPERATIONAL (owner task) — Manual Reassignment of 245 Customers (TiDB)
+
+**Description:** T27 Item 2 nulled 245 customers' `fieldManager` in TiDB (the legacy DB). From the app's perspective, this was a no-op. The 245 customers in local MySQL have `fieldManager = NULL` for a different reason — they had no field manager set in Zoho before the sync created phantom workers. Recovery path: owner manually tags each in Zoho with correct field manager + MAF, then triggers sync.
+
+---
+
+### MEDIUM — FinancialDashboard.tsx Type Alignment
+
+**Description:** 14 pre-existing TypeScript errors — field name mismatches between component and tRPC return types. Dashboard renders via optional chaining but some fields display `undefined`.
+
+---
+
+### MEDIUM — Worker Creation UI Double-Submit Investigation
+
+**Description:** Workers 2243/2282 created 7 seconds apart. Possible UI double-submit — check worker creation dialog for debounce/submit-once protection.
+
+---
+
+### DEFERRED — Company/Vendor Entity Model, Canonical Constants, Per-MAF Financial Breakdown
+
+Carried from prior tranches. Per-MAF financial breakdown is now unblocked (real payment data available after T28 payments sync).
+
