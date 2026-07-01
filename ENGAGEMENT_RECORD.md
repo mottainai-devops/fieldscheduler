@@ -3238,13 +3238,42 @@ This section closes the T13–T27 engagement arc. The engagement opened with T13
 
 **Implementation:**
 
-*(Completed in this tranche — see commits below)*
+1. `financialRouter.ts` `getMetrics` + `getPayments` queries updated to use `zohoPayments` instead of `payments` table
+2. `zohoScheduler.ts` wired to call `syncAllPayments()` after `syncZohoContacts()` on every scheduled run
+3. Stale `payments` row deleted from production DB (`DELETE FROM payments`)
+4. T27 stale-data warning banner removed from `FinancialDashboard.tsx`
+
+**First payments sync result:**
+- `zohoPayments` count: **1,179 records**
+- `zohoPayments` total: **₦221,338,894.90**
+- Sync duration: ~40 minutes (7,864 customers × Zoho API per-customer fetch)
+- 0 failures
+
+**Commits:** `fix(t28-path-a)` (financialRouter + zohoScheduler), `fix(t28-path-a): remove stale-data banner`
 
 ---
 
 ### T28 Item 3 — Invoice Status Safety Check
 
-*(Investigation results appended after implementation)*
+**Finding:** `getMetrics` uses `SUM(balance)` with no status filter. Current invoice status breakdown:
+
+| Status | Count | Total | Balance | Correct in outstanding? |
+|---|---|---|---|---|
+| overdue | 173 | ₦10,428,637.50 | ₦10,428,637.50 | ✅ Yes |
+| draft | 51 | ₦497,725.00 | ₦497,725.00 | ❌ No — not yet issued |
+| paid | 16 | ₦46,225.00 | ₦0.00 | ✅ Yes (balance = 0) |
+| void | 10 | ₦3,143,300.00 | ₦3,143,300.00 | ❌ No — voided |
+| sent | 1 | ₦644,800.00 | ₦644,800.00 | ✅ Yes |
+
+**Outstanding inflation:** ₦3,641,025 (draft ₦497,725 + void ₦3,143,300)
+
+**Correct outstanding:** ₦11,073,437.50 (overdue + sent)
+
+**Displayed outstanding:** ₦14,714,462.50 (all balances)
+
+**No action in T28.** Pre-existing issue. Fix in T29: add `WHERE status NOT IN ('void', 'draft')` to outstanding balance query.
+
+**Rule #63 added:** Invoice outstanding balance queries must filter out `void` and `draft` statuses. A `balance` field on a voided invoice is not zeroed out by Zoho sync — it retains the original amount. Always apply `WHERE status IN ('overdue', 'sent', 'partially_paid', 'unpaid')` for outstanding calculations.
 
 ---
 
@@ -3306,7 +3335,40 @@ Items deferred from T28 to future tranches:
 
 ---
 
+### T29 Small — Invoice Outstanding Balance Status Filter
+
+**Description:** `getMetrics` `SUM(balance)` query includes `void` (10 invoices, ₦3.1M) and `draft` (51 invoices, ₦497K) in the outstanding total. Inflation: ₦3,641,025. Fix: add `WHERE status NOT IN ('void', 'draft')` to the outstanding balance query in `financialRouter.ts`.
+
+**Risk:** Low. 2-line SQL change. No schema migration required.
+
+---
+
 ### DEFERRED — Company/Vendor Entity Model, Canonical Constants, Per-MAF Financial Breakdown
 
 Carried from prior tranches. Per-MAF financial breakdown is now unblocked (real payment data available after T28 payments sync).
+
+---
+
+## T28 Engagement Session Close-Out
+
+**Session arc:** T28 opened to activate the Zoho sync infrastructure that had been built but never enabled. Three distinct problems were resolved:
+
+1. **Sync error fix (unplanned):** The "Sync Now" button was returning `Unexpected token '<'` because `syncZohoContacts` crashed with `ER_DUP_ENTRY` on every re-sync. Root cause: `fieldManagerMap` initialized empty on every run. Fix: pre-load from DB before loop (Rule #31, Pattern #26). Committed as `fix(rule31)`, deployed before T28 formally began.
+
+2. **Main sync activation (Item 1):** `zohoSyncJobs` id=1 enabled, first run completed (7,704 contacts, 2,509 expected errors, 672s). Daily midnight schedule confirmed. Rule #31 confirmed working in production binary.
+
+3. **Payments sync wiring (Item 2, Path A):** `syncAllPayments()` wired into zohoScheduler. `financialRouter.ts` updated to query `zohoPayments` (1,179 records, ₦221.3M) instead of the aspirational `payments` table (1 stale row, now deleted). Stale-data banner removed. Financial Dashboard now shows real Zoho payment data.
+
+**Two-DB architecture documented (Thread 1):** Local MySQL is canonical. TiDB is idle legacy infrastructure. T27 phantom worker cleanup was applied to TiDB (no-op from app's perspective). All T28 work applied to local MySQL (correct).
+
+**Item 3 (invoice status safety check):** Outstanding balance inflated by ₦3.6M due to void/draft invoices not being filtered. Pre-existing issue, documented as T29 Small.
+
+**Production state at T28 close:**
+- PM2: online, restarts: 212
+- zohoSyncJobs: enabled=1, next run 2026-07-02 00:00:00
+- zohoPayments: 1,179 records, ₦221,338,894.90
+- payments: 0 rows (stale row deleted)
+- Financial Dashboard: live data, no stale-data banner
+- driftCheck: 0 findings
+- Tests: 72 passing (5 files)
 
