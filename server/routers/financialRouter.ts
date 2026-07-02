@@ -42,8 +42,8 @@ export const financialRouter = router({
           FROM invoices
         `);
 
-        // T28 Path A: query zohoPayments (populated by syncAllPayments) instead of
-        // the aspirational payments table (Pattern #55 — FK columns never populated).
+        // zohoPayments is populated by syncAllPayments() via zohoScheduler (daily midnight).
+        // The aspirational payments table was retired in T30 Item 2.
         const paymentResult = await db.execute(sql`
           SELECT 
             COALESCE(SUM(amount), 0) as total,

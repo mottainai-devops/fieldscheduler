@@ -490,25 +490,6 @@ export const invoices = mysqlTable("invoices", {
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = typeof invoices.$inferInsert;
 
-export const payments = mysqlTable("payments", {
-  id: int("id").autoincrement().primaryKey(),
-  zohoPaymentId: varchar("zohoPaymentId", { length: 255 }).notNull().unique(),
-  invoiceId: int("invoiceId").references(() => invoices.id),
-  customerId: int("customerId").references(() => customers.id),
-  fieldManagerId: varchar("fieldManagerId", { length: 255 }),
-  maf: varchar("maf", { length: 255 }),
-  paymentNumber: varchar("paymentNumber", { length: 255 }).notNull(),
-  paymentDate: date("paymentDate").notNull(),
-  customerName: varchar("customerName", { length: 255 }),
-  invoiceNumber: varchar("invoiceNumber", { length: 255 }),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  paymentMode: varchar("paymentMode", { length: 100 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type Payment = typeof payments.$inferSelect;
-export type InsertPayment = typeof payments.$inferInsert;
 
 export const invoiceItems = mysqlTable("invoiceItems", {
   id: int("id").autoincrement().primaryKey(),
