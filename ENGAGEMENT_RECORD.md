@@ -3695,3 +3695,84 @@ All invariants confirmed against live production DB:
 - **OPERATIONAL:** Bukola Zoho invoice tagging — update existing Zoho invoices to set FIELD MANAGER = Bukola so they appear in her dashboard (Rule #65)
 - **OPERATIONAL:** Phantom worker Zoho cleanup — update Zoho contacts with `Field Manager = "Low low income"` / `"Low.Low income."` to a real field manager name
 - **OPERATIONAL:** TiDB provider-level decommissioning (outside engineering scope)
+
+---
+
+## T32 — Canonical Constants Centralization
+
+**Ticket:** T32
+**Status:** CLOSED
+**Commits:** C1 `4006a39f` → C7 `745fb3cf` (7 commits on `main`)
+**Tests:** 89 passing (was 72 before T32; +17 new constants verification tests)
+**driftCheck:** 0 findings
+
+---
+
+### Pattern #58 / Rule #66: Single Source of Truth for Enum-Like Concepts
+
+**Rule #66:** Every enum-like concept used in more than one file MUST be defined in exactly one canonical location and imported everywhere else. Hardcoded string literals for invoice statuses, skip reasons, routing reasons, MAF sentinels, and currency formatting are prohibited. Violations of this rule are the root cause of the T29 outstanding-balance calculation drift (financialRouter vs fieldManager used different outstanding status sets).
+
+**Canonical locations established by T32:**
+
+| Concept | Canonical Location | Key Exports |
+|---|---|---|
+| Invoice status values | `shared/constants/invoice-status.ts` | `INVOICE_STATUS`, `OUTSTANDING_STATUSES`, `OUTSTANDING_STATUS_LIST`, `VALID_INVOICE_STATUSES`, `InvoiceStatus` |
+| MAF column sentinels | `shared/constants/maf.ts` | `NULL_MAF_SENTINEL` (`'__NULL__'`), `NULL_MAF_DISPLAY_LABEL` (`'(No MAF set)'`), `CUSTOMER_MAF_COLUMN`, `INVOICE_MAF_COLUMN` |
+| Skip reason values | `shared/const.ts` — `SKIP_REASONS` | 8-value canonical set (fixed from stale 7-value pre-T13 set) |
+| Routing reason values | `shared/const.ts` — `ROUTING_REASONS` | 5-value set (server-side Zod enums now derived from this) |
+| Currency formatting | `client/src/utils/currency.ts` | `formatCurrency` (2 dp), `formatCurrencyRounded` (0 dp), `parseCurrency`, `CURRENCY_SYMBOL` |
+
+---
+
+### T32 Investigation Findings
+
+**SKIP_REASONS stale-value bug (HIGH):** `shared/const.ts` had a 7-value stale set from before T13. The schema and `workerAuth.ts` had the correct 8-value set. `Analytics.tsx` imported the stale const — skip breakdown labels were wrong for all users. Fixed in C3.
+
+**T29 outstanding-balance drift (HIGH):** `financialRouter.ts` used `status != 'void'` (includes paid invoices in "outstanding") while `fieldManager.ts` used `status IN ('overdue', 'sent', 'draft')` (T29 Rule #63). Same metric, two implementations, different results. Fixed in C1.
+
+**MAF column naming (MEDIUM):** `customers.customermaf` vs `invoices.maf` — different column names for the same concept. Owner decision: Option A (document as constants, no schema migration). `shared/constants/maf.ts` created.
+
+**Currency formatting (MEDIUM):** Three separate `new Intl.NumberFormat('en-NG', ...)` definitions. `FieldManagerDashboard.tsx` used 0 decimal places (intentional); others used 2. Consolidated into `formatCurrency` (2 dp) and `formatCurrencyRounded` (0 dp) in `client/src/utils/currency.ts`.
+
+---
+
+### T32 Commit Summary
+
+| Commit | Hash | Description |
+|---|---|---|
+| C1 | `4006a39f` | Create `invoice-status.ts` + migrate server consumers + T29 outstanding filter fix |
+| C2 | `8c177922` | Migrate frontend invoice-status consumers |
+| C3 | `dda1b7f7` | Fix SKIP_REASONS canonical const + migrate consumers |
+| C4 | `7cc9ec67` | Create `maf.ts` constants + migrate NULL_MAF_SENTINEL consumers |
+| C5 | `3f213122` | Migrate routing reason consumers to ROUTING_REASONS canonical const |
+| C6 | `0684289a` | Deduplicate currency formatting — canonical formatCurrency/formatCurrencyRounded |
+| C7 | `745fb3cf` | Add 17 canonical constants verification tests |
+
+---
+
+### T32 Behavioral Verification
+
+| Check | Result |
+|---|---|
+| Residual invoice status literals in server | CLEAN (0) |
+| Residual invoice status literals in client | CLEAN (0) |
+| Stale skip reason values in any file | CLEAN (0) |
+| Inline Intl.NumberFormat outside currency.ts | CLEAN (0) |
+| Routing reason hardcodes in server | 1 acceptable business-logic default (`'regular'` fallback in fieldWorker.ts, typed as `RoutingReasonValue`) |
+| driftCheck | 0 findings |
+| Tests | 89/89 passing |
+| TypeScript: new errors introduced | 0 |
+
+---
+
+### T32 Session Close-Out
+
+**Session arc:** T32 resolves the root cause of the T29 outstanding-balance calculation drift and eliminates all hardcoded enum-like string literals across the codebase. The 7-commit sequence creates two new canonical constants files, fixes a stale SKIP_REASONS bug affecting Analytics.tsx skip labels, fixes the T29 financialRouter outstanding filter, migrates all server and frontend consumers, and adds 17 behavioral verification tests that lock the canonical values as contracts.
+
+**Open items for T33+:**
+- **T31 HIGH (carry-forward):** Apply `normalizeName()` to Rule #31 pre-load map key and Zoho field manager lookup string in `server/services/zoho.ts` — eliminates the `ER_DUP_ENTRY` loop for `Low low income` on every sync run (Rule #64)
+- **T32 MEDIUM (carry-forward):** MAF Option B — schema migration to rename `customers.customermaf → customers.maf`. Deferred by owner decision.
+- **T31 MEDIUM (carry-forward):** Vendor/company entity model
+- **OPERATIONAL:** Bukola Zoho invoice tagging — update existing Zoho invoices to set FIELD MANAGER = Bukola (Rule #65)
+- **OPERATIONAL:** Phantom worker Zoho cleanup — update Zoho contacts with `Field Manager = "Low low income"` / `"Low.Low income."` to a real field manager name
+- **OPERATIONAL:** TiDB provider-level decommissioning (outside engineering scope)
