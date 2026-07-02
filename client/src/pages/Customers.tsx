@@ -3,6 +3,7 @@ import { trpc } from "../lib/trpc";
 import { Link } from "wouter";
 import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/hooks/useAuth";
+import { ROUTING_REASONS } from '@shared/const';
 
 export default function Customers() {
   const { isAdmin, isFieldManager, fieldManagerId } = useAuth();
@@ -254,11 +255,10 @@ export default function Customers() {
           >
             <option value="">All Routing Reasons</option>
             <option value="never_routed">Never Routed</option>
-            <option value="regular">Regular</option>
-            <option value="callback">Callback</option>
-            <option value="complaint">Complaint</option>
-            <option value="compliance">Compliance</option>
-            <option value="other">Other</option>
+            {/* T32 (Rule #66): ROUTING_REASONS from shared/const.ts */}
+            {ROUTING_REASONS.map(r => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
           </select>
         </div>
       </div>

@@ -3,8 +3,9 @@ import { TRPCError } from "@trpc/server";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import { clusterCustomers } from "../utils/clustering";
 import { clusterCustomersByCount } from "../utils/clusteringByCount";
-import { protectedProcedure, adminProcedure, fieldManagerProcedure, superadminProcedure, router, driftLogger } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, fieldManagerProcedure, superadminProcedure, router, driftLogger } from "../\_core/trpc";
 import * as notificationDb from "../notificationDb";
+import { ROUTING_REASONS, RoutingReasonValue } from '../../shared/const';
 
 export const fieldWorkerRouter = router({
   // Worker operations
@@ -409,12 +410,14 @@ export const fieldWorkerRouter = router({
       startingPointLng: z.number().optional(),
       startingPointLabel: z.string().optional(),
       // Item 1 (T13): route-level routing reason
-      routingReason: z.enum(["regular", "callback", "complaint", "compliance", "other"]).optional(),
+      // T32 (Rule #66): derive Zod enum from ROUTING_REASONS canonical const (shared/const.ts)
+      routingReason: z.enum(ROUTING_REASONS.map(r => r.value) as [string, ...string[]]).optional(),
       // Required when routingReason = 'other' (10+ chars enforced at application layer)
       routingReasonNote: z.string().max(500).optional(),
       // Item 2 (T13): per-stop routing reason overrides (keyed by customerId)
       stopReasonOverrides: z.record(z.string(), z.object({
-        reason: z.enum(["regular", "callback", "complaint", "compliance", "other"]),
+        // T32 (Rule #66): derive Zod enum from ROUTING_REASONS canonical const (shared/const.ts)
+        reason: z.enum(ROUTING_REASONS.map(r => r.value) as [string, ...string[]]),
         note: z.string().max(500).optional(),
       })).optional(),
     }))
@@ -451,7 +454,8 @@ export const fieldWorkerRouter = router({
 
       // T16 follow-up: routing reason validation gates + auto-fill (defense in depth — mirrors client gates)
       // Recurring routes auto-fill to 'regular' if no reason was provided.
-      const resolvedReason = input.routingReason ?? (input.isRecurring ? 'regular' : undefined);
+      // T32: cast to RoutingReasonValue — z.enum with mapped values returns string, but RoutingReasonValue is the canonical type
+      const resolvedReason = (input.routingReason ?? (input.isRecurring ? 'regular' : undefined)) as RoutingReasonValue | undefined;
       if (!input.isRecurring && !resolvedReason) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -468,7 +472,14 @@ export const fieldWorkerRouter = router({
 
       try {
         console.log('[CREATE ROUTE] Calling fieldWorkerDb.createRoute...');
-        const result = await fieldWorkerDb.createRoute({ ...input, routingReason: resolvedReason, supervisorId: resolvedSupervisorId, status: resolvedStatus });
+        const result = await fieldWorkerDb.createRoute({
+          ...input,
+          routingReason: resolvedReason,
+          // T32: cast stopReasonOverrides to RoutingReasonValue — z.enum mapped array returns string
+          stopReasonOverrides: input.stopReasonOverrides as Record<string, { reason: RoutingReasonValue; note?: string }> | undefined,
+          supervisorId: resolvedSupervisorId,
+          status: resolvedStatus,
+        });
         console.log('[CREATE ROUTE] ✅ SUCCESS! Result:', JSON.stringify(result, null, 2));
         console.log('========================================\n');
         return result;

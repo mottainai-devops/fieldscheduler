@@ -1,6 +1,7 @@
 import { eq, desc, and, sql, or, inArray, like } from "drizzle-orm";
 import { getDb } from "./db";
 import { workers, vehicles, customers, routes, routeCustomers, workerLocations } from "../drizzle/schema";
+import { RoutingReasonValue } from '../shared/const';
 
 // Worker operations
 export async function getAllWorkers() {
@@ -481,10 +482,12 @@ export async function createRoute(data: {
   startingPointLng?: number;
   startingPointLabel?: string;
   // T16 Item 1: route-level routing reason (was ghost field — now written to DB)
-  routingReason?: "regular" | "callback" | "complaint" | "compliance" | "other";
+  // T32 (Rule #66): use RoutingReasonValue from shared/const.ts canonical const
+  routingReason?: RoutingReasonValue;
   routingReasonNote?: string;
   // Item 2 (T13) / T16 Item 1: per-stop routing reason overrides (keyed by customerId as string)
-  stopReasonOverrides?: Record<string, { reason: "regular" | "callback" | "complaint" | "compliance" | "other"; note?: string }>;
+  // T32 (Rule #66): use RoutingReasonValue from shared/const.ts canonical const
+  stopReasonOverrides?: Record<string, { reason: RoutingReasonValue; note?: string }>;
 }) {
   console.log('\n[DB] createRoute called with data::', JSON.stringify(data, null, 2));
   
