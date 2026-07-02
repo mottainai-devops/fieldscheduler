@@ -23,9 +23,15 @@ export const adminAuthRouter = router({
           throw new Error("Worker not found");
         }
         
-        // Simple password check — in production use bcrypt
+        // PIN verification — compare input against stored PIN
         if (!input.password) {
           throw new Error("Password required");
+        }
+        if (worker.pin === null || worker.pin === undefined) {
+          throw new Error("Account not configured — contact administrator");
+        }
+        if (input.password !== worker.pin) {
+          throw new Error("Invalid password");
         }
         
         // Create a user record in the users table if it doesn't exist.
