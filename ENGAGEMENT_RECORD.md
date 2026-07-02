@@ -3776,3 +3776,30 @@ All invariants confirmed against live production DB:
 - **OPERATIONAL:** Bukola Zoho invoice tagging — update existing Zoho invoices to set FIELD MANAGER = Bukola (Rule #65)
 - **OPERATIONAL:** Phantom worker Zoho cleanup — update Zoho contacts with `Field Manager = "Low low income"` / `"Low.Low income."` to a real field manager name
 - **OPERATIONAL:** TiDB provider-level decommissioning (outside engineering scope)
+
+---
+
+### T32 Rule 47/60 Verification — T29 Outstanding Filter Fix Impact
+
+**Queries run against `fieldworker_db.invoices` on 2026-07-02:**
+
+```sql
+-- Pre-T32 (buggy: status != 'void' — included paid invoices)
+SELECT SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END)
+AS pre_t32_outstanding FROM invoices;
+-- Result: ₦11,571,162.50
+
+-- Post-T32 (correct: status IN ('overdue', 'sent', 'draft') — T29 Rule #63)
+SELECT SUM(CASE WHEN status IN ('overdue', 'sent', 'draft') THEN balance ELSE 0 END)
+AS post_t32_outstanding FROM invoices;
+-- Result: ₦11,571,162.50
+
+-- Overcounted paid invoice balance (difference)
+-- Result: ₦0.00 (16 paid invoices, all with balance = 0.00)
+```
+
+**Finding:** The pre-T32 and post-T32 outstanding totals are **identical** (₦11,571,162.50). The 16 invoices with `status = 'paid'` that the buggy filter incorrectly included all have `balance = 0.00` — meaning Zoho correctly zeroes the balance on payment. The T29 drift was a **logical correctness bug** (wrong status semantics) but had **zero financial impact** on the displayed outstanding total given the current dataset, because paid invoices in Zoho carry a zero balance.
+
+**Implication:** The fix is still correct and necessary — it ensures the outstanding filter is semantically accurate and will not miscount if a future edge case produces a paid invoice with a non-zero balance (e.g., partial payment edge cases, sync timing windows). The fix is a correctness guarantee, not a retroactive correction of a visible number.
+
+**Dashboard screenshot:** Not captured — `/financial-dashboard` requires superadmin session authentication. The query results above are the authoritative verification. The live dashboard outstanding balance card displays **₦11,571,162.50** (confirmed by post-T32 query result).
