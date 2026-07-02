@@ -3803,3 +3803,162 @@ AS post_t32_outstanding FROM invoices;
 **Implication:** The fix is still correct and necessary — it ensures the outstanding filter is semantically accurate and will not miscount if a future edge case produces a paid invoice with a non-zero balance (e.g., partial payment edge cases, sync timing windows). The fix is a correctness guarantee, not a retroactive correction of a visible number.
 
 **Dashboard screenshot:** Not captured — `/financial-dashboard` requires superadmin session authentication. The query results above are the authoritative verification. The live dashboard outstanding balance card displays **₦11,571,162.50** (confirmed by post-T32 query result).
+
+
+---
+
+## T33 — Workers Table Architectural Reconciliation + Auth Bypass Emergency Fix
+
+**Opened:** 2026-07-02  
+**Closed:** 2026-07-02  
+**Commits:** `4607dcbe` (auth fix + T33 close-out)  
+**Scope:** Legacy worker table cleanup per T14 four-tier model + emergency auth bypass fix discovered during investigation
+
+---
+
+### Original Scope: Workers Table Cleanup
+
+**Cycle 1 Investigation (a-g):**
+- Total workers at T33 open: 11 rows
+- Company-shape name pattern query: 0 matches (legacy entries from T33 brief not present in current DB)
+- Only 1 supervisor row: id=7475 (Adeyadewuyi, adey@gmail.com, created 2026-06-30, zero activity)
+
+**Expanded Investigation (h-j) — Full Audit Table:**
+
+| ID | Name | Email | Role | Categorization |
+|---|---|---|---|---|
+| 1 | adey adewuyi | adeyadewuyi@gmail.com | field_manager | SUPERADMIN_AUTH_IDENTITY |
+| 2 | ADMIN | info@mottainai.africa | field_manager | SUPERADMIN_AUTH_IDENTITY |
+| 7 | Halleluyah | halleluyah@fieldscheduler.net | field_manager | CANONICAL_ACTIVE |
+| 8 | Bukola | bukola@fieldscheduler.net | field_manager | CANONICAL_ACTIVE |
+| 9 | Juwon | juwon@fieldscheduler.net | field_manager | CANONICAL_ACTIVE |
+| 10 | Wale Onibudo | wale@fieldscheduler.net | field_manager | ADMIN_AUTH_IDENTITY (load-bearing) |
+| 27 | Alaba | alabakelani@gmail.com | field_manager | ADMIN_AUTH_IDENTITY (load-bearing) |
+| 35 | T16 Test Worker | t16test@fieldscheduler.net | field_manager | TEST_ARTIFACT |
+| 9683 | Low.low income | low.low.income@fieldscheduler.net | field_manager | PHANTOM_SYNC (Rule #64) |
+| 9722 | Low.Low income. | low.low.income.@fieldscheduler.net | field_manager | PHANTOM_SYNC (Rule #64) |
+| 7475 | Adeyadewuyi | adey@gmail.com | supervisor | LEGACY_SAFE_DELETE |
+
+**Key finding — adminAuth.login uses workers table as identity source:**
+The `adminAuth.login` procedure authenticates against the `workers` table (via `getWorkerByEmail`), not the `users` table. Wale (id=10) and Alaba (id=27) workers rows are load-bearing for their admin login. Deleting them would break their access.
+
+**Cleanup executed:**
+- Deleted: id=35 (T16 test artifact), id=7475 (legacy supervisor, zero activity)
+- Deleted then recreated: id=1, id=2 — initially deleted as "zero activity" but regression discovered immediately (superadmin login broken); recreated via INSERT with original IDs to avoid code change
+- Deleted: 5 workerNotifications + 5 fieldManagerTags for deleted rows (FK cascade)
+- Deleted: routes 168, 169 (Wale test routes, `pending_assignment`, no completed work)
+- Kept: id=10 (Wale), id=27 (Alaba) — load-bearing for admin login
+- Kept: id=9683, id=9722 (phantom sync workers — Rule #64, recreated by Zoho sync on every run)
+
+**Final workers table state (9 rows):** ids 1, 2, 7, 8, 9, 10, 27, 9683, 9722
+
+---
+
+### Critical Discovery: Production Authentication Bypass (Pattern #10 / Rule #68)
+
+**Root cause:** `adminAuth.login` password check was a placeholder stub since at least April 2026 (earliest commit in repo):
+
+```typescript
+// Simple password check — in production use bcrypt
+// For now, accept any non-empty password
+if (!input.password) {
+  throw new Error("Password required");
+}
+```
+
+Any non-empty string was accepted as a valid password for any valid email. The `workers.pin` column (populated with 4-char PINs for 5 accounts) was never read during login.
+
+**Discovery trigger:** Owner reported Alaba could log in with any password. Owner then tested other accounts — all accepted any password. Owner's own logins during T26–T32 used browser-autosaved credentials (correct PIN always submitted), masking the bug across all prior engagement sessions.
+
+**Fix (commit `4607dcbe`):**
+
+```typescript
+// PIN verification — compare input against stored PIN
+if (!input.password) { throw new Error("Password required"); }
+if (worker.pin === null || worker.pin === undefined) {
+  throw new Error("Account not configured — contact administrator");
+}
+if (input.password !== worker.pin) { throw new Error("Invalid password"); }
+```
+
+**PIN population:** Superadmin rows id=1 and id=2 had NULL pins (recreated without PINs). PINs set via direct DB UPDATE (not committed to repo). All 5 existing accounts (Halleluyah/Bukola/Juwon/Wale/Alaba) kept their existing PINs.
+
+---
+
+### Behavioral Verification — All 15 Cases Passed
+
+**Positive cases (correct PIN → success):**
+
+| Account | Role | Result |
+|---|---|---|
+| adeyadewuyi@gmail.com | superadmin | ✅ success=True, role=superadmin |
+| info@mottainai.africa | superadmin | ✅ success=True, role=superadmin |
+| wale@fieldscheduler.net | admin | ✅ success=True, role=admin |
+| bukola@fieldscheduler.net | field_manager | ✅ success=True, role=field_manager |
+| alabakelani@gmail.com | admin | ✅ success=True, role=admin |
+| halleluyah@fieldscheduler.net | field_manager | ✅ success=True, role=field_manager |
+| juwon@fieldscheduler.net | field_manager | ✅ success=True, role=field_manager |
+
+**Negative cases (wrong PIN or nonexistent email → rejection):**
+
+| Account | Input | Result |
+|---|---|---|
+| adeyadewuyi@gmail.com | wrong PIN | ✅ "Invalid password" |
+| info@mottainai.africa | wrong PIN | ✅ "Invalid password" |
+| wale@fieldscheduler.net | wrong PIN | ✅ "Invalid password" |
+| bukola@fieldscheduler.net | wrong PIN | ✅ "Invalid password" |
+| alabakelani@gmail.com | wrong PIN | ✅ "Invalid password" |
+| halleluyah@fieldscheduler.net | wrong PIN | ✅ "Invalid password" |
+| juwon@fieldscheduler.net | wrong PIN | ✅ "Invalid password" |
+| nobody@example.com | any | ✅ "Worker not found" |
+
+---
+
+### Pattern Additions
+
+**Pattern #10 / Rule #68 — Placeholder auth stubs in production code:**
+Canonical instance: `adminAuth.login` password check stub active since April 2026. The comment `// in production use bcrypt` was never actioned. The `workers.pin` column was populated but never read.
+
+**Rule #68:** Any tranche that touches authentication code must verify both positive AND negative cases. Positive-only testing (correct credentials succeed) does not catch bypass conditions. The negative case (wrong credentials rejected) is the security-critical invariant.
+
+**Rule #69 — Auth identity source must match architecture documentation:**
+The T14 four-tier model documents the `users` table as the canonical identity source for admin/superadmin login. The actual implementation uses the `workers` table as the identity source. This gap must be documented and aligned in T34. Until alignment, the workers table is the de-facto identity source and must not be cleaned up without verifying login impact.
+
+---
+
+### Optional Stub Audit (Informational — T34 Candidates)
+
+```
+server/routers/workerAuth.ts:126 — workerAuth.me returns null (placeholder, mobile auth via localStorage)
+server/routers/workerAuth.ts:407,1048 — TODO(security): companyId as service-to-service auth is interim
+```
+
+Neither is a login bypass. Both are T34+ candidates for proper implementation.
+
+---
+
+### Production State at T33 Close
+
+| Item | Status |
+|---|---|
+| Commit | `4607dcbe` pushed to `origin/main` |
+| Build | 387.8kb server, clean |
+| PM2 | online, restarts: 229 |
+| Auth bypass | Closed — PIN equality check enforced |
+| All 15 verification cases | Passed |
+| Tests | 89/89 passing |
+
+---
+
+### T34+ Carry-Forward
+
+- **URGENT — Auth hardening:** bcrypt/argon2 hashing, rate limiting, account lockout, PIN complexity enforcement, migration from plaintext PINs
+- **URGENT — Superadmin auth architecture alignment:** Align implementation with T14 users-table canonical model (currently workers table is identity source — Rule #69)
+- **HIGH (T31/T33 carry-forward):** Apply `normalizeName()` to Rule #31 pre-load map key and Zoho field manager lookup — eliminates `ER_DUP_ENTRY` loop for phantom workers on every sync run (Rule #64)
+- **MEDIUM:** MAF schema migration (Option B — `customers.customermaf → customers.maf`)
+- **MEDIUM:** Vendor/company entity model
+- **MEDIUM:** workerAuth.me placeholder (returns null — mobile auth via localStorage, T34 proper session)
+- **MEDIUM:** companyId service-to-service auth (TODO(security) in workerAuth.ts lines 407, 1048)
+- **OPERATIONAL:** Bukola Zoho invoice tagging (Rule #65)
+- **OPERATIONAL:** Phantom worker Zoho cleanup (Rule #64)
+- **OPERATIONAL:** TiDB provider-level decommissioning
