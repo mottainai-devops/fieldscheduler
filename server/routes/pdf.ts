@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import puppeteer from "puppeteer";
 import { getCustomerStatement } from "../services/zoho";
+import { INVOICE_STATUS } from '../../shared/constants/invoice-status';
 
 export const pdfRouter = express.Router();
 
@@ -92,7 +93,7 @@ function generateStatementHTML(statementData: any) {
   
   // Calculate totals
   const total = invoices.reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
-  const paidAmount = invoices.filter((inv: any) => inv.status === 'paid').reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
+  const paidAmount = invoices.filter((inv: any) => inv.status === INVOICE_STATUS.PAID).reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
   const balance = total - paidAmount;
   
   const rows = invoices

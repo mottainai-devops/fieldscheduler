@@ -1,4 +1,5 @@
 import axios from "axios";
+import { INVOICE_STATUS } from '../../shared/constants/invoice-status';
 
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || '';
 const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || '';
@@ -724,7 +725,7 @@ export async function getCustomerStatement(zohoContactId: string): Promise<any> 
     
     // Calculate financial summary
     // Exclude draft and void invoices from all calculations
-    const validInvoices = invoices.filter((inv: any) => inv.status !== 'draft' && inv.status !== 'void');
+    const validInvoices = invoices.filter((inv: any) => inv.status !== INVOICE_STATUS.DRAFT && inv.status !== INVOICE_STATUS.VOID);
     
     // Total (Invoiced Amount) = sum of invoice totals (exclude draft and void)
     const total = validInvoices.reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
@@ -737,7 +738,7 @@ export async function getCustomerStatement(zohoContactId: string): Promise<any> 
     const paidAmount = total - balance;
     
     console.log(`[Zoho] Financial summary - Total: ${total}, Paid: ${paidAmount}, Balance: ${balance}`);
-    console.log(`[Zoho] Invoice breakdown: Total=${invoices.length}, Draft=${invoices.filter((i: any) => i.status === 'draft').length}, Void=${invoices.filter((i: any) => i.status === 'void').length}, Valid=${validInvoices.length}`);
+    console.log(`[Zoho] Invoice breakdown: Total=${invoices.length}, Draft=${invoices.filter((i: any) => i.status === INVOICE_STATUS.DRAFT).length}, Void=${invoices.filter((i: any) => i.status === INVOICE_STATUS.VOID).length}, Valid=${validInvoices.length}`);
     console.log(`[Zoho] Sample invoice data:`, invoices.slice(0, 2).map((inv: any) => ({ 
       invoice_number: inv.invoice_number, 
       total: inv.total, 
@@ -875,7 +876,7 @@ export async function fetchCustomerStatements(contactId: string) {
 function generateStatementHTML(data: any): string {
   const invoices = data.invoices || [];
   const totalAmount = invoices.reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
-  const paidAmount = invoices.filter((inv: any) => inv.status === 'paid').reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
+  const paidAmount = invoices.filter((inv: any) => inv.status === INVOICE_STATUS.PAID).reduce((sum: number, inv: any) => sum + (parseFloat(inv.total) || 0), 0);
   const balance = totalAmount - paidAmount;
 
   const invoiceRows = invoices.map((inv: any) => `

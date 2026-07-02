@@ -23,6 +23,7 @@ import { getDb } from '../db';
 import { sql } from 'drizzle-orm';
 import { eq, and, inArray, desc } from 'drizzle-orm';
 import { customers, routes, routeCustomers, workers } from '../../drizzle/schema';
+import { INVOICE_STATUS, OUTSTANDING_STATUS_LIST } from '../../shared/constants/invoice-status';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -171,7 +172,7 @@ export const fieldManagerRouter = router({
           COUNT(*) as invoiceCount
         FROM invoices
         WHERE fieldManagerId = CAST(${fmId} AS CHAR)
-          AND status != 'void'
+          AND status != ${INVOICE_STATUS.VOID}
           AND invoiceDate BETWEEN ${startDate} AND ${endDate}
       `);
       const row = ((result[0] as unknown) as any[])[0] as { total: number; invoiceCount: number } | undefined;
@@ -217,7 +218,7 @@ export const fieldManagerRouter = router({
       FROM invoices
       WHERE fieldManagerId = CAST(${fmId} AS CHAR)
         AND balance > 0
-        AND status IN ('overdue', 'sent', 'draft')
+        AND status IN (${sql.raw(OUTSTANDING_STATUS_LIST)})
       ORDER BY balance DESC
     `);
     const rows = (result[0] as unknown) as any[];
@@ -324,12 +325,12 @@ export const fieldManagerRouter = router({
           maf,
           COALESCE(SUM(total), 0) AS revenue,
           COALESCE(SUM(CASE
-            WHEN balance > 0 AND status IN ('overdue', 'sent', 'draft')
+            WHEN balance > 0 AND status IN (${sql.raw(OUTSTANDING_STATUS_LIST)})
             THEN balance ELSE 0 END), 0) AS outstanding,
           COUNT(*) AS invoiceCount
         FROM invoices
         WHERE fieldManagerId = CAST(${fmId} AS CHAR)
-          AND status != 'void'
+          AND status != ${INVOICE_STATUS.VOID}
           AND invoiceDate BETWEEN ${startDate} AND ${endDate}
         GROUP BY maf
       `);

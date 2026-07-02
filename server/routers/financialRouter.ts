@@ -1,4 +1,5 @@
 import { router, fieldManagerProcedure, adminProcedure } from '../_core/trpc';
+import { OUTSTANDING_STATUS_LIST } from '../../shared/constants/invoice-status';
 import { z } from 'zod';
 import { getDb } from '../db';
 import { sql } from 'drizzle-orm';
@@ -37,10 +38,11 @@ export const financialRouter = router({
         const invoiceResult = await db.execute(sql`
           SELECT 
             COALESCE(SUM(total), 0) as total,
-            COALESCE(SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END), 0) as outstanding,
+            COALESCE(SUM(CASE WHEN status IN (${sql.raw(OUTSTANDING_STATUS_LIST)}) THEN balance ELSE 0 END), 0) as outstanding,
             COUNT(*) as count
           FROM invoices
         `);
+        // T32: OUTSTANDING_STATUS_LIST (Rule #66) - fixes T29 drift: was status != void (included paid invoices)
 
         // zohoPayments is populated by syncAllPayments() via zohoScheduler (daily midnight).
         // The aspirational payments table was retired in T30 Item 2.
@@ -97,11 +99,10 @@ export const financialRouter = router({
             fieldManagerId,
             COUNT(*) as invoiceCount,
             COALESCE(SUM(total), 0) as invoiceTotal,
-            COALESCE(SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END), 0) as outstanding
+            COALESCE(SUM(CASE WHEN status IN (${sql.raw(OUTSTANDING_STATUS_LIST)}) THEN balance ELSE 0 END), 0) as outstanding
           FROM invoices
           WHERE fieldManagerId IS NOT NULL
           GROUP BY fieldManagerId
-          -- T29: void excluded from outstanding (Rule #63)
         `);
 
         return (result[0] as any[]).map((row: any) => ({
@@ -194,11 +195,10 @@ export const financialRouter = router({
             maf,
             COUNT(*) as invoiceCount,
             COALESCE(SUM(total), 0) as invoiceTotal,
-            COALESCE(SUM(CASE WHEN status != 'void' THEN balance ELSE 0 END), 0) as outstanding
+            COALESCE(SUM(CASE WHEN status IN (${sql.raw(OUTSTANDING_STATUS_LIST)}) THEN balance ELSE 0 END), 0) as outstanding
           FROM invoices
           WHERE maf IS NOT NULL
           GROUP BY maf
-          -- T29: void excluded from outstanding (Rule #63)
         `);
 
         return (result[0] as any[]).map((row: any) => ({

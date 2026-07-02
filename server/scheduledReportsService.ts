@@ -1,6 +1,7 @@
 import { getDb } from './db';
 import { scheduledReports, reportExecutions, reportTemplates } from './schema';
 import { eq, and, lte } from 'drizzle-orm';
+import { INVOICE_STATUS } from '../shared/constants/invoice-status';
 import nodemailer from 'nodemailer';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
@@ -181,7 +182,7 @@ async function generateReportData(templateId: number, filters: any): Promise<Rep
         totalInvoices: data.length,
         totalAmount: data.reduce((sum: number, i: any) => sum + parseFloat(i.total || 0), 0),
         totalOutstanding: data.reduce((sum: number, i: any) => sum + parseFloat(i.balance || 0), 0),
-        paidInvoices: data.filter((i: any) => i.status === 'paid').length,
+        paidInvoices: data.filter((i: any) => i.status === INVOICE_STATUS.PAID).length,
       };
       break;
 

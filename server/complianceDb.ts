@@ -387,6 +387,10 @@ export async function getCustomerPaymentStatus(customerId: number) {
 
 export async function upsertCustomerPaymentStatus(data: {
   customerId: number;
+  // customerPaymentStatus.status is a compliance tracking enum (NOT invoice status).
+  // Schema: mysqlEnum("status", ["paid", "pending", "overdue", "partial"])
+  // This is correct — it tracks the customer's payment compliance state, not Zoho invoice status.
+  // T32 investigation note: the original type was correct; InvoiceStatus does not apply here.
   status: "paid" | "pending" | "overdue" | "partial";
   lastPaymentDate?: Date;
   outstandingBalance?: string;
