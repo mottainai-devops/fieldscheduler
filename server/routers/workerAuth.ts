@@ -16,12 +16,13 @@
  * Bearer token support in the tRPC middleware.
  */
 // T20: workerProcedure added — Bearer token authentication for mobile write mutations
-import { publicProcedure, workerProcedure, router, driftLogger } from "../_core/trpc";
+import { publicProcedure, workerProcedure, router, driftLogger } from "../\_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
 import * as complianceDb from "../complianceDb";
 import * as zoho from "../services/zoho";
+import { SKIP_REASONS } from '../../shared/const';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -647,16 +648,8 @@ export const workerAuthRouter = router({
       scheduleId: z.number().int().positive().optional(),
       routeId: z.number().int().positive(),
       customerId: z.number().int().positive(),
-      skipReason: z.enum([
-        'no_access',            // Gate locked / no access
-        'customer_not_present', // Customer absent — not there to receive pickup
-        'customer_request',     // Customer opt-out — asked to skip this visit
-        'bin_not_out',          // Bins not out
-        'safety_concern',       // Weather / safety
-        'permanent_moved',      // Permanent — customer moved out
-        'permanent_closed',     // Permanent — business closed
-        'other',                // Other (free text required)
-      ]),
+      // T32 (Rule #66): derive Zod enum from SKIP_REASONS canonical const (shared/const.ts)
+      skipReason: z.enum(SKIP_REASONS.map(r => r.value) as [string, ...string[]]),
       skipNote: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { SKIP_REASONS } from '@shared/const';
 import { 
   ArrowLeft, MapPin, Navigation, CheckCircle,
   AlertTriangle, Package, Wifi, WifiOff, SkipForward, ArrowRightLeft
@@ -423,16 +424,8 @@ export default function WorkerMobileRouteDetail() {
 
             <div className="space-y-2">
               <label className="text-xs text-slate-400 uppercase tracking-wide">Reason</label>
-              {[
-                { value: 'no_access', label: 'Gate locked / no access' },
-                { value: 'customer_not_present', label: 'Customer not present (absent)' },
-                { value: 'customer_request', label: 'Customer opt-out (asked to skip)' },
-                { value: 'bin_not_out', label: 'Bins not out' },
-                { value: 'safety_concern', label: 'Weather / safety' },
-                { value: 'permanent_moved', label: 'Permanent — customer moved out' },
-                { value: 'permanent_closed', label: 'Permanent — business closed' },
-                { value: 'other', label: 'Other (note required)' },
-              ].map((opt) => (
+              {/* T32 (Rule #66): SKIP_REASONS from shared/const.ts — canonical 8-value set */}
+            {SKIP_REASONS.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setSkipReason(opt.value)}
