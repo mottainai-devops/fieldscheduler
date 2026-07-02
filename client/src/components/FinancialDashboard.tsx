@@ -3,6 +3,7 @@ import { trpc } from '../lib/trpc';
 import { useAuth } from '../hooks/useAuth';
 import MainLayout from './MainLayout';
 import AppHeader from './AppHeader';
+import { INVOICE_STATUS } from '@shared/constants/invoice-status';
 
 export function FinancialDashboard() {
   const { user } = useAuth();
@@ -269,8 +270,8 @@ export function FinancialDashboard() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatCurrency(invoice.total)}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                          invoice.status === 'paid' ? 'bg-green-100 text-green-800' :
-                          invoice.status === 'partially_paid' ? 'bg-yellow-100 text-yellow-800' :
+                          invoice.status === INVOICE_STATUS.PAID ? 'bg-green-100 text-green-800' :
+                          invoice.status === INVOICE_STATUS.PARTIALLY_PAID ? 'bg-yellow-100 text-yellow-800' :
                           'bg-red-100 text-red-800'
                         }`}>
                           {invoice.status}

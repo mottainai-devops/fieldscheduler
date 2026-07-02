@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { INVOICE_STATUS } from '@shared/constants/invoice-status';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -408,8 +409,8 @@ export default function WorkerMobileCustomerDetail() {
                             <p className="text-xs text-slate-400">{invoice.date || 'N/A'}</p>
                           </div>
                           <span className={`text-xs px-2 py-1 rounded ${
-                            invoice.status === 'paid' ? 'bg-green-500/20 text-green-400' :
-                            invoice.status === 'overdue' ? 'bg-red-500/20 text-red-400' :
+                            invoice.status === INVOICE_STATUS.PAID ? 'bg-green-500/20 text-green-400' :
+                            invoice.status === INVOICE_STATUS.OVERDUE ? 'bg-red-500/20 text-red-400' :
                             'bg-yellow-500/20 text-yellow-400'
                           }`}>
                             {invoice.status || 'pending'}
@@ -420,7 +421,7 @@ export default function WorkerMobileCustomerDetail() {
                           <span className="text-white font-semibold">{formatCurrency(invoice.total || 0)}</span>
                         </div>
                         {/* Payment Reminder Button for Overdue Invoices */}
-                        {invoice.status === 'overdue' && (
+                        {invoice.status === INVOICE_STATUS.OVERDUE && (
                           <Button
                             size="sm"
                             onClick={() => handleSendPaymentReminder(invoice)}
