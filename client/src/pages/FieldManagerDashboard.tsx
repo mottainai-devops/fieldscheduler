@@ -49,6 +49,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { NULL_MAF_DISPLAY_LABEL } from '@shared/constants/maf';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -614,7 +615,7 @@ export default function FieldManagerDashboard() {
                     {mafBreakdown.items.map((row, idx) => (
                       <tr key={row.maf ?? `__null_${idx}`} className="hover:bg-slate-700/30 transition-colors">
                         <td className="py-2.5 font-mono text-xs text-purple-300 font-semibold">
-                          {row.maf ?? <span className="text-slate-500 italic font-sans font-normal">(No MAF set)</span>}
+                          {row.maf ?? <span className="text-slate-500 italic font-sans font-normal">{NULL_MAF_DISPLAY_LABEL}</span>}
                         </td>
                         <td className="py-2.5 text-right text-slate-300">
                           {row.customerCount.toLocaleString()}

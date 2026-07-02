@@ -24,6 +24,7 @@ import { sql } from 'drizzle-orm';
 import { eq, and, inArray, desc } from 'drizzle-orm';
 import { customers, routes, routeCustomers, workers } from '../../drizzle/schema';
 import { INVOICE_STATUS, OUTSTANDING_STATUS_LIST } from '../../shared/constants/invoice-status';
+import { NULL_MAF_SENTINEL } from '../../shared/constants/maf';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -313,7 +314,7 @@ export const fieldManagerRouter = router({
       // Build map: maf (or '__NULL__' sentinel) → customerCount
       const customerMap = new Map<string, number>();
       for (const row of customerRows) {
-        const key = row.maf === null || row.maf === undefined ? '__NULL__' : String(row.maf);
+        const key = row.maf === null || row.maf === undefined ? NULL_MAF_SENTINEL : String(row.maf);
         customerMap.set(key, Number(row.customerCount));
       }
 
@@ -339,7 +340,7 @@ export const fieldManagerRouter = router({
       // Build map: maf key → { revenue, outstanding, invoiceCount }
       const invoiceMap = new Map<string, { revenue: number; outstanding: number; invoiceCount: number }>();
       for (const row of invoiceRows) {
-        const key = row.maf === null || row.maf === undefined ? '__NULL__' : String(row.maf);
+        const key = row.maf === null || row.maf === undefined ? NULL_MAF_SENTINEL : String(row.maf);
         invoiceMap.set(key, {
           revenue: Number(row.revenue),
           outstanding: Number(row.outstanding),
@@ -366,7 +367,7 @@ export const fieldManagerRouter = router({
       // Build map: maf key → completionRate (null if totalStops = 0)
       const completionMap = new Map<string, number | null>();
       for (const row of completionRows) {
-        const key = row.maf === null || row.maf === undefined ? '__NULL__' : String(row.maf);
+        const key = row.maf === null || row.maf === undefined ? NULL_MAF_SENTINEL : String(row.maf);
         const total = Number(row.totalStops);
         const picked = Number(row.picked);
         completionMap.set(key, total > 0 ? Math.round((picked / total) * 100) : null);
@@ -379,7 +380,7 @@ export const fieldManagerRouter = router({
       ]);
 
       const items = Array.from(allMafKeys).map((key) => {
-        const maf = key === '__NULL__' ? null : key;
+        const maf = key === NULL_MAF_SENTINEL ? null : key;
         const inv = invoiceMap.get(key);
         return {
           maf,
