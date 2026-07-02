@@ -50,19 +50,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { NULL_MAF_DISPLAY_LABEL } from '@shared/constants/maf';
-
-// ─────────────────────────────────────────────────────────────────────────────
+import { formatCurrencyRounded as formatCurrency } from '@/utils/currency';
 // Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-NG", {
-    style: "currency",
-    currency: "NGN",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
+// ────────────────────────────────────────────────────────────────────────────────
+// T32 (Rule #66): formatCurrency = formatCurrencyRounded from @/utils/currency (0 decimal places)
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";

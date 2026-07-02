@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import MainLayout from './MainLayout';
 import AppHeader from './AppHeader';
 import { INVOICE_STATUS } from '@shared/constants/invoice-status';
+import { formatCurrency } from '@/utils/currency';
 
 export function FinancialDashboard() {
   const { user } = useAuth();
@@ -50,13 +51,7 @@ export function FinancialDashboard() {
     maf: selectedMAF !== 'all' ? selectedMAF : undefined,
   });
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
-    }).format(amount);
-  };
-
+  // T32 (Rule #66): formatCurrency imported from @/utils/currency — local definition removed
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',

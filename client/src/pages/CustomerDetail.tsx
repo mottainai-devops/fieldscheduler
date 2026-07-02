@@ -342,7 +342,8 @@ export default function CustomerDetail() {
                               </p>
                             </div>
                             <div className="text-right">
-                              <p className="text-white font-semibold">₦{invoice.total || '0.00'}</p>
+                              {/* T32 (Rule #66): use formatCurrency from @/utils/currency */}
+                              <p className="text-white font-semibold">{formatCurrency(Number(invoice.total) || 0)}</p>
                               <p className="text-sm text-slate-400">{invoice.status || 'N/A'}</p>
                             </div>
                           </div>
