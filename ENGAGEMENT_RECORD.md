@@ -3448,3 +3448,121 @@ Not assigned a pattern number — the observation is noted here. The substantive
 - Per-MAF financial breakdown (unblocked since T28 payments sync)
 - Worker creation UI double-submit investigation
 
+
+
+---
+
+## T30 — Legacy Cleanup Tranche
+
+**Scope:** TiDB decommissioning (Item 1), `payments` table retirement (Item 2), worker double-submit investigation (Item 3).
+
+---
+
+### T30 Item 1 — TiDB Decommissioning (`sync-zoho-data.mjs` removal)
+
+**Investigation (steps a–c):**
+
+Two copies of `sync-zoho-data.mjs` found in the repo:
+
+| Copy | Path | Date | Version |
+|---|---|---|---|
+| Original | `scripts/sync-zoho-data.mjs` | Jun 26 | Post-T17 hardened (normalizeName, no worker INSERT) |
+| Root-level duplicate | `sync-zoho-data.mjs` | Jun 29 | **Pre-T12 version** (worker INSERT block present, no normalization) |
+
+The root-level copy was created on Jun 29 (during T27 phantom worker investigation) and represents the state of the script before T11/T12 hardening. It was never the active version — the `scripts/` copy was the canonical one. The root-level copy was committed to the repo during investigation work and not cleaned up.
+
+**No active callers confirmed:**
+- `crontab -l`: only `deadline_reminder.mjs` (8am) and `db_backup.sh` (2am)
+- PM2: single process `field-worker-scheduler` — not `sync-zoho-data`
+- systemd: `field-scheduler.service` only
+- No TypeScript/JS file imports the script
+
+**Production server:** `/home/ubuntu/sync-zoho-data.mjs` existed (5,506 bytes, Jun 26) — deleted.
+
+**Action:** Both repo copies deleted via `git rm`, production server copy deleted via SSH. Committed as `chore(t30-item1): remove sync-zoho-data.mjs legacy script`.
+
+**TiDB Cloud status:** Infrastructure remains reachable via hardcoded credentials in the deleted script. No code in the FieldScheduler system accesses TiDB. Decommissioning at the TiDB provider level is a separate operational task outside engineering scope.
+
+---
+
+### T30 Item 2 — `payments` Table Retirement
+
+**Investigation (steps d–e):**
+
+| Reference | Location | Type |
+|---|---|---|
+| Table definition | `drizzle/schema.ts:493` | **Remove** |
+| Type exports | `drizzle/schema.ts:510–511` | **Remove** |
+| `syncAllPayments()` local var | `server/services/zohoFinancialSync.ts` | Local variable name only — no table import |
+| `paymentsRouter` | `server/routers/payments.ts` | Uses `paymentEvidence` table — no `payments` table reference |
+| Comment | `server/routers/financialRouter.ts:46` | Updated to reflect retirement |
+
+Zero callers of the `payments` table confirmed. Table had 0 rows (stale test row deleted in T28).
+
+**Action:**
+1. `DROP TABLE payments` on production DB (0 rows, no FK references)
+2. `drizzle/schema.ts`: removed `payments` table definition and `Payment`/`InsertPayment` type exports (19 lines removed)
+3. `financialRouter.ts`: updated comment from "aspirational payments table (Pattern #55)" to retirement note
+4. Committed as `chore(t30-item2): retire payments table — DROP TABLE + remove schema definition`
+
+**`zohoPayments` table** (1,179 rows, ₦221,338,894.90) remains the active payment data table, queried by `financialRouter` since T28 Path A.
+
+---
+
+### T30 Item 3 — Worker Double-Submit Investigation
+
+**Finding: Not a UI double-submit bug. Two separate issues identified.**
+
+**Issue A — Workers table:** No duplicate entries from the admin UI. Worker 7475 (`Adey`, Jun 30) and worker 1 (`adey adewuyi`, Nov 2025) are distinct entries with different email addresses — deliberately created. UI double-submit protection is correct: `disabled={createWorkerMutation.isPending}` on the submit button, `ER_DUP_ENTRY` handled server-side with `CONFLICT` error.
+
+**Issue B — Zoho sync phantom worker loop (new finding):** The PM2 error log shows `[Zoho] Error creating worker for Low low income` appearing 3–4 times per sync run. Root cause: **normalization mismatch** between the Rule #31 pre-load map key and the Zoho field manager name string.
+
+The pre-load map uses `w.name` as the key (e.g., `"Low.low income"` — the name as stored in the DB). The Zoho field manager string is `"Low low income"` (spaces, no dots). The map lookup fails (key mismatch), so the code attempts `INSERT INTO workers` for each contact with that field manager name. The first attempt succeeds (worker created), subsequent attempts in the same sync run fail with `ER_DUP_ENTRY` (worker now exists but map was not updated). On the next sync run, the pre-load finds the worker by its stored name (`"Low.low income"`) but the Zoho string is `"Low low income"` — still a mismatch — so the loop repeats.
+
+**Fix required (T31):** Apply `normalizeName()` to both the pre-load map key and the Zoho field manager lookup string in `syncZohoContacts`. This is the same normalization applied in the T17 `scripts/sync-zoho-data.mjs` version — it was not carried forward to the in-app `server/services/zoho.ts` when the in-app sync was built.
+
+---
+
+### T30 Pattern #55 — Retirement Confirmation
+
+The `payments` table (Pattern #55: "Table defined with FK columns that were never populated") is now fully retired:
+- DB: `DROP TABLE payments` ✅
+- Schema: definition removed ✅
+- Types: `Payment`, `InsertPayment` removed ✅
+- Comment: updated in `financialRouter.ts` ✅
+
+---
+
+### T30 Pattern #56 — Normalization Not Carried Forward to In-App Sync
+
+**Observation:** The `normalizeName()` function was implemented in `scripts/sync-zoho-data.mjs` (T17) to handle Zoho field manager name variations. When the in-app sync (`server/services/zoho.ts`) was built as the replacement, the normalization was not carried forward. The Rule #31 pre-load map uses raw `w.name` values, while Zoho field manager strings may differ in punctuation and spacing. This causes the pre-load map lookup to miss existing workers, triggering repeated `ER_DUP_ENTRY` errors on every sync run.
+
+**Rule #64:** When porting a feature from a legacy script to an in-app service, carry forward all normalization and deduplication logic. Specifically: if the legacy script applied `normalizeName()` to a lookup key, the in-app service must apply the same normalization to both the map key and the lookup string.
+
+---
+
+## T30 Engagement Session Close-Out
+
+**Session arc:** T30 is a cleanup tranche — three items, two deployments, one investigation. The system is now leaner: legacy script removed, dead table retired, double-submit mystery resolved (it was never a UI bug).
+
+**What was done:**
+- `sync-zoho-data.mjs` removed from repo (both copies) and production server
+- `payments` table dropped from production DB and schema
+- Worker double-submit investigated: UI is correct; the apparent "double-submit" is the Zoho sync normalization mismatch (T31 fix)
+
+**Production state at T30 close:**
+- PM2: online, restarts: 220
+- Build: 380.4kb (clean)
+- driftCheck: 0 findings
+- Tests: 72 passing (5 files)
+- `payments` table: gone ✅
+- `sync-zoho-data.mjs`: gone ✅
+- TiDB: unreachable from any active code ✅
+
+**Open items for T31+:**
+- **T31 HIGH:** Apply `normalizeName()` to Rule #31 pre-load map key and Zoho field manager lookup string in `server/services/zoho.ts` — eliminates the `ER_DUP_ENTRY` loop for `Low low income` on every sync run (Rule #64)
+- **T31 MEDIUM:** Canonical constants centralization (root cause of admin/field-manager outstanding balance calculation drift)
+- **T31 MEDIUM:** Vendor/company entity model
+- **T31 MEDIUM:** Per-MAF financial breakdown (unblocked since T28 payments sync)
+- **OPERATIONAL:** Phantom worker Zoho cleanup — update Zoho contacts with `Field Manager = "Low low income"` / `"Low.Low income."` to a real field manager name
+- **OPERATIONAL:** TiDB provider-level decommissioning (outside engineering scope)
