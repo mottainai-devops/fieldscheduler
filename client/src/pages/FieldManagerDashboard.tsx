@@ -5,11 +5,13 @@
  * ctx.user.fieldManagerId on the server — no worker ID is passed from the client
  * (Pattern #51 / Rule #59).
  *
- * Four panels:
+ * Five panels:
  *   1. Metrics strip: customer count, pending routes, unrouted customers, completion rate
  *   2. Revenue card: invoiced total for selected date range
  *   3. Outstanding balances table: per-invoice, sorted by balance DESC
  *   4. Recent routes table: last 10 routes with supervisor and stop count
+ *   5. Per-MAF Breakdown table: MAF | Customers | Revenue | Outstanding | Invoices | Completion
+ *      (T31 — full-width row below panels 3 & 4; driven by same date range as Revenue)
  *
  * Route guard: RequireFieldManager (superadmin + admin + field_manager).
  * Superadmin/admin callers with fieldManagerId=null see a friendly "no worker
@@ -37,6 +39,7 @@ import {
   Loader2,
   LogOut,
   User,
+  BarChart3,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -160,12 +163,13 @@ export default function FieldManagerDashboard() {
   const isAdminOrAbove = meUser?.role === "admin" || meUser?.role === "superadmin";
   // Redirect is handled in the render path below — see early return after hooks
 
-  // Date range state for revenue panel — defaults to current month
+  // Date range state for revenue panel AND MAF breakdown — defaults to current month
   const now = new Date();
   const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   const defaultEnd = now.toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultEnd);
+  // revenueRange drives both getMyRevenue and getMyMAFBreakdown (Decision i — T31)
   const [revenueRange, setRevenueRange] = useState({ startDate: defaultStart, endDate: defaultEnd });
 
   // ── tRPC queries ──────────────────────────────────────────────────────────
@@ -199,6 +203,15 @@ export default function FieldManagerDashboard() {
     isLoading: routesLoading,
     refetch: refetchRoutes,
   } = trpc.fieldManager.getMyRecentRoutes.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
+
+  // T31 — Per-MAF Breakdown: same date range as Revenue (Decision i)
+  const {
+    data: mafBreakdown,
+    isLoading: mafLoading,
+    refetch: refetchMaf,
+  } = trpc.fieldManager.getMyMAFBreakdown.useQuery(revenueRange, {
     refetchOnWindowFocus: false,
   });
 
@@ -258,6 +271,7 @@ export default function FieldManagerDashboard() {
                 refetchRevenue();
                 refetchOutstanding();
                 refetchRoutes();
+                refetchMaf();
               }}
             >
               <RefreshCw className="w-4 h-4" />
@@ -347,7 +361,7 @@ export default function FieldManagerDashboard() {
                 <TrendingUp className="w-5 h-5 text-green-400" />
                 Revenue
               </CardTitle>
-              {/* Date range picker */}
+              {/* Date range picker — drives Revenue AND Per-MAF Breakdown (T31 Decision i) */}
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <Label className="text-slate-400 text-xs">From</Label>
@@ -535,6 +549,105 @@ export default function FieldManagerDashboard() {
           </Card>
 
         </div>
+
+        {/* ── Panel 5: Per-MAF Breakdown (T31) ─────────────────────────────── */}
+        {/* Full-width row below Outstanding Balances / Recent Routes.           */}
+        {/* Driven by the same From/To date range as Revenue (Decision i).      */}
+        {/* NULL customermaf rows shown as "(No MAF set)" (Decision 3).         */}
+        {/* Sort: outstanding DESC (Decision 2). Completion: "—" if null (Decision 1). */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-white flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-purple-400" />
+                Per-MAF Breakdown
+              </CardTitle>
+              <p className="text-xs text-slate-500">
+                <Calendar className="w-3 h-3 inline mr-1" />
+                {revenueRange.startDate} → {revenueRange.endDate}
+              </p>
+            </div>
+            {/* Summary row */}
+            {!mafLoading && mafBreakdown && mafBreakdown.summary.totalCustomers > 0 && (
+              <div className="flex gap-6 mt-1 flex-wrap">
+                <span className="text-xs text-slate-400">
+                  <span className="text-white font-semibold">{mafBreakdown.summary.totalCustomers.toLocaleString()}</span> customers
+                </span>
+                <span className="text-xs text-slate-400">
+                  <span className="text-green-400 font-semibold">{formatCurrency(mafBreakdown.summary.totalRevenue)}</span> revenue
+                </span>
+                <span className="text-xs text-slate-400">
+                  <span className="text-amber-400 font-semibold">{formatCurrency(mafBreakdown.summary.totalOutstanding)}</span> outstanding
+                </span>
+                <span className="text-xs text-slate-400">
+                  <span className="text-white font-semibold">{mafBreakdown.summary.totalInvoices}</span> invoices
+                </span>
+              </div>
+            )}
+          </CardHeader>
+          <CardContent>
+            {mafLoading ? (
+              <div className="space-y-2">
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} className="animate-pulse h-10 bg-slate-700 rounded" />
+                ))}
+              </div>
+            ) : !mafBreakdown || mafBreakdown.items.length === 0 ? (
+              <div className="text-center py-8">
+                <BarChart3 className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                <p className="text-slate-400 text-sm">No MAF data yet</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-slate-400 text-xs uppercase tracking-wide border-b border-slate-700">
+                      <th className="text-left pb-2">MAF</th>
+                      <th className="text-right pb-2">Customers</th>
+                      <th className="text-right pb-2">Revenue</th>
+                      <th className="text-right pb-2">Outstanding</th>
+                      <th className="text-right pb-2">Invoices</th>
+                      <th className="text-right pb-2">Completion</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700/50">
+                    {mafBreakdown.items.map((row, idx) => (
+                      <tr key={row.maf ?? `__null_${idx}`} className="hover:bg-slate-700/30 transition-colors">
+                        <td className="py-2.5 font-mono text-xs text-purple-300 font-semibold">
+                          {row.maf ?? <span className="text-slate-500 italic font-sans font-normal">(No MAF set)</span>}
+                        </td>
+                        <td className="py-2.5 text-right text-slate-300">
+                          {row.customerCount.toLocaleString()}
+                        </td>
+                        <td className="py-2.5 text-right text-green-400 whitespace-nowrap">
+                          {row.revenue > 0 ? formatCurrency(row.revenue) : <span className="text-slate-600">₦0</span>}
+                        </td>
+                        <td className="py-2.5 text-right whitespace-nowrap">
+                          {row.outstanding > 0
+                            ? <span className="text-amber-400 font-semibold">{formatCurrency(row.outstanding)}</span>
+                            : <span className="text-slate-600">₦0</span>
+                          }
+                        </td>
+                        <td className="py-2.5 text-right text-slate-300">
+                          {row.invoiceCount > 0 ? row.invoiceCount : <span className="text-slate-600">0</span>}
+                        </td>
+                        <td className="py-2.5 text-right">
+                          {row.completionRate === null
+                            ? <span className="text-slate-600">—</span>
+                            : <span className={row.completionRate >= 80 ? "text-green-400" : row.completionRate >= 50 ? "text-amber-400" : "text-red-400"}>
+                                {row.completionRate}%
+                              </span>
+                          }
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
       </div>
     </div>
   );

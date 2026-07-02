@@ -244,6 +244,170 @@ export const fieldManagerRouter = router({
   }),
 
   /**
+   * getMyMAFBreakdown — per-MAF financial and customer breakdown for the authenticated
+   * field manager.
+   *
+   * Input:
+   *   - startDate (optional, ISO date string, defaults to start of current month)
+   *   - endDate (optional, ISO date string, defaults to today)
+   *   Same shape as getMyRevenue for consistency.
+   *
+   * Returns:
+   *   - items: Array of {
+   *       maf: string | null,          — MAF code; null rendered as "(No MAF set)"
+   *       customerCount: number,       — customers.fieldManager = fmId with this customermaf
+   *       revenue: number,             — SUM(invoices.total) for this MAF + FM + date range
+   *       outstanding: number,         — SUM(invoices.balance) where balance>0 + status filter
+   *       invoiceCount: number,        — COUNT of non-void invoices in date range
+   *       completionRate: number|null  — null = no route data (frontend renders "—")
+   *     }
+   *   - summary: { totalCustomers, totalRevenue, totalOutstanding, totalInvoices }
+   *
+   * Design decisions (T31):
+   *   - NULL customermaf rows included as a distinct row (Decision 3)
+   *   - Rows with customers but no invoices included (Bukola case)
+   *   - Rows with invoices but no customers included (edge case)
+   *   - Sort: outstanding DESC (Decision 2)
+   *   - Completion rate: null when no route data (Decision 1 — "—" placeholder)
+   *
+   * Cross-panel invariants (verified in behavioral testing, T31 Phase 5):
+   *   - SUM(items.customerCount) = getMyMetrics.customerCount
+   *   - SUM(items.revenue) ≈ getMyRevenue.total (same date range, same filters)
+   *   - SUM(items.outstanding) ≈ getMyOutstandingBalances.summary.totalOutstanding
+   *
+   * Index: idx_fieldManagerId on invoices.fieldManagerId (confirmed present, T31 step g).
+   */
+  getMyMAFBreakdown: fieldManagerProcedure
+    .input(z.object({
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      // Pattern #51 / Rule #59: scope from ctx, never from input
+      const fmId = requireFieldManagerId(ctx);
+      const db = await getDb();
+      if (!db) {
+        return { items: [], summary: { totalCustomers: 0, totalRevenue: 0, totalOutstanding: 0, totalInvoices: 0 } };
+      }
+
+      // Default date range: start of current month → today (same as getMyRevenue)
+      const now = new Date();
+      const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const defaultEnd = now.toISOString().slice(0, 10);
+      const startDate = input.startDate ?? defaultStart;
+      const endDate = input.endDate ?? defaultEnd;
+
+      // ── Step 1: Customer counts per MAF for this field manager ──────────────
+      // customers.fieldManager is INT (not fieldManagerId — confirmed T31 investigation)
+      const customerResult = await db.execute(sql`
+        SELECT
+          customermaf AS maf,
+          COUNT(*) AS customerCount
+        FROM customers
+        WHERE fieldManager = ${fmId}
+        GROUP BY customermaf
+      `);
+      const customerRows = (customerResult[0] as unknown) as any[];
+
+      // Build map: maf (or '__NULL__' sentinel) → customerCount
+      const customerMap = new Map<string, number>();
+      for (const row of customerRows) {
+        const key = row.maf === null || row.maf === undefined ? '__NULL__' : String(row.maf);
+        customerMap.set(key, Number(row.customerCount));
+      }
+
+      // ── Step 2: Invoice financials per MAF for this field manager ────────────
+      // invoices.fieldManagerId is VARCHAR (Zoho artifact) — CAST required
+      // T29: exclude void from outstanding (Rule #63)
+      const invoiceResult = await db.execute(sql`
+        SELECT
+          maf,
+          COALESCE(SUM(total), 0) AS revenue,
+          COALESCE(SUM(CASE
+            WHEN balance > 0 AND status IN ('overdue', 'sent', 'draft')
+            THEN balance ELSE 0 END), 0) AS outstanding,
+          COUNT(*) AS invoiceCount
+        FROM invoices
+        WHERE fieldManagerId = CAST(${fmId} AS CHAR)
+          AND status != 'void'
+          AND invoiceDate BETWEEN ${startDate} AND ${endDate}
+        GROUP BY maf
+      `);
+      const invoiceRows = (invoiceResult[0] as unknown) as any[];
+
+      // Build map: maf key → { revenue, outstanding, invoiceCount }
+      const invoiceMap = new Map<string, { revenue: number; outstanding: number; invoiceCount: number }>();
+      for (const row of invoiceRows) {
+        const key = row.maf === null || row.maf === undefined ? '__NULL__' : String(row.maf);
+        invoiceMap.set(key, {
+          revenue: Number(row.revenue),
+          outstanding: Number(row.outstanding),
+          invoiceCount: Number(row.invoiceCount),
+        });
+      }
+
+      // ── Step 3: Completion rate per MAF (last 30 days from today, not date range) ──
+      // routeCustomers → routes → customers; filter by routes.workerId = fmId
+      const completionResult = await db.execute(sql`
+        SELECT
+          c.customermaf AS maf,
+          COUNT(*) AS totalStops,
+          SUM(CASE WHEN rc.completion_type = 'picked' THEN 1 ELSE 0 END) AS picked
+        FROM routeCustomers rc
+        JOIN routes r ON rc.routeId = r.id
+        JOIN customers c ON rc.customerId = c.id
+        WHERE r.workerId = ${fmId}
+          AND r.scheduledDate >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 30 DAY), '%Y-%m-%d')
+        GROUP BY c.customermaf
+      `);
+      const completionRows = (completionResult[0] as unknown) as any[];
+
+      // Build map: maf key → completionRate (null if totalStops = 0)
+      const completionMap = new Map<string, number | null>();
+      for (const row of completionRows) {
+        const key = row.maf === null || row.maf === undefined ? '__NULL__' : String(row.maf);
+        const total = Number(row.totalStops);
+        const picked = Number(row.picked);
+        completionMap.set(key, total > 0 ? Math.round((picked / total) * 100) : null);
+      }
+
+      // ── Step 4: Merge all MAF keys into unified rows ─────────────────────────
+      const allMafKeys = new Set<string>([
+        ...Array.from(customerMap.keys()),
+        ...Array.from(invoiceMap.keys()),
+      ]);
+
+      const items = Array.from(allMafKeys).map((key) => {
+        const maf = key === '__NULL__' ? null : key;
+        const inv = invoiceMap.get(key);
+        return {
+          maf,
+          customerCount: customerMap.get(key) ?? 0,
+          revenue: inv?.revenue ?? 0,
+          outstanding: inv?.outstanding ?? 0,
+          invoiceCount: inv?.invoiceCount ?? 0,
+          completionRate: completionMap.has(key) ? completionMap.get(key)! : null as number | null,
+        };
+      });
+
+      // Sort: outstanding DESC (Decision 2), then revenue DESC as tiebreaker
+      items.sort((a, b) => {
+        if (b.outstanding !== a.outstanding) return b.outstanding - a.outstanding;
+        return b.revenue - a.revenue;
+      });
+
+      // Summary aggregates
+      const summary = {
+        totalCustomers: items.reduce((s, r) => s + r.customerCount, 0),
+        totalRevenue: items.reduce((s, r) => s + r.revenue, 0),
+        totalOutstanding: items.reduce((s, r) => s + r.outstanding, 0),
+        totalInvoices: items.reduce((s, r) => s + r.invoiceCount, 0),
+      };
+
+      return { items, summary };
+    }),
+
+  /**
    * getMyRecentRoutes — last 10 routes created by the authenticated field manager.
    *
    * Returns: Array of { id, scheduledDate, status, customerCount, supervisorName, supervisorId }

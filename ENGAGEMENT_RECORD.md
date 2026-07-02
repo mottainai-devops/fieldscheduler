@@ -3566,3 +3566,132 @@ The `payments` table (Pattern #55: "Table defined with FK columns that were neve
 - **T31 MEDIUM:** Per-MAF financial breakdown (unblocked since T28 payments sync)
 - **OPERATIONAL:** Phantom worker Zoho cleanup — update Zoho contacts with `Field Manager = "Low low income"` / `"Low.Low income."` to a real field manager name
 - **OPERATIONAL:** TiDB provider-level decommissioning (outside engineering scope)
+
+---
+
+## T31 Engagement Session
+
+**Scope:** Per-MAF financial breakdown panel for the Field Manager Dashboard.
+
+---
+
+### T31 Investigation
+
+**Step a — Invoice table structure:**
+`invoices` has `fieldManagerId VARCHAR(255) COLLATE utf8mb4_unicode_ci`, `maf VARCHAR(255)`, `balance DECIMAL`, `status ENUM`, `total DECIMAL`, `invoiceDate DATE`. Index `idx_fieldManagerId` confirmed present.
+
+**Step b — Distinct fieldManagerId values in invoices:**
+Only `'7'` (Halleluyah, 16 invoices) and `'9'` (Juwon, 34 invoices) exist. `'8'` (Bukola) has zero invoices. 201 rows have `fieldManagerId = NULL`.
+
+**Step c — NULL fieldManagerId root cause (Bukola invoice gap):**
+All 201 NULL-fieldManagerId rows also have `maf = NULL`. These are Zoho-synced invoices where the Zoho FIELD MANAGER custom field was never set. This is a **Zoho tagging gap** — not a sync bug. The `zohoInvoices` staging table is empty (0 rows), confirming these were synced directly into `invoices` without a Zoho-side field manager tag. Bukola's 2,326 customers exist in the `customers` table (`fieldManager = 8`) but she has no invoices tagged to her in Zoho.
+
+**Step d — customers table FK column name:**
+`customers.fieldManager` (INT FK → `workers.id`), not `fieldManagerId`. Confirmed via `SHOW COLUMNS FROM customers`. The `getMyMAFBreakdown` query uses `customers.fieldManager = fmId` (integer comparison, no CAST required).
+
+**Step e — MAF column in customers:**
+`customers.customermaf VARCHAR(255)` — the per-customer MAF code. Distinct from `invoices.maf`. Both columns confirmed NULL-able.
+
+**Step f — Collation note:**
+`invoices.fieldManagerId` is `utf8mb4_unicode_ci`. Raw MySQL CLI `CAST(8 AS CHAR)` produces `utf8mb4_0900_ai_ci` in a default session, causing `ER_1267 Illegal mix of collations`. Drizzle ORM parameterizes integer values as bound string parameters (not CAST expressions), which inherits the column collation — no collation mismatch at runtime. The existing `getMyRevenue` and `getMyOutstandingBalances` procedures use the same pattern and work correctly in production.
+
+**Step g — Index confirmation:**
+`idx_fieldManagerId` (BTREE, nullable) exists on `invoices.fieldManagerId`. Confirmed via `SHOW INDEX`.
+
+---
+
+### T31 Owner Decisions
+
+| # | Decision |
+|---|---|
+| 1 | Completion rate: `null` renders as `"—"` (no route data). Not an error state. |
+| 2 | Sort order: outstanding DESC, then revenue DESC as tiebreaker. |
+| 3 | NULL `customermaf` rows: included as a distinct row rendered as `"(No MAF set)"`. |
+| i | Date range: shared with Revenue panel (single From/To picker drives both). |
+
+---
+
+### T31 Implementation
+
+**Server — `getMyMAFBreakdown` procedure** (`server/routers/fieldManager.ts`):
+
+- Auth tier: `fieldManagerProcedure` (Pattern #51 / Rule #59 — scope from `ctx.user.fieldManagerId`, never from input).
+- Input: `{ startDate?, endDate? }` — same shape as `getMyRevenue`.
+- Three independent SQL queries merged in TypeScript (not a JOIN):
+  1. `customers WHERE fieldManager = fmId GROUP BY customermaf` → customer counts per MAF.
+  2. `invoices WHERE fieldManagerId = CAST(fmId AS CHAR) AND status != 'void' AND invoiceDate BETWEEN ... GROUP BY maf` → revenue, outstanding, invoiceCount per MAF. T29 Rule #63 applied (void excluded from outstanding).
+  3. `routeCustomers JOIN routes JOIN customers WHERE routes.workerId = fmId AND scheduledDate >= last 30 days GROUP BY customermaf` → completion rate per MAF.
+- Merge strategy: `Set<string>` union of all MAF keys from customer map and invoice map. `'__NULL__'` sentinel for NULL MAF rows.
+- Returns: `{ items: MAFBreakdownRow[], summary: { totalCustomers, totalRevenue, totalOutstanding, totalInvoices } }`.
+- Sort: outstanding DESC, revenue DESC tiebreaker (Decision 2).
+
+**Client — Panel 5** (`client/src/pages/FieldManagerDashboard.tsx`):
+
+- New `trpc.fieldManager.getMyMAFBreakdown.useQuery(revenueRange)` — driven by the same `revenueRange` state as Revenue (Decision i).
+- `refetchMaf()` added to the Refresh button handler.
+- Panel 5 placed full-width below Panels 3 & 4 (Outstanding Balances / Recent Routes).
+- Columns: MAF | Customers | Revenue | Outstanding | Invoices | Completion.
+- NULL MAF rendered as `"(No MAF set)"` in italic slate text (Decision 3).
+- Completion rate: `"—"` for null, colour-coded `≥80% green / ≥50% amber / <50% red` (Decision 1).
+- Summary row in card header shows aggregate totals.
+- `BarChart3` icon (purple accent) distinguishes panel from financial panels.
+- `BarChart3` added to lucide-react import.
+
+---
+
+### T31 Behavioral Verification
+
+All invariants confirmed against live production DB:
+
+| Test | Result |
+|---|---|
+| Bukola (fmId=8) total customers | 2,326 ✅ |
+| Bukola invoice count | 0 (Zoho tagging gap — expected) ✅ |
+| Bukola SUM(customerCount by MAF) = total customers | 2,326 = 2,326 ✅ |
+| Juwon (fmId=9) total customers | 2,578 ✅ |
+| Juwon SUM(customerCount by MAF) = total customers | 2,578 = 2,578 ✅ |
+| Juwon invoices by MAF | DIC-410: 30 invoices (₦906,412.50), DIC-087: 4 invoices (₦32,250) ✅ |
+| Halleluyah (fmId=7) total customers | 2,519 ✅ |
+| Halleluyah SUM(customerCount by MAF) = total customers | 2,519 = 2,519 ✅ |
+| Halleluyah invoices by MAF | DIC-413: 16 invoices (₦169,350) ✅ |
+| Scope isolation (fmId=9 query returns no fmId=7 data) | juwon_count=34, halleluyah_count=16, other_count=0 ✅ |
+| Payload injection (no client-supplied fmId accepted) | Scope derived from `ctx.user.fieldManagerId` only ✅ |
+| TypeScript: no errors in `fieldManager.ts` | 0 errors ✅ |
+| TypeScript: no errors in `FieldManagerDashboard.tsx` | 0 errors ✅ |
+| Tests: 72 passing | 72/72 ✅ |
+| drift:check | 0 findings ✅ |
+
+---
+
+### T31 Pattern #57 — Zoho Tagging Gap: Invoices Without Field Manager Attribution
+
+**Observation:** 201 of 251 invoices (80%) have `fieldManagerId = NULL` and `maf = NULL`. These are Zoho-synced invoices where the Zoho FIELD MANAGER custom field was never populated. The sync correctly stores what Zoho provides — the gap is upstream in Zoho data entry.
+
+**Impact:** Field managers whose invoices were created in Zoho without the FIELD MANAGER field set will see zero revenue in their dashboard even if they have customers. Bukola (fmId=8) is the confirmed example: 2,326 customers, 0 tagged invoices.
+
+**Rule #65:** When a field manager reports "missing revenue" in their dashboard, the first diagnostic step is to check `SELECT COUNT(*) FROM invoices WHERE fieldManagerId = CAST(fmId AS CHAR)`. If zero, the issue is Zoho-side: the FIELD MANAGER custom field was not set on those invoices. This is an operational/Zoho data entry issue, not a system bug.
+
+---
+
+## T31 Engagement Session Close-Out
+
+**Session arc:** T31 delivers the Per-MAF Breakdown panel — the last of the three T31 MEDIUM items that were unblocked by T28's payments sync. The panel gives each field manager a per-MAF view of customers, revenue, outstanding balances, invoice count, and pickup completion rate, all scoped to their own data.
+
+**What was done:**
+- Bukola invoice gap investigated and documented (Pattern #57 / Rule #65)
+- `getMyMAFBreakdown` tRPC procedure implemented in `fieldManager.ts` (Pattern #51 / Rule #59)
+- Per-MAF Breakdown panel (Panel 5) added to `FieldManagerDashboard.tsx`
+- Behavioral invariants verified for Bukola, Juwon, Halleluyah, scope isolation, payload injection
+
+**Production state at T31 close:**
+- Tests: 72 passing (5 files) ✅
+- drift:check: 0 findings ✅
+- TypeScript: 0 errors in modified files ✅
+
+**Open items for T32+:**
+- **T31 HIGH (carry-forward):** Apply `normalizeName()` to Rule #31 pre-load map key and Zoho field manager lookup string in `server/services/zoho.ts` — eliminates the `ER_DUP_ENTRY` loop for `Low low income` on every sync run (Rule #64)
+- **T31 MEDIUM (carry-forward):** Canonical constants centralization (root cause of admin/field-manager outstanding balance calculation drift)
+- **T31 MEDIUM (carry-forward):** Vendor/company entity model
+- **OPERATIONAL:** Bukola Zoho invoice tagging — update existing Zoho invoices to set FIELD MANAGER = Bukola so they appear in her dashboard (Rule #65)
+- **OPERATIONAL:** Phantom worker Zoho cleanup — update Zoho contacts with `Field Manager = "Low low income"` / `"Low.Low income."` to a real field manager name
+- **OPERATIONAL:** TiDB provider-level decommissioning (outside engineering scope)
