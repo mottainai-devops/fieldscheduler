@@ -4138,3 +4138,69 @@ Any code path that creates or resets a worker PIN must call `bcrypt.hash(pin, 12
 - **MEDIUM — Update `fieldworker-app`** (systemd, port 3000) to use the same bcrypt code, or decommission it
 - **LOW — Superadmin auth architecture alignment:** Align `adminAuth.login` to use `users` table as identity source per T14 model (Rule #69)
 
+
+---
+
+## T35 — PIN Write Path Hardening & Fallback Removal
+
+**Date:** 2026-07-03
+**Commits:** `9e92d9f8` (Item #1), `008bca26` (Item #2)
+**Status:** CLOSED
+
+### Problem
+
+T34 Part 2 hashed the 7 existing plaintext PINs in production and added bcrypt comparison to `adminAuth.verifyPin()`. However, three residual risks remained:
+
+1. **PIN write paths were still plaintext** — `fieldWorkerDb.createWorker()` and `fieldWorkerDb.updateWorker()` wrote raw PIN strings to the DB. Any new worker created or any PIN reset after T34 would store a plaintext PIN.
+2. **`workerAuth.verifyPin` (mobile app)** — The mobile app PIN login procedure used `worker.pin === input.pin` (plaintext comparison). This path was not touched in T34.
+3. **Plaintext fallback in `adminAuth.verifyPin`** — The migration-window fallback remained active even after all PINs were confirmed hashed.
+
+### Solution
+
+**Item #1 — Close all PIN write paths:**
+
+- Created `server/utils/pinHashing.ts` with three shared helpers:
+  - `hashPin(plaintext)` — bcrypt hash at cost=12, throws on empty string
+  - `isBcryptHash(value)` — detects `$2a$`/`$2b$`/`$2y$` prefix
+  - `verifyPinBcrypt(input, stored)` — constant-time bcrypt compare, fail-closed
+- Applied `hashPin()` in `fieldWorkerDb.createWorker()` and `fieldWorkerDb.updateWorker()` — NULL PINs (supervisor auto-provision) are preserved as NULL
+- Updated `workerAuth.verifyPin` procedure to use `isBcryptHash()` + `verifyPinBcrypt()` with plaintext fallback (migration window, `console.warn`)
+
+**Item #2 — Remove plaintext fallback:**
+
+- Confirmed production DB state: 7 bcrypt hashes, 0 plaintext, 2 NULL (phantom workers)
+- Removed `isBcryptHash()` branch + plaintext fallback + `console.warn` from `adminAuth.verifyPin()`
+- Removed `isBcryptHash()` branch + plaintext fallback + `console.warn` from `workerAuth.verifyPin` procedure
+- Updated tests to assert fail-closed behavior for plaintext stored values
+
+### Rules Established
+
+**Rule #73 — Single hashing point for PIN writes:**
+All PIN writes (create and update) go through `hashPin()` in `server/utils/pinHashing.ts`. Do not call `bcrypt.hash()` directly in router or DB helper code — always import from the shared utility.
+
+**Rule #74 — No plaintext fallback in PIN verification:**
+`verifyPin()` and `workerAuth.verifyPin` are bcrypt-only. The migration window is closed. If a stored value is not a valid bcrypt hash, `bcrypt.compare()` returns false (fail-closed). Do not re-introduce a plaintext fallback.
+
+**Rule #75 — Mobile app PIN login uses bcrypt:**
+`workerAuth.verifyPin` (called by `fieldscheduler-mobile`) now uses `verifyPinBcrypt()`. Any mobile app update that changes the PIN flow must use the same bcrypt comparison path.
+
+### Production State at T35 Close
+
+| Item | Status |
+|---|---|
+| Commits | `9e92d9f8` + `008bca26` pushed to `origin/main` |
+| Build | 390.2kb server, clean |
+| PM2 | online, restarts: 243 |
+| DB PIN state | 7 bcrypt, 0 plaintext, 2 NULL |
+| `createWorker()` | ✅ Hashes PIN before DB write |
+| `updateWorker()` | ✅ Hashes PIN before DB write |
+| `adminAuth.verifyPin()` | ✅ bcrypt-only, no fallback |
+| `workerAuth.verifyPin` | ✅ bcrypt-only, no fallback |
+| Tests | 120/120 passing |
+
+### T36 Carry-Forward
+
+- **MEDIUM — Move rate limiter to DB-backed table** (Rule #70) — in-memory `loginAttempts` Map resets on PM2 restart
+- **MEDIUM — Update `fieldworker-app`** (systemd, port 3000) to use bcrypt for `workerAuth.login`, or decommission it
+- **LOW — Hash PINs on PIN reset endpoint** — if a PIN reset UI is added, ensure it calls `hashPin()` before writing
+- **LOW — Superadmin auth architecture alignment:** Align `adminAuth.login` to use `users` table as identity source per T14 model (Rule #69)
