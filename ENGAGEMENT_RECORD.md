@@ -3962,3 +3962,92 @@ Neither is a login bypass. Both are T34+ candidates for proper implementation.
 - **OPERATIONAL:** Bukola Zoho invoice tagging (Rule #65)
 - **OPERATIONAL:** Phantom worker Zoho cleanup (Rule #64)
 - **OPERATIONAL:** TiDB provider-level decommissioning
+
+---
+
+## T34 Part 1 — normalizeName() Fix for Phantom Worker ER_DUP_ENTRY Loop
+
+**Ticket:** T34 Part 1  
+**Commit:** `6de2a48d`  
+**Date:** 2026-07-03  
+**Status:** CLOSED
+
+### Problem Statement
+
+Every Zoho sync run produced hundreds of `ER_DUP_ENTRY` errors for `workers.workers_email_unique`. The root cause was a name-variant mismatch in `fieldManagerMap`: Zoho sends the field manager name "Low.low income" (with a dot) on some contacts and "Low low income" (with a space) on others. Because the map used raw, un-normalized strings as keys, each variant was treated as a distinct worker. When the dot-variant was encountered first and a worker was inserted, the subsequent space-variant lookup found no entry and attempted a second INSERT — which failed with `ER_DUP_ENTRY` because both variants generate the same email (`low.low.income@fieldscheduler.net`).
+
+The same loop had previously created two phantom workers:
+- `id=9683` — name: `Low.low income`, email: `low.low.income@fieldscheduler.net`
+- `id=9722` — name: `Low.Low income.`, email: `low.low.income.@fieldscheduler.net`
+
+### Fix Applied (Rule #64)
+
+A `normalizeName()` helper was added to `server/services/zoho.ts`:
+
+```typescript
+const normalizeName = (s: string): string =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+```
+
+This collapses all non-alphanumeric characters (dots, multiple spaces, trailing punctuation) to single spaces, then trims. Applied at all four `fieldManagerMap` touch-points:
+
+| Location | Line (source) | Change |
+|---|---|---|
+| Pre-load key | ~485 | `fieldManagerMap.set(normalizeName(w.name), w.id)` |
+| Lookup key | ~556 | `const normalizedFieldManager = normalizeName(fieldManager)` |
+| Post-insert set | ~574 | `fieldManagerMap.set(normalizedFieldManager, newWorkerId)` |
+| Existing worker get | ~583 | `fieldManagerMap.get(normalizedFieldManager)` |
+
+### Behavioral Verification
+
+A manual sync was triggered on 2026-07-03 at 12:09 UTC (after fix deployment at 11:57 UTC) by advancing `nextRunAt` and restarting PM2.
+
+| Metric | Pre-fix (last 5 runs) | Post-fix run |
+|---|---|---|
+| `ER_DUP_ENTRY` in error log | 14,958 cumulative | **0** |
+| Sync status | `failed` | `success` |
+| `lastErrorMessage` | `Sync completed with errors` | `NULL` |
+| Workers table row count | 9 | 9 (no new phantoms) |
+| Contacts synced | 7,704 | 7,732 |
+| Sync duration | ~39 min | ~40 min |
+
+The 2,483 remaining "errors" in the post-fix run are non-ER_DUP_ENTRY (primarily Zoho API `ECONNRESET` during the payments phase — a pre-existing network-level issue unrelated to this ticket).
+
+### Normalization Correctness Confirmation
+
+```
+normalizeName('Low.low income')  → 'low low income'
+normalizeName('Low low income')  → 'low low income'
+normalizeName('Low.Low income.') → 'low low income'
+// All three variants map to the same key — collision resolved
+```
+
+### Phantom Workers (Rule #65 — Zoho-Side Cleanup Pending)
+
+Workers `id=9683` and `id=9722` remain in the DB. They are harmless — the normalizeName fix prevents new duplicates from being created, and the pre-load correctly maps both to `'low low income'` (last-write-wins, 8 effective entries from 9 rows). Zoho-side cleanup of the corresponding contacts is a separate operational task (Rule #65).
+
+### Pattern Addition
+
+**Rule #64 — Normalize fieldManagerMap keys at both insertion and lookup:**  
+Any map keyed on human-entered names from external systems must normalize keys before insertion and before lookup. Raw string equality on user-facing names is fragile — punctuation variants, case differences, and trailing characters are common. The `normalizeName()` shape for this project is: `s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ')`.
+
+### Production State at T34 Part 1 Close
+
+| Item | Status |
+|---|---|
+| Commit | `6de2a48d` pushed to `origin/main` |
+| Build | 388.0kb server, clean |
+| PM2 | online, restarts: 233 |
+| ER_DUP_ENTRY loop | Eliminated — 0 occurrences in post-fix sync |
+| Tests | 89/89 passing |
+| Phantom workers 9683/9722 | Still present — Zoho-side cleanup pending (Rule #65) |
+
+---
+
+### T34 Part 2 Carry-Forward (Next)
+
+- **URGENT — Auth hardening (bcrypt):** Replace plaintext PIN equality check in `adminAuth.login` with bcrypt comparison. Hash existing PINs in production DB. Add rate limiting and account lockout.
+- **URGENT — Superadmin auth architecture alignment:** Align `adminAuth.login` to use `users` table as identity source per T14 model (Rule #69).
+- **MEDIUM:** workerAuth.me placeholder, companyId service-to-service auth stubs.
+- **OPERATIONAL:** Zoho-side cleanup of phantom worker contacts (Rule #65).
+
