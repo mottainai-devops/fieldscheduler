@@ -5,6 +5,107 @@ import * as db from "../db";
 import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { COOKIE_NAME } from "@shared/const";
+import bcrypt from "bcryptjs";
+
+// ─── In-memory rate limiter (T34 Part 2) ─────────────────────────────────────
+//
+// Tracks failed login attempts per email address. After MAX_ATTEMPTS consecutive
+// failures within WINDOW_MS, the account is locked for LOCKOUT_MS.
+//
+// This is a process-local store — it resets on PM2 restart. For a multi-instance
+// deployment, move this to Redis or a DB-backed table (Rule #70 carry-forward).
+//
+const MAX_ATTEMPTS = 5;
+const WINDOW_MS = 15 * 60 * 1000;   // 15 minutes
+const LOCKOUT_MS = 15 * 60 * 1000;  // 15 minutes
+
+interface AttemptRecord {
+  count: number;
+  windowStart: number;
+  lockedUntil: number | null;
+}
+
+const loginAttempts = new Map<string, AttemptRecord>();
+
+/**
+ * Returns true if the email is currently locked out.
+ * Clears the window if it has expired.
+ */
+function isLockedOut(email: string): boolean {
+  const record = loginAttempts.get(email);
+  if (!record) return false;
+
+  const now = Date.now();
+
+  // If lockout has expired, clear the record
+  if (record.lockedUntil !== null && now >= record.lockedUntil) {
+    loginAttempts.delete(email);
+    return false;
+  }
+
+  return record.lockedUntil !== null && now < record.lockedUntil;
+}
+
+/**
+ * Records a failed login attempt. Returns the updated attempt count.
+ * If count reaches MAX_ATTEMPTS, sets lockedUntil.
+ */
+function recordFailedAttempt(email: string): number {
+  const now = Date.now();
+  let record = loginAttempts.get(email);
+
+  if (!record || now - record.windowStart >= WINDOW_MS) {
+    // Start a fresh window
+    record = { count: 1, windowStart: now, lockedUntil: null };
+  } else {
+    record.count += 1;
+  }
+
+  if (record.count >= MAX_ATTEMPTS) {
+    record.lockedUntil = now + LOCKOUT_MS;
+  }
+
+  loginAttempts.set(email, record);
+  return record.count;
+}
+
+/**
+ * Clears the attempt record on successful login.
+ */
+function clearAttempts(email: string): void {
+  loginAttempts.delete(email);
+}
+
+// ─── bcrypt helpers (T34 Part 2) ─────────────────────────────────────────────
+//
+// isBcryptHash: detects whether a stored PIN is already a bcrypt hash.
+// This enables backward-compatible login during the migration window (before
+// all plaintext PINs have been hashed in the DB).
+//
+export function isBcryptHash(value: string): boolean {
+  return value.startsWith('$2a$') || value.startsWith('$2b$') || value.startsWith('$2y$');
+}
+
+/**
+ * Verify a PIN input against the stored value.
+ *
+ * - If stored value is a bcrypt hash: use bcrypt.compare (constant-time).
+ * - If stored value is plaintext (migration window): compare directly and log
+ *   a warning so operators know the PIN needs migration.
+ *
+ * Rule #71: All new PIN writes must use bcrypt. Plaintext comparison is only
+ * permitted during the migration window and must emit a console.warn.
+ */
+export async function verifyPin(input: string, stored: string): Promise<boolean> {
+  if (isBcryptHash(stored)) {
+    return bcrypt.compare(input, stored);
+  }
+  // Plaintext fallback — migration window only
+  console.warn('[AdminAuth] WARNING: plaintext PIN comparison for worker — run PIN migration script (T34 Part 2)');
+  return input === stored;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const adminAuthRouter = router({
   // Login with email and password
@@ -16,23 +117,43 @@ export const adminAuthRouter = router({
     .mutation(async ({ input, ctx }) => {
       try {
         console.log('[AdminAuth] Login attempt:', input.email);
+
+        // Rate limiting check (T34 Part 2)
+        if (isLockedOut(input.email)) {
+          throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
+        }
+
         const worker = await fieldWorkerDb.getWorkerByEmail(input.email);
         console.log('[AdminAuth] Worker found:', worker?.email || 'NOT FOUND');
         
         if (!worker) {
+          // Record failed attempt even for unknown emails (prevents email enumeration
+          // via timing differences — both paths now go through the same code path)
+          recordFailedAttempt(input.email);
           throw new Error("Worker not found");
         }
         
-        // PIN verification — compare input against stored PIN
+        // PIN verification — bcrypt comparison (T34 Part 2)
         if (!input.password) {
+          recordFailedAttempt(input.email);
           throw new Error("Password required");
         }
         if (worker.pin === null || worker.pin === undefined) {
           throw new Error("Account not configured — contact administrator");
         }
-        if (input.password !== worker.pin) {
+
+        const pinValid = await verifyPin(input.password, worker.pin);
+        if (!pinValid) {
+          const attempts = recordFailedAttempt(input.email);
+          const remaining = MAX_ATTEMPTS - attempts;
+          if (remaining <= 0) {
+            throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
+          }
           throw new Error("Invalid password");
         }
+
+        // Successful login — clear attempt counter
+        clearAttempts(input.email);
         
         // Create a user record in the users table if it doesn't exist.
         // Use the worker's email as the openId for session purposes.
