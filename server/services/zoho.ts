@@ -463,6 +463,15 @@ export async function syncZohoContacts() {
     let customermafCount = 0;
     const fieldManagerMap = new Map<string, number>();
 
+    // Rule #64 / T34 Part 1 — Normalize field manager names before map key comparison.
+    // Dots, spaces, and case variations in Zoho strings vs DB-stored names cause
+    // map lookup misses → spurious INSERT → ER_DUP_ENTRY on workers.email unique constraint.
+    // Example: DB stores "Low.low income" (dots from email-gen transform on first insert),
+    // Zoho sends "Low low income" (spaces). normalizeName() maps both to "low low income".
+    // Email generation transform on new worker INSERT is intentionally unchanged (Rule #64).
+    const normalizeName = (s: string): string =>
+      s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+
     // Rule #31 / Pattern #26 fix — Pre-load fieldManagerMap from existing workers
     // before the contact loop so that workers who already exist in the DB are
     // found by name lookup rather than triggering ER_DUP_ENTRY on re-sync.
@@ -473,7 +482,7 @@ export async function syncZohoContacts() {
       if (dbPreload) {
         const existingWorkers = await dbPreload.select({ id: workers.id, name: workers.name }).from(workers);
         for (const w of existingWorkers) {
-          if (w.name) fieldManagerMap.set(w.name, w.id);
+          if (w.name) fieldManagerMap.set(normalizeName(w.name), w.id); // Rule #64: normalize key
         }
         console.log(`[Zoho] Pre-loaded ${fieldManagerMap.size} existing workers into fieldManagerMap`);
       }
@@ -544,7 +553,8 @@ export async function syncZohoContacts() {
         // Handle field manager
         let fieldManagerId: number | undefined = undefined;
         if (fieldManager) {
-          if (!fieldManagerMap.has(fieldManager)) {
+          const normalizedFieldManager = normalizeName(fieldManager); // Rule #64
+          if (!fieldManagerMap.has(normalizedFieldManager)) {
             // Create new worker for this field manager
             const db = await getDb();
             if (db) {
@@ -561,7 +571,7 @@ export async function syncZohoContacts() {
                   .limit(1);
                 if (createdWorker && createdWorker.length > 0) {
                   const newWorkerId = createdWorker[0].id;
-                  fieldManagerMap.set(fieldManager, newWorkerId);
+                  fieldManagerMap.set(normalizedFieldManager, newWorkerId); // Rule #64: normalize key
                   fieldManagerId = newWorkerId;
                   console.log('[Zoho] Created worker:', { name: fieldManager, id: newWorkerId, email: workerEmail });
                 }
@@ -570,7 +580,7 @@ export async function syncZohoContacts() {
               }
             }
           } else {
-            fieldManagerId = fieldManagerMap.get(fieldManager);
+            fieldManagerId = fieldManagerMap.get(normalizedFieldManager); // Rule #64: normalize key
             console.log('[Zoho] Using existing worker:', { name: fieldManager, id: fieldManagerId });
           }
         } else {
