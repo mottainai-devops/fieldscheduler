@@ -4051,3 +4051,90 @@ Any map keyed on human-entered names from external systems must normalize keys b
 - **MEDIUM:** workerAuth.me placeholder, companyId service-to-service auth stubs.
 - **OPERATIONAL:** Zoho-side cleanup of phantom worker contacts (Rule #65).
 
+---
+
+## T34 Part 2 — bcrypt PIN Hardening
+
+**Date:** 2026-07-03
+**Commit:** bc9ef740 (feat(t34-p2): bcrypt PIN hashing, rate limiting, and migration script)
+
+### Problem
+Worker PINs were stored as plaintext in the `workers.pin` column. The `adminAuth.login` procedure compared `input.password !== worker.pin` directly, meaning a DB read was sufficient to impersonate any worker.
+
+### Root Cause
+No hashing was applied when PINs were first set. The column was populated with 4-digit plaintext values during worker onboarding.
+
+### Fix Applied
+
+**server/routers/adminAuth.ts:**
+- Replaced `input.password !== worker.pin` with `await verifyPin(input.password, worker.pin)`
+- `verifyPin()` uses `bcrypt.compare()` for bcrypt hashes; falls back to plaintext equality with a `console.warn` for the migration window
+- `isBcryptHash()` detects `$2a$`, `$2b$`, `$2y$` prefixes
+- Added in-memory rate limiter: 5 failed attempts per email → 15-minute lockout
+- Both `isBcryptHash` and `verifyPin` exported for testability
+
+**Production DB migration (direct SQL via sudo mysql):**
+All 7 workers with non-null PINs migrated to bcrypt (cost=12):
+- id=1 adeyadewuyi@gmail.com (superadmin)
+- id=2 info@mottainai.africa (ADMIN)
+- id=7 halleluyah@fieldscheduler.net
+- id=8 bukola@fieldscheduler.net
+- id=9 juwon@fieldscheduler.net
+- id=10 wale@fieldscheduler.net
+- id=27 alabakelani@gmail.com
+
+**scripts/migrate-pins-to-bcrypt.mjs:** Idempotent one-time migration script for future use.
+
+**vitest.config.ts:** Added `@shared` alias so server tests can import from `@shared/*`.
+
+### Verification Results (port 3002 / nginx target)
+
+| Test | Input | Expected | Actual |
+|------|-------|----------|--------|
+| 1 | adeyadewuyi@gmail.com + 6872 | success, superadmin | ✅ success, superadmin |
+| 2 | adeyadewuyi@gmail.com + 9999 | Invalid password | ✅ Invalid password |
+| 3 | bukola@fieldscheduler.net + 1088 | success, field_manager | ✅ success, field_manager |
+| 4 | wale@fieldscheduler.net + 1990 | success, admin | ✅ success, admin |
+| 5 | nobody@example.com + 1234 | Worker not found | ✅ Worker not found |
+| 6 | halleluyah + 5× wrong PIN | 4× Invalid password, 5th = rate limit | ✅ Correct |
+| 7 | halleluyah + 6th wrong PIN | Too many failed login attempts | ✅ Rate limited |
+
+**Tests:** 102 passing (89 existing + 13 new bcrypt behavioral tests in `server/adminAuth.bcrypt.test.ts`)
+
+### Infrastructure Note
+Two Node processes run on this server:
+- **Port 3002** (PM2 `field-worker-scheduler`): Admin dashboard — uses `adminAuth.login` — **this is what nginx routes to for `app.fieldscheduler.net`**
+- **Port 3000** (systemd `field-scheduler.service`): Legacy `fieldworker-app` — uses `workerAuth.login` — separate codebase from Nov 2025, not updated by this PR
+
+### Rules Added
+
+**Rule #70 — In-memory rate limiter resets on restart:**
+The `loginAttempts` Map in `adminAuth.ts` is in-process memory. It resets on every PM2 restart, clearing all lockouts. For persistent lockout across restarts or multi-instance deployments, move to a DB-backed `loginAttempts` table. Track in T35.
+
+**Rule #71 — All new PIN writes must use bcrypt:**
+Any code path that creates or resets a worker PIN must call `bcrypt.hash(pin, 12)` before storing. The plaintext fallback path in `verifyPin()` is a migration-window bridge only — remove it in T35 once all PINs are confirmed hashed.
+
+**Rule #72 — Two separate Node deployments on this server:**
+`field-worker-scheduler` (PM2, port 3002) is the admin dashboard backend. `fieldworker-app` (systemd, port 3000) is the legacy mobile-worker backend. Nginx routes `app.fieldscheduler.net` to port 3002. Always verify which process is the nginx target before deploying auth changes.
+
+### Production State at T34 Part 2 Close
+
+| Item | Status |
+|---|---|
+| Commit | `bc9ef740` pushed to `origin/main` |
+| Build | 389.9kb server, clean |
+| PM2 | online, restarts: 238 |
+| All 7 worker PINs | Migrated to bcrypt (cost=12) |
+| Login (correct PIN) | ✅ Working |
+| Login (wrong PIN) | ✅ Rejected |
+| Rate limiting | ✅ 5 attempts → 15-min lockout |
+| Tests | 102/102 passing |
+
+### T35 Carry-Forward
+
+- **HIGH — Remove plaintext fallback** from `verifyPin()` (Rule #71)
+- **HIGH — Hash PINs on worker creation and PIN reset** endpoints
+- **MEDIUM — Move rate limiter to DB-backed table** (Rule #70)
+- **MEDIUM — Update `fieldworker-app`** (systemd, port 3000) to use the same bcrypt code, or decommission it
+- **LOW — Superadmin auth architecture alignment:** Align `adminAuth.login` to use `users` table as identity source per T14 model (Rule #69)
+
