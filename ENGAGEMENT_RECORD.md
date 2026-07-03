@@ -4251,3 +4251,42 @@ The `fieldworker-app` at `/home/ubuntu/fieldworker-app` is a stale deployment of
 ### Deliverable
 
 Full decision document: `docs/T36-legacy-fieldworker-app-decision.md`
+
+---
+
+## T37 — Legacy fieldworker-app Decommission (2026-07-03)
+
+### Scope
+Full decommission of the legacy `fieldworker-app` service identified in T36 as dead traffic, sharing the same DB, and containing plaintext PIN comparison paths.
+
+### Steps Completed
+
+| Step | Action | Result |
+|------|--------|--------|
+| 1 | AWS SG audit | `sg-095f4a642731da471` has HTTP/HTTPS/SSH only — no port 3000 rule. Port 3000 was accessible due to `ufw` being inactive on the server. |
+| 2 | Stop service | `sudo systemctl stop field-scheduler.service` → `Active: inactive (dead)` |
+| 3 | Disable autostart | `sudo systemctl disable field-scheduler.service` |
+| 4 | Archive code | `~/fieldworker-app-archive-20260703.tar.gz` — 133 MB, 62,101 files |
+| 5 | Remove unit file | `/etc/systemd/system/field-scheduler.service` deleted, daemon reloaded |
+| 6 | Remove source dir | `/home/ubuntu/fieldworker-app` removed |
+| 7 | Enable ufw | `ufw --force enable`, default deny incoming, allow SSH/HTTP/HTTPS/3002 |
+| 8 | AGENTS.md | Written to `/home/ubuntu/AGENTS.md` on production server |
+
+### Verification
+
+- Port 3000: No listener (`ss` confirms nothing bound), ufw blocks inbound
+- Port 3002 (main app): PM2 online, nginx proxying, `GET /api/trpc/auth.me` → HTTP 200
+- `systemctl status field-scheduler.service` → `Unit field-scheduler.service could not be found.`
+
+### Rules Established
+
+- **Rule #78** — `ufw` must be active on all production servers with `default deny incoming`. The server had no host-level firewall before T37, meaning any port with a listener was publicly reachable regardless of the AWS SG.
+- **Rule #79** — `AGENTS.md` must be maintained on the production server home directory (`~/AGENTS.md`) documenting active services, firewall rules, and decommissioned processes.
+
+### T38 Carry-Forward
+
+| Priority | Item |
+|----------|------|
+| MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
+| LOW | Superadmin auth architecture alignment (Rule #69) |
+| LOW | Remove old `.backup.*` directories if disk space is needed |
