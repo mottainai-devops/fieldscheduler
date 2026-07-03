@@ -4204,3 +4204,50 @@ All PIN writes (create and update) go through `hashPin()` in `server/utils/pinHa
 - **MEDIUM — Update `fieldworker-app`** (systemd, port 3000) to use bcrypt for `workerAuth.login`, or decommission it
 - **LOW — Hash PINs on PIN reset endpoint** — if a PIN reset UI is added, ensure it calls `hashPin()` before writing
 - **LOW — Superadmin auth architecture alignment:** Align `adminAuth.login` to use `users` table as identity source per T14 model (Rule #69)
+
+
+---
+
+## T36 — Legacy `fieldworker-app` Investigation
+
+**Date:** 2026-07-03  
+**Scope:** Read-only investigation of the `field-scheduler.service` (systemd, port 3000) legacy process  
+**Outcome:** Decision document produced; decommission recommended  
+
+### Investigation Summary
+
+The `fieldworker-app` at `/home/ubuntu/fieldworker-app` is a stale deployment of the same `mottainai-devops/fieldscheduler` repo, built from a November 2025 snapshot. It shares the same `fieldworker_db` MySQL database as the production `field-worker-scheduler` (PM2, port 3002).
+
+**Key findings:**
+
+| Finding | Detail |
+|---------|--------|
+| Traffic (7 days) | **0 real HTTP requests** — only session cookie health checks |
+| Nginx routing | Active config routes `app.fieldscheduler.net` → port 3002 only |
+| Mobile app base URL | `https://app.fieldscheduler.net/api/trpc` → port 3002 |
+| Port 3000 exposure | Not nginx-exposed; direct IP access depends on AWS SG |
+| Plaintext PIN paths | 2 paths in `workerAuth.ts` — but **non-functional** against bcrypt hashes |
+| T33 bypass risk | `publicProcedure` CRUD endpoints present — not reachable via nginx |
+| Crash loop | 3 restarts in 7 days; 140 MB memory, 28 min CPU consumed |
+| DB writes | `createWorker()` in legacy app does NOT call `hashPin()` — would write plaintext PINs if called |
+
+### Decision
+
+**Decommission.** Do not patch. The app receives zero traffic, its plaintext paths are already non-functional, and patching it creates ongoing maintenance debt. The T37 action is to stop and disable the systemd service, verify the AWS security group, and archive the directory.
+
+### Rules Established
+
+- **Rule #76** — Never leave a stale deployment running against a shared production database, even if it receives no traffic. The shared DB means any write path (however unreachable) is a live risk.
+- **Rule #77** — Before decommissioning a process, always verify: (1) nginx routing, (2) mobile/client base URLs, (3) AWS security group port exposure. All three must be confirmed before concluding the service is unreachable.
+
+### T37 Carry-Forward
+
+- **CRITICAL** — Verify AWS security group does not expose port 3000 publicly
+- **HIGH** — `sudo systemctl stop field-scheduler.service && sudo systemctl disable field-scheduler.service`
+- **HIGH** — Archive and delete `/home/ubuntu/fieldworker-app`
+- **MEDIUM** — Move rate limiter to DB-backed `loginAttempts` table (Rule #70)
+- **LOW** — Superadmin auth architecture alignment (Rule #69)
+
+### Deliverable
+
+Full decision document: `docs/T36-legacy-fieldworker-app-decision.md`
