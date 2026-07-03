@@ -16,13 +16,14 @@
  * Bearer token support in the tRPC middleware.
  */
 // T20: workerProcedure added — Bearer token authentication for mobile write mutations
-import { publicProcedure, workerProcedure, router, driftLogger } from "../\_core/trpc";
+import { publicProcedure, workerProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
 import * as complianceDb from "../complianceDb";
 import * as zoho from "../services/zoho";
 import { SKIP_REASONS } from '../../shared/const';
+import { isBcryptHash, verifyPinBcrypt } from '../utils/pinHashing';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -81,11 +82,22 @@ export const workerAuthRouter = router({
         // No PIN set, allow access
         return { success: true, worker };
       }
-      
-      if (worker.pin === input.pin) {
+
+      // T35 (Rule #71): bcrypt comparison for mobile app PIN login.
+      // Plaintext fallback retained during migration window — emits console.warn.
+      let pinValid: boolean;
+      if (isBcryptHash(worker.pin)) {
+        pinValid = await verifyPinBcrypt(input.pin, worker.pin);
+      } else {
+        // Plaintext fallback — migration window only
+        console.warn('[WorkerAuth] WARNING: plaintext PIN comparison for worker', worker.id, '— run PIN migration script (T34 Part 2)');
+        pinValid = worker.pin === input.pin;
+      }
+
+      if (pinValid) {
         return { success: true, worker };
       }
-      
+
       return { success: false, message: "Invalid PIN" };
     }),
 

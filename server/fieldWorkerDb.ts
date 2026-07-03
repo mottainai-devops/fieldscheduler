@@ -1,6 +1,7 @@
 import { eq, desc, and, sql, or, inArray, like } from "drizzle-orm";
 import { getDb } from "./db";
 import { workers, vehicles, customers, routes, routeCustomers, workerLocations } from "../drizzle/schema";
+import { hashPin } from "./utils/pinHashing";
 import { RoutingReasonValue } from '../shared/const';
 
 // Worker operations
@@ -118,6 +119,10 @@ export async function createWorker(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
+  // T35 (Rule #71): Hash PIN before writing to DB.
+  // If no PIN is provided, store NULL (supervisor auto-provision path).
+  const pinToStore = data.pin ? await hashPin(data.pin) : null;
+
   const result = await db.insert(workers).values({
     name: data.name,
     email: data.email,
@@ -126,7 +131,7 @@ export async function createWorker(data: {
     status: data.status || "active",
     shiftStart: data.shiftStart || "08:00",
     shiftEnd: data.shiftEnd || "17:00",
-    pin: data.pin,
+    pin: pinToStore,
     ...(data.role ? { role: data.role } : {}),
     ...(data.preferredWebhookType !== undefined ? { preferredWebhookType: data.preferredWebhookType } : {}),
     ...(data.surveyAppUserId ? { surveyAppUserId: data.surveyAppUserId } : {}),
@@ -155,9 +160,16 @@ export async function updateWorker(id: number, data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
+  // T35 (Rule #71): Hash PIN before writing to DB.
+  // Only hash if a new PIN is being set; leave other fields unchanged.
+  let dataToWrite: typeof data = data;
+  if (data.pin) {
+    dataToWrite = { ...data, pin: await hashPin(data.pin) };
+  }
+
   const result = await db
     .update(workers)
-    .set(data as any)
+    .set(dataToWrite as any)
     .where(eq(workers.id, id));
   
   return result;
