@@ -62,12 +62,13 @@ describe('verifyPin', () => {
     expect(await verifyPin('9999', hash)).toBe(false);
   });
 
-  it('accepts correct PIN in plaintext fallback (migration window)', async () => {
-    // Plaintext stored value — no $2 prefix
-    expect(await verifyPin('1990', '1990')).toBe(true);
+  it('T35 Item #2: plaintext stored value returns false (fail-closed, no fallback)', async () => {
+    // After T35 Item #2, verifyPin is bcrypt-only.
+    // A plaintext stored value is not a valid bcrypt hash, so bcrypt.compare returns false.
+    expect(await verifyPin('1990', '1990')).toBe(false);
   });
 
-  it('rejects wrong PIN in plaintext fallback (migration window)', async () => {
+  it('T35 Item #2: plaintext stored value — wrong input also returns false', async () => {
     expect(await verifyPin('0000', '1990')).toBe(false);
   });
 

@@ -76,33 +76,26 @@ function clearAttempts(email: string): void {
   loginAttempts.delete(email);
 }
 
-// ─── bcrypt helpers (T34 Part 2) ─────────────────────────────────────────────
+// ─── bcrypt helpers (T35 Item #2 — migration window closed) ─────────────────
 //
-// isBcryptHash: detects whether a stored PIN is already a bcrypt hash.
-// This enables backward-compatible login during the migration window (before
-// all plaintext PINs have been hashed in the DB).
+// isBcryptHash: detects whether a stored value is a bcrypt hash.
+// Retained for use in tests and future diagnostics.
 //
 export function isBcryptHash(value: string): boolean {
   return value.startsWith('$2a$') || value.startsWith('$2b$') || value.startsWith('$2y$');
 }
 
 /**
- * Verify a PIN input against the stored value.
+ * Verify a PIN input against a bcrypt-stored value.
  *
- * - If stored value is a bcrypt hash: use bcrypt.compare (constant-time).
- * - If stored value is plaintext (migration window): compare directly and log
- *   a warning so operators know the PIN needs migration.
+ * T35 Item #2: Plaintext fallback removed. All PINs in production are bcrypt
+ * hashes (confirmed 2026-07-03: 7 bcrypt, 0 plaintext, 2 NULL).
  *
- * Rule #71: All new PIN writes must use bcrypt. Plaintext comparison is only
- * permitted during the migration window and must emit a console.warn.
+ * Fail-closed: if stored value is not a valid bcrypt hash, bcrypt.compare
+ * returns false (does not throw), which is the correct behavior.
  */
 export async function verifyPin(input: string, stored: string): Promise<boolean> {
-  if (isBcryptHash(stored)) {
-    return bcrypt.compare(input, stored);
-  }
-  // Plaintext fallback — migration window only
-  console.warn('[AdminAuth] WARNING: plaintext PIN comparison for worker — run PIN migration script (T34 Part 2)');
-  return input === stored;
+  return bcrypt.compare(input, stored);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

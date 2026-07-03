@@ -104,12 +104,10 @@ describe('verifyPinBcrypt', () => {
 
 // ─── workerAuth.verifyPin procedure (unit-level mock) ─────────────────────────
 //
+// T35 Item #2: Plaintext fallback removed. Tests updated to reflect bcrypt-only behavior.
 // These tests simulate the verifyPin procedure logic without a real DB.
-// They verify the branch logic (bcrypt vs plaintext fallback vs NULL).
 
-describe('workerAuth.verifyPin procedure logic', () => {
-  const BCRYPT_HASH_1234 = '$2b$12$placeholder'; // will be replaced in beforeEach
-
+describe('workerAuth.verifyPin procedure logic (T35 Item #2 — bcrypt-only)', () => {
   let realHash: string;
 
   beforeEach(async () => {
@@ -117,42 +115,25 @@ describe('workerAuth.verifyPin procedure logic', () => {
   });
 
   it('bcrypt-stored PIN — correct PIN returns success', async () => {
-    const storedPin = realHash;
-    const inputPin = '1234';
-    const isHash = isBcryptHash(storedPin);
-    const valid = isHash
-      ? await verifyPinBcrypt(inputPin, storedPin)
-      : inputPin === storedPin;
+    // T35 Item #2: direct verifyPinBcrypt call (no branch logic)
+    const valid = await verifyPinBcrypt('1234', realHash);
     expect(valid).toBe(true);
   });
 
   it('bcrypt-stored PIN — wrong PIN returns failure', async () => {
-    const storedPin = realHash;
-    const inputPin = '9999';
-    const isHash = isBcryptHash(storedPin);
-    const valid = isHash
-      ? await verifyPinBcrypt(inputPin, storedPin)
-      : inputPin === storedPin;
+    const valid = await verifyPinBcrypt('9999', realHash);
     expect(valid).toBe(false);
   });
 
-  it('plaintext-stored PIN — correct PIN returns success (migration window)', async () => {
-    const storedPin = '1234'; // plaintext
-    const inputPin = '1234';
-    const isHash = isBcryptHash(storedPin);
-    const valid = isHash
-      ? await verifyPinBcrypt(inputPin, storedPin)
-      : inputPin === storedPin;
-    expect(valid).toBe(true);
+  it('T35 Item #2: plaintext-stored PIN returns false (fail-closed)', async () => {
+    // After fallback removal, a plaintext stored value is not a valid bcrypt hash.
+    // verifyPinBcrypt returns false (does not throw).
+    const valid = await verifyPinBcrypt('1234', '1234');
+    expect(valid).toBe(false);
   });
 
-  it('plaintext-stored PIN — wrong PIN returns failure (migration window)', async () => {
-    const storedPin = '1234'; // plaintext
-    const inputPin = '9999';
-    const isHash = isBcryptHash(storedPin);
-    const valid = isHash
-      ? await verifyPinBcrypt(inputPin, storedPin)
-      : inputPin === storedPin;
+  it('T35 Item #2: plaintext-stored PIN — wrong input also returns false', async () => {
+    const valid = await verifyPinBcrypt('9999', '1234');
     expect(valid).toBe(false);
   });
 

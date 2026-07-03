@@ -23,7 +23,7 @@ import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
 import * as complianceDb from "../complianceDb";
 import * as zoho from "../services/zoho";
 import { SKIP_REASONS } from '../../shared/const';
-import { isBcryptHash, verifyPinBcrypt } from '../utils/pinHashing';
+import { verifyPinBcrypt } from '../utils/pinHashing';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -83,16 +83,10 @@ export const workerAuthRouter = router({
         return { success: true, worker };
       }
 
-      // T35 (Rule #71): bcrypt comparison for mobile app PIN login.
-      // Plaintext fallback retained during migration window — emits console.warn.
-      let pinValid: boolean;
-      if (isBcryptHash(worker.pin)) {
-        pinValid = await verifyPinBcrypt(input.pin, worker.pin);
-      } else {
-        // Plaintext fallback — migration window only
-        console.warn('[WorkerAuth] WARNING: plaintext PIN comparison for worker', worker.id, '— run PIN migration script (T34 Part 2)');
-        pinValid = worker.pin === input.pin;
-      }
+      // T35 Item #2: bcrypt-only comparison. Plaintext fallback removed.
+      // All PINs in production are bcrypt hashes (confirmed 2026-07-03).
+      // Fail-closed: verifyPinBcrypt returns false for non-hash stored values.
+      const pinValid = await verifyPinBcrypt(input.pin, worker.pin);
 
       if (pinValid) {
         return { success: true, worker };
