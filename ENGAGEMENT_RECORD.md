@@ -4290,3 +4290,76 @@ Full decommission of the legacy `fieldworker-app` service identified in T36 as d
 | MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
 | LOW | Superadmin auth architecture alignment (Rule #69) |
 | LOW | Remove old `.backup.*` directories if disk space is needed |
+
+---
+
+## T38 — Rename `customers.customermaf` → `customers.maf` (2026-07-06)
+
+### Scope
+
+Rename the `customermaf` column on the `customers` table to `maf` across the entire codebase — schema, migrations, server helpers, tRPC routers, and all client pages/components. The following were explicitly **not** renamed (different tables or external contracts):
+
+- `fieldManagerTags.customermaf` — lot tag code column on a different table
+- `tagBasedRoutes.customermafTags` — text column on a different table
+- `zohoSyncHistory.customermafCount` — counter column on a different table
+- Zoho API field `customermaf` in `server/services/zoho.ts` — Zoho contract, cannot change
+
+### Pre-Deploy Backup
+
+`customers-pre-t38-backup.sql` created on production server before any schema change.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `drizzle/schema.ts` | `customermaf` → `maf` column definition (line 95) |
+| `drizzle/migrations/0019_rename_customermaf_to_maf.sql` | New migration: `ALTER TABLE customers CHANGE COLUMN customermaf maf VARCHAR(100) NULL` |
+| `shared/constants/maf.ts` | `CUSTOMER_MAF_COLUMN = 'maf'` |
+| `server/fieldManagerTagDb.ts` | `customers.customermaf` → `customers.maf` in join queries (lines 178, 204) |
+| `server/fieldWorkerDb.ts` | `select { maf: customers.maf }` (was `customermaf`) |
+| `server/routers/fieldManager.ts` | Raw SQL alias updated |
+| `server/routers/fieldWorker.ts` | `createCustomer`/`updateCustomer` maf field |
+| `server/routers/workerAuth.ts` | `getWebhookForCustomer` parameter `maf` |
+| `server/routers/customerRouter.ts` | Input schema `maf` field |
+| `client/src/pages/WorkerMobileRouteDetail.tsx` | `customer.maf` |
+| `client/src/pages/RouteSchedules.tsx` | `customer.maf` |
+| `client/src/pages/DynamicCustomerFiltering.tsx` | `Customer` interface + `customer.maf` |
+| `client/src/pages/FieldManagerDashboard.tsx` | Comment updated |
+| `client/src/pages/ClusterManagement.tsx` | `customer.maf` (was `customermaf`) |
+| `client/src/pages/PendingPickups.tsx` | `maf: editPickup.mafCode` |
+| `client/src/pages/AreaRouteCreation.tsx`, `CreateRoute.tsx`, `Customers.tsx` | `maf` field |
+| `client/src/components/AdvancedFilters.tsx`, `ExportAnalytics.tsx`, `FieldManagerQuickStats.tsx`, `PickupModal.tsx` | `maf` field |
+
+### Production Migration
+
+Applied directly via MySQL (not `pnpm db:push` to avoid migration journal conflicts):
+
+```sql
+ALTER TABLE customers CHANGE COLUMN customermaf maf VARCHAR(100) NULL;
+```
+
+Verified: `DESCRIBE customers` shows `maf varchar(100) YES NULL` — `customermaf` no longer exists.
+
+Verified: `DESCRIBE fieldManagerTags` still shows `customermaf varchar(100) NO NULL` — correctly unchanged.
+
+### Verification
+
+- `npm test` → 120/120 passing
+- TypeScript error count: 165 before T38, 165 after T38 (all pre-existing; no new errors introduced)
+- Production DB: `customers.maf` column confirmed
+- Production DB: `fieldManagerTags.customermaf` column confirmed unchanged
+- PM2 `field-worker-scheduler` restarted and online after build
+- Sample query `SELECT id, name, maf FROM customers WHERE maf IS NOT NULL LIMIT 5` returns correct data
+
+### Rules Established
+
+- **Rule #80** — When renaming a column that shares a name with columns on other tables (e.g., `customermaf` exists on both `customers` and `fieldManagerTags`), the scope rule must be documented explicitly in the commit message and engagement record. Each occurrence must be reviewed individually — bulk `sed` renames across the entire repo are not safe.
+- **Rule #81** — Production column renames must be applied via direct SQL (`ALTER TABLE ... CHANGE COLUMN`) rather than `pnpm db:push` when a Drizzle migration journal is in use, to avoid journal state conflicts.
+
+### T39 Carry-Forward
+
+| Priority | Item |
+|----------|------|
+| MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
+| LOW | Superadmin auth architecture alignment (Rule #69) |
+| LOW | Remove old `.backup.*` directories if disk space is needed |
