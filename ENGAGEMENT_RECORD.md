@@ -4429,3 +4429,78 @@ adminAuth.login now checks SUPERADMIN_EMAILS.has(input.email) first. Matching em
 | LOW | Field manager identity migration (Variant C) |
 | LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
 | LOW | Remove old .backup.* directories if disk space is needed |
+
+---
+
+## T40 — Admin Route Editing: Status Gates, Customer Management, Audit Trail (2026-07-06)
+
+### Scope
+
+Implement admin-tier route editing for editable routes (pending, pending_assignment, optimized, assigned, cancelled). Admins (Wale, Alaba) can: edit route metadata (scheduledDate, workerId, routingReasonNote), add/remove customers, reorder customers, and delete routes. Routes with status in_progress or completed are read-only (status gate). T40 Scope B confirmed by owner.
+
+### Pre-Deploy Backups
+
+- ~/users-pre-t39-backup.sql and ~/workers-pre-t39-backup.sql from T39 remain on server
+- No new table-level backup required for T40 (no destructive schema change — only enum extension)
+
+### Production Schema Migration
+
+Migration 0021 applied directly via MySQL (Rule #81):
+- ALTER TABLE calendarAuditLog MODIFY COLUMN entityType ENUM(..., 'route', 'route_customer')
+- ALTER TABLE calendarAuditLog MODIFY COLUMN action ENUM(..., 'deleted')
+
+Verified: SHOW COLUMNS confirms both enum extensions present in fieldworker_db.calendarAuditLog
+
+### Files Changed (11 files, 1520 insertions, 47 deletions)
+
+- drizzle/migrations/0021_extend_calendar_audit_log_enums.sql: New migration
+- drizzle/schema.ts: Updated calendarAuditLog entityType and action enums
+- shared/constants/routes.ts: EDITABLE_ROUTE_STATUSES, LOCKED_ROUTE_STATUSES, DELETABLE_ROUTE_STATUSES, routeStatusGateMessage(), routeDeleteGateMessage()
+- server/fieldWorkerDb.ts: Hardened updateRoute (status gate, field allowlist, routingReasonNote, audit entry); hardened deleteRoute (status gate, audit entry, actor param); new addCustomerToRoute, removeCustomerFromRoute, reorderRouteCustomers DB helpers
+- server/routers/fieldWorker.ts: Updated updateRoute/deleteRoute procedures; added addCustomerToRoute, removeCustomerFromRoute, reorderRouteCustomers (adminProcedure); added getRouteCustomers (fieldManagerProcedure)
+- server/routeEditing.statusGates.test.ts: 20 new behavioral tests
+- client/src/pages/AdminRoutes.tsx: Full route management page (list + edit sheet + customer management)
+- client/src/App.tsx: /admin/routes route (requireAdmin)
+- client/src/components/SidebarNavigation.tsx: 'Edit Routes' nav item under Route Management (minRole: admin)
+
+### Logic Summary
+
+- EDITABLE_ROUTE_STATUSES: pending, pending_assignment, optimized, assigned, cancelled
+- LOCKED_ROUTE_STATUSES: in_progress, completed (read-only — status gate blocks all mutations)
+- DELETABLE_ROUTE_STATUSES: pending, pending_assignment, optimized, assigned, cancelled
+- deleteRoute promoted from superadminProcedure to adminProcedure with status gate
+- All mutations write audit entries to calendarAuditLog (entityType: route or route_customer)
+- reorderRouteCustomers rewrites all sequence numbers atomically in a single transaction (Rule #84)
+- UI surfaces the status gate reason message when a mutation is blocked (Rule #83)
+
+### Verification
+
+- npm test: 155/155 passing (135 pre-existing + 20 new T40 tests)
+- npm run build: clean build (2790 modules transformed, no errors)
+- Production DB: calendarAuditLog entityType includes 'route' and 'route_customer'; action includes 'deleted'
+- Production routes: 3 routes (ids 166, 167, 170), all editable status — all accessible via /admin/routes
+- PM2 field-worker-scheduler online (132.7 MB), app returns 200 OK on https://app.fieldscheduler.net/
+- App startup logs: migrations idempotent, Zoho scheduler initialized, no errors
+
+### Pattern and Rule Formalization
+
+- Rule #83 — Admin route editing UI must surface the status gate reason when a mutation is blocked, not just show a generic error toast. The gate message (from routeStatusGateMessage()) must be shown to the user.
+- Rule #84 — Route customer reordering must be atomic — sequence numbers are rewritten in a single transaction, never incremented in-place. Prevents partial-update race conditions.
+
+### T40 Scope Boundaries (Deferred)
+
+- Phase 2: Live route editing (in_progress routes) — deferred
+- Phase 3: Completed route reactivation — deferred
+- Variant B: Admin identity migration (Wale, Alaba) to users table — deferred
+- Variant C: Field manager identity migration — deferred
+
+### T41 Carry-Forward
+
+| Priority | Item |
+|----------|------|
+| MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
+| MEDIUM | Admin identity migration — Wale, Alaba to users table (Variant B, Rule #82) |
+| LOW | Field manager identity migration (Variant C) |
+| LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
+| LOW | T40 Phase 2: live route editing (in_progress) |
+| LOW | T40 Phase 3: completed route reactivation |
