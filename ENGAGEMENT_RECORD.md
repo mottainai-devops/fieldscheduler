@@ -4363,3 +4363,69 @@ Verified: `DESCRIBE fieldManagerTags` still shows `customermaf varchar(100) NO N
 | MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
 | LOW | Superadmin auth architecture alignment (Rule #69) |
 | LOW | Remove old `.backup.*` directories if disk space is needed |
+
+---
+
+## T39 — Superadmin Auth via Users Table — Rule #69 Closure (2026-07-06)
+
+### Scope
+
+Align superadmin identity authentication from the workers table to the users table, per T14 canonical architecture (Rule #69). Superadmin-only (Variant A). Admin, field manager, and supervisor identities remain on the workers-table path — deferred to T40+.
+
+### Dormant Infrastructure Finding
+
+Investigation surfaced dormant infrastructure: adminUsers table (3 rows including adeyadewuyi@gmail.com as super_admin) and adminAuthDb.ts module (not imported by any active code path). This appears to be an earlier abandoned attempt at T14-canonical implementation, not wired to the live login flow. Left in place; not modified in T39. Documented for future architectural cleanup consideration.
+
+### Pre-Deploy Backups
+
+- ~/users-pre-t39-backup.sql — users table (3.8 KB)
+- ~/workers-pre-t39-backup.sql — workers table (5.4 KB)
+
+Both created on production server before any schema or code change.
+
+### Production Schema Migration
+
+Applied directly via MySQL (Rule #81):
+
+ALTER TABLE users ADD COLUMN pin VARCHAR(255) NULL;
+UPDATE users u INNER JOIN workers w ON w.email = u.email SET u.pin = w.pin WHERE u.role = "superadmin" AND w.pin IS NOT NULL;
+
+Expected and confirmed: 2 rows updated (users.id=2 info@mottainai.africa, users.id=10 adeyadewuyi@gmail.com).
+
+Migration file: drizzle/migrations/0020_add_pin_to_users.sql
+
+### Files Changed
+
+- drizzle/schema.ts: Added pin: varchar("pin", { length: 255 }) to users table
+- drizzle/migrations/0020_add_pin_to_users.sql: New migration: ALTER TABLE users ADD COLUMN pin VARCHAR(255) NULL
+- server/db.ts: Added getUserByEmail(email) helper
+- server/routers/adminAuth.ts: Added SUPERADMIN_EMAILS constant; added users-table superadmin path before workers path; marked SUPERADMIN_WORKER_IDS @deprecated
+- server/adminAuth.t39.test.ts: 14 new behavioral tests for T39
+
+### Logic Change Summary
+
+adminAuth.login now checks SUPERADMIN_EMAILS.has(input.email) first. Matching emails (adeyadewuyi@gmail.com, info@mottainai.africa) are routed to the users-table path: db.getUserByEmail -> users.pin bcrypt compare -> db.upsertUser -> session token. All other emails continue through the unchanged workers-table path. Error messages are identical across both paths ("Worker not found", "Invalid password") to prevent email enumeration.
+
+### Verification
+
+- npm test: 134/134 passing (120 pre-existing + 14 new T39 tests)
+- npm run build: clean build, no errors
+- Production DB: users.id=2 and users.id=10 both show pin_length=60, pin_prefix=$2b$
+- PM2 field-worker-scheduler restarted and online (200 OK on root URL)
+- App startup logs: clean — migrations idempotent, Zoho scheduler initialized
+
+### Pattern and Rule Formalization
+
+- Pattern #63 — Multi-source identity resolution during architecture migration. Some identities authenticate via source A (users table), others via source B (workers table), based on role tier. Enables incremental migration without full cutover. The routing key is a constant set (SUPERADMIN_EMAILS) checked before the legacy path.
+
+- Rule #82 — When aligning implementation to documented architecture, migrate incrementally by identity tier, narrowest-blast-radius first. Superadmin (2 identities) -> Admin (2 identities) -> Field Manager (N identities). Each tier is a separate tranche.
+
+### T40 Carry-Forward
+
+| Priority | Item |
+|----------|------|
+| MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
+| MEDIUM | Admin identity migration — Wale, Alaba to users table (Variant B) |
+| LOW | Field manager identity migration (Variant C) |
+| LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
+| LOW | Remove old .backup.* directories if disk space is needed |
