@@ -18,6 +18,12 @@ export const users = mysqlTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "field_manager", "superadmin", "supervisor"]).default("user").notNull(),
   fieldManagerId: int("fieldManagerId"),
+  /**
+   * T39: PIN for superadmin identities authenticating via users table (Rule #69 closure).
+   * Stores bcrypt hash (VARCHAR 255, same pattern as workers.pin).
+   * NULL for all non-superadmin users (they authenticate via workers table).
+   */
+  pin: varchar("pin", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),

@@ -98,6 +98,21 @@ export async function verifyPin(input: string, stored: string): Promise<boolean>
   return bcrypt.compare(input, stored);
 }
 
+// ─── T39: Superadmin email set (Rule #69 closure) ────────────────────────────
+//
+// Superadmin identities authenticate via the users table (T14 canonical
+// architecture). These emails are checked first in adminAuth.login; matching
+// emails are routed to the users-table path (users.pin). All other emails
+// continue through the workers-table path (unchanged).
+//
+// To add a new superadmin: add their email here AND ensure their users row has
+// a non-null pin (copy from workers.pin or set directly via hashPin()).
+//
+export const SUPERADMIN_EMAILS = new Set([
+  'adeyadewuyi@gmail.com',
+  'info@mottainai.africa',
+]);
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const adminAuthRouter = router({
@@ -115,6 +130,85 @@ export const adminAuthRouter = router({
         if (isLockedOut(input.email)) {
           throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
         }
+
+        // ─────────────────────────────────────────────────────────────────
+        // T39: Superadmin path — users table (T14 canonical architecture)
+        //
+        // Superadmin identities in SUPERADMIN_EMAILS authenticate via
+        // users.pin. This closes Rule #69: superadmin auth now reads from
+        // the users table as documented in T14 architecture.
+        //
+        // Error messages deliberately mirror the workers path ("Worker not
+        // found", "Invalid password") to prevent email enumeration.
+        // ─────────────────────────────────────────────────────────────────
+        if (SUPERADMIN_EMAILS.has(input.email)) {
+          const superUser = await db.getUserByEmail(input.email);
+
+          if (!superUser) {
+            recordFailedAttempt(input.email);
+            throw new Error("Worker not found");
+          }
+
+          if (!input.password) {
+            recordFailedAttempt(input.email);
+            throw new Error("Password required");
+          }
+
+          if (superUser.pin === null || superUser.pin === undefined) {
+            throw new Error("Account not configured — contact administrator");
+          }
+
+          const pinValid = await verifyPin(input.password, superUser.pin);
+          if (!pinValid) {
+            const attempts = recordFailedAttempt(input.email);
+            const remaining = MAX_ATTEMPTS - attempts;
+            if (remaining <= 0) {
+              throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
+            }
+            throw new Error("Invalid password");
+          }
+
+          // Successful superadmin login — clear attempt counter
+          clearAttempts(input.email);
+
+          // Use the existing openId from the users row (set during first login
+          // via workers path; format: 'worker-{id}-{email}').
+          const openId = superUser.openId;
+
+          await db.upsertUser({
+            openId,
+            name: superUser.name || null,
+            email: superUser.email || null,
+            loginMethod: 'email',
+            role: 'superadmin',
+            fieldManagerId: null,
+          });
+
+          console.log('[AdminAuth] Superadmin login (users path):', openId);
+
+          const sessionToken = await sdk.createSessionToken(openId, {
+            name: superUser.name || 'Admin',
+          });
+
+          const cookieOptions = getSessionCookieOptions(ctx.req);
+          ctx.res.cookie(COOKIE_NAME, sessionToken, cookieOptions);
+
+          console.log('[AdminAuth] Session cookie set for superadmin:', openId);
+
+          return {
+            success: true,
+            role: 'superadmin' as const,
+            worker: {
+              id: superUser.id,
+              name: superUser.name,
+              email: superUser.email,
+            },
+          };
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Workers path — unchanged (admin, field_manager, user, supervisor)
+        // ─────────────────────────────────────────────────────────────────
 
         const worker = await fieldWorkerDb.getWorkerByEmail(input.email);
         console.log('[AdminAuth] Worker found:', worker?.email || 'NOT FOUND');
@@ -155,20 +249,17 @@ export const adminAuthRouter = router({
         // ─────────────────────────────────────────────────────────────────
         // Four-tier role model (T14 Item 2):
         //
-        //   superadmin    → workers in SUPERADMIN_WORKER_IDS (full access, no scoping)
+        //   superadmin    → SUPERADMIN_EMAILS (users table path, handled above)
         //   admin         → workers in ADMIN_WORKER_IDS (admin UI, all data visible)
         //   field_manager → workers with workers.role='field_manager' (scoped to assigned customers)
         //   supervisor    → workers with workers.role='supervisor' (mobile app only — REJECTED here)
         //   user          → all other workers
         //
-        // SUPERADMIN_WORKER_IDS: worker IDs 1 (adey adewuyi) and 2 (ADMIN / info@mottainai.africa)
         // ADMIN_WORKER_IDS: Wale Onibudo (id=10), Alaba (id=27) — T15 Item 3 (2026-06-27)
         //
-        // NOTE on the 'admin' value in users.role:
-        // The 'admin' value previously existed in users.role as legacy compatibility (never written
-        // by current code from some point in Tranche 5A onward). From Tranche 14, 'admin' is the
-        // canonical value for the head-of-operations tier and IS actively written by ADMIN_WORKER_IDS
-        // membership.
+        // @deprecated SUPERADMIN_WORKER_IDS: superseded by SUPERADMIN_EMAILS (T39).
+        // Superadmin emails now route through the users-table path above and never
+        // reach this code. Retained for audit trail; remove in T40+ cleanup.
         // ─────────────────────────────────────────────────────────────────
 
         // T14 Item 2 (Condition 1c): Reject supervisor logins at the web app.
@@ -182,6 +273,8 @@ export const adminAuthRouter = router({
           );
         }
 
+        /** @deprecated T39: superseded by SUPERADMIN_EMAILS. Superadmin emails no longer
+         *  reach this code path. Retained for audit; remove in T40+ cleanup. */
         const SUPERADMIN_WORKER_IDS = new Set([1, 2]);
         const ADMIN_WORKER_IDS = new Set<number>([10, 27]); // Wale Onibudo (10), Alaba (27)
 

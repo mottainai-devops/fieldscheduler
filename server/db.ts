@@ -96,4 +96,24 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+/**
+ * T39: Retrieve a users row by email address.
+ * Used by adminAuth.login for the superadmin identity path so that
+ * superadmin credentials are read from users.pin (T14 canonical architecture)
+ * rather than workers.pin.
+ *
+ * Returns undefined if the database is unavailable or no matching row exists.
+ */
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user: database not available");
+    return undefined;
+  }
+
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+
+  return result.length > 0 ? result[0] : undefined;
+}
+
 // TODO: add feature queries here as your schema grows.
