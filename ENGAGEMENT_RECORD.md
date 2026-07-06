@@ -4724,3 +4724,72 @@ Single tranche. Priority: rename fields → add workers JOIN → worker-driven d
 
 ### Carry-forward
 - zohoPayments has no fieldManagerId — per-FM payment totals require separate investigation (T46)
+
+---
+
+## T45 — Financial Dashboard: All Seven Defects Fixed
+
+**Opened:** T44 forensic audit (this session)
+**Closed:** 2026-07-06
+**Commit:** b05e97d0
+**Tests added:** 47 (financialRouter.t45.test.ts) — 234/234 passing
+
+### Root Causes Fixed
+
+| Root Cause | Description | Defects Resolved |
+|---|---|---|
+| A | Server response field names mismatched client expectations | 5 of 7 |
+| B | Date filter WHERE clauses missing from all aggregate queries | 1 of 7 |
+| C | Invoice-driven GROUP BY instead of worker/customer-driven LEFT JOIN | 1 of 7 |
+
+### Files Changed
+
+| File | Change |
+|---|---|
+| `shared/types/financial.ts` | New — canonical FinancialMetrics, FieldManagerMetrics, MafMetrics types (Rule #89) |
+| `server/routers/financialRouter.ts` | Full rewrite — 4 procedures corrected |
+| `server/financialRouter.t45.test.ts` | New — 47 behavioral tests |
+| `client/src/components/FinancialDashboard.tsx` | Updated field references, filter wiring, payment attribution tooltip |
+
+### Specific Fixes
+
+**getMetrics:**
+- Renamed: `totalInvoices` → `totalInvoiceAmount`, `totalPayments` → `totalPaymentAmount`, `totalOutstanding` → `outstandingBalance`
+- Added: `invoiceCount`, `paymentCount`
+- Applied: date filter WHERE clauses to both invoices and payments
+- Wired: `fieldManagerId` and `maf` filter params
+
+**getMetricsByFieldManager:**
+- Source changed from invoice-driven GROUP BY to worker-driven LEFT JOIN (role='field_manager')
+- Bukola (id=8) now appears with invoiceCount=0 (was invisible)
+- fieldManagerName returned via JOIN workers
+- Renamed: `totalInvoices` → `invoiceCount`, `totalInvoiceAmount` → `invoiceTotal`, `outstandingBalance` → `outstanding`
+- Payment attribution hardcoded to 0 (T46+ pending — zohoPayments has no fieldManagerId)
+
+**getMetricsByMAF:**
+- Source changed from invoice-driven GROUP BY to customer-driven LEFT JOIN
+- Bukola's MAFs (AFT-221, TKB-052) now appear with invoiceCount=0 (were invisible)
+- NULL maf customers included (shown as "(No MAF set)" in dropdown)
+
+**Client (FinancialDashboard.tsx):**
+- All field references updated to match shared types
+- formatCurrency applied to all currency displays
+- Filter dropdowns wired to getMetrics
+- "Clear filters (all-time view)" button added
+- Payment attribution cells show 0 with tooltip
+
+### Rule Established
+
+**Rule #88** — Dashboard verification requires expected-value comparison, not just page-load-without-errors. Test files must assert specific numeric values confirmed against production DB.
+
+**Rule #89** — When a server procedure and client component share a response shape, that shape MUST be defined in shared/types/ as a TypeScript interface. Field name drift between server and client is a Pattern #65 violation.
+
+### T46 Carry-Forward
+
+| Priority | Item |
+|---|---|
+| HIGH | zohoPayments FM attribution — add fieldManagerId column or customer→FM join to enable per-FM payment totals |
+| MEDIUM | loginAttempts periodic cleanup job (rows older than 24h) |
+| LOW | adminUsers table + adminAuthDb.ts cleanup |
+| LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
+
