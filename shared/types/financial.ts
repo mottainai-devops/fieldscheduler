@@ -37,9 +37,9 @@ export interface FieldManagerMetrics {
   invoiceCount: number;
   invoiceTotal: number;
   /**
-   * Payment attribution by field manager is pending (T46+).
-   * zohoPayments has no fieldManagerId column.
-   * These fields are hardcoded to 0 until T46+ FM attribution is built.
+   * Payment attribution via customer→FM join (T46).
+   * zohoPayments.customerId = customers.zohoContactId → customers.fieldManager.
+   * Coverage: 1177/1179 payments (99.8%). ₦7,450 unattributed (0.003%, 2 customers with no FM set).
    */
   paymentCount: number;
   paymentTotal: number;

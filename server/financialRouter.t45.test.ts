@@ -8,7 +8,7 @@
  *  D. getMetrics filter combination logic
  *  E. getMetricsByFieldManager worker-driven source (Root Cause C fix — Bukola included)
  *  F. getMetricsByFieldManager field names match shared type
- *  G. getMetricsByFieldManager payment attribution hardcoded to 0 (T46+ pending)
+ *  G. getMetricsByFieldManager payment attribution via customer→FM join (T46)
  *  H. getMetricsByMAF customer-driven source (Root Cause C fix — Bukola's MAFs included)
  *  I. getMetricsByMAF NULL maf → null in result (matches T31 pattern)
  *  J. getInvoices / getPayments date filter logic
@@ -94,6 +94,14 @@ interface MockCustomerRow {
   id: number;
   fieldManager: number;
   maf: string | null;
+  zohoContactId: string;
+}
+
+interface MockZohoPaymentRow {
+  id: number;
+  customerId: string;  // = customers.zohoContactId
+  amount: number;
+  paymentDate: string;
 }
 
 // Production-equivalent data (confirmed T44 DB queries)
@@ -144,14 +152,34 @@ const MOCK_WORKERS: MockWorkerRow[] = [
 ];
 
 const MOCK_CUSTOMERS: MockCustomerRow[] = [
-  // Halleluyah's customers
-  ...Array.from({ length: 50 }, (_, i) => ({ id: 1000 + i, fieldManager: 7, maf: 'DIC-413' })),
-  // Bukola's customers — multiple MAFs, zero invoices
-  ...Array.from({ length: 20 }, (_, i) => ({ id: 2000 + i, fieldManager: 8, maf: 'AFT-221' })),
-  ...Array.from({ length: 15 }, (_, i) => ({ id: 2100 + i, fieldManager: 8, maf: 'TKB-052' })),
-  ...Array.from({ length: 10 }, (_, i) => ({ id: 2200 + i, fieldManager: 8, maf: null })),
-  // Juwon's customers
-  ...Array.from({ length: 80 }, (_, i) => ({ id: 3000 + i, fieldManager: 9, maf: 'DIC-410' })),
+  // Halleluyah's customers (zohoContactId: 'HALL-{id}')
+  ...Array.from({ length: 50 }, (_, i) => ({ id: 1000 + i, fieldManager: 7, maf: 'DIC-413', zohoContactId: `HALL-${1000 + i}` })),
+  // Bukola's customers — multiple MAFs, zero invoices (zohoContactId: 'BUK-{id}')
+  ...Array.from({ length: 20 }, (_, i) => ({ id: 2000 + i, fieldManager: 8, maf: 'AFT-221', zohoContactId: `BUK-${2000 + i}` })),
+  ...Array.from({ length: 15 }, (_, i) => ({ id: 2100 + i, fieldManager: 8, maf: 'TKB-052', zohoContactId: `BUK-${2100 + i}` })),
+  ...Array.from({ length: 10 }, (_, i) => ({ id: 2200 + i, fieldManager: 8, maf: null, zohoContactId: `BUK-${2200 + i}` })),
+  // Juwon's customers (zohoContactId: 'JUW-{id}')
+  ...Array.from({ length: 80 }, (_, i) => ({ id: 3000 + i, fieldManager: 9, maf: 'DIC-410', zohoContactId: `JUW-${3000 + i}` })),
+  // 2 customers with no FM set (fieldManager=0 means no FM)
+  { id: 9000, fieldManager: 0, maf: null, zohoContactId: 'ORPHAN-1' },
+  { id: 9001, fieldManager: 0, maf: null, zohoContactId: 'ORPHAN-2' },
+];
+
+// Production-equivalent zoho payments (T46 investigation confirmed values)
+const MOCK_ZOHO_PAYMENTS: MockZohoPaymentRow[] = [
+  // Halleluyah payments (446 total in prod; simplified to 3 for test)
+  { id: 1, customerId: 'HALL-1000', amount: 50000000, paymentDate: '2024-07-01' },
+  { id: 2, customerId: 'HALL-1001', amount: 40000000, paymentDate: '2025-01-15' },
+  { id: 3, customerId: 'HALL-1002', amount: 32663521.15, paymentDate: '2025-03-10' },
+  // Bukola payments (292 total in prod; simplified to 2 for test)
+  { id: 4, customerId: 'BUK-2000', amount: 12000000, paymentDate: '2024-08-01' },
+  { id: 5, customerId: 'BUK-2100', amount: 10037718.75, paymentDate: '2025-02-20' },
+  // Juwon payments (438 total in prod; simplified to 2 for test)
+  { id: 6, customerId: 'JUW-3000', amount: 40000000, paymentDate: '2024-09-01' },
+  { id: 7, customerId: 'JUW-3001', amount: 36623755, paymentDate: '2025-04-01' },
+  // Unattributed payments (no matching customer FM)
+  { id: 8, customerId: 'ORPHAN-1', amount: 3725, paymentDate: '2025-01-01' },
+  { id: 9, customerId: 'ORPHAN-2', amount: 3725, paymentDate: '2025-01-01' },
 ];
 
 // ─── Inline logic mirrors (for unit tests without DB) ─────────────────────────
@@ -197,8 +225,16 @@ function computeMetrics(
 function computeFMMetrics(
   workers: MockWorkerRow[],
   invoices: MockInvoiceRow[],
-  opts: { startDate?: string; endDate?: string } = {}
+  opts: { startDate?: string; endDate?: string } = {},
+  customers: MockCustomerRow[] = [],
+  zohoPayments: MockZohoPaymentRow[] = []
 ): FieldManagerMetrics[] {
+  // Build customer zohoContactId → fieldManager map
+  const customerFMMap = new Map<string, number>();
+  for (const c of customers) {
+    if (c.fieldManager) customerFMMap.set(c.zohoContactId, c.fieldManager);
+  }
+
   return workers
     .filter(w => w.role === 'field_manager')
     .map(w => {
@@ -208,13 +244,22 @@ function computeFMMetrics(
           inv => inv.invoiceDate >= opts.startDate! && inv.invoiceDate <= opts.endDate!
         );
       }
+
+      // T46: Payment attribution via customer→FM join
+      let fmPayments = zohoPayments.filter(p => customerFMMap.get(p.customerId) === w.id);
+      if (opts.startDate && opts.endDate) {
+        fmPayments = fmPayments.filter(
+          p => p.paymentDate >= opts.startDate! && p.paymentDate <= opts.endDate!
+        );
+      }
+
       return {
         fieldManagerId: String(w.id),
         fieldManagerName: w.name,
         invoiceCount: fmInvoices.length,
         invoiceTotal: fmInvoices.reduce((sum, inv) => sum + inv.total, 0),
-        paymentCount: 0,  // T46+ pending
-        paymentTotal: 0,  // T46+ pending
+        paymentCount: fmPayments.length,
+        paymentTotal: fmPayments.reduce((sum, p) => sum + p.amount, 0),
         outstanding: fmInvoices
           .filter(inv => OUTSTANDING_STATUSES.has(inv.status))
           .reduce((sum, inv) => sum + inv.balance, 0),
@@ -505,17 +550,56 @@ describe('F. getMetricsByFieldManager — field names match shared type', () => 
 });
 
 // ─── G. getMetricsByFieldManager — payment attribution ───────────────────────
-describe('G. getMetricsByFieldManager — payment attribution hardcoded to 0 (T46+ pending)', () => {
-  it('paymentCount is 0 for all rows', () => {
+describe('G. getMetricsByFieldManager — payment attribution via customer→FM join (T46)', () => {
+  it('Halleluyah paymentCount=3 when 3 payments attributed via customer join', () => {
+    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES, {}, MOCK_CUSTOMERS, MOCK_ZOHO_PAYMENTS);
+    const hallRow = results.find(r => r.fieldManagerId === '7')!;
+    expect(hallRow.paymentCount).toBe(3);
+  });
+
+  it('Halleluyah paymentTotal is sum of 3 attributed payments', () => {
+    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES, {}, MOCK_CUSTOMERS, MOCK_ZOHO_PAYMENTS);
+    const hallRow = results.find(r => r.fieldManagerId === '7')!;
+    expect(hallRow.paymentTotal).toBeCloseTo(50000000 + 40000000 + 32663521.15, 0);
+  });
+
+  it('Bukola paymentCount=2 (she has customers with payments)', () => {
+    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES, {}, MOCK_CUSTOMERS, MOCK_ZOHO_PAYMENTS);
+    const bukolaRow = results.find(r => r.fieldManagerId === '8')!;
+    expect(bukolaRow.paymentCount).toBe(2);
+    expect(bukolaRow.paymentTotal).toBeCloseTo(12000000 + 10037718.75, 0);
+  });
+
+  it('Juwon paymentCount=2', () => {
+    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES, {}, MOCK_CUSTOMERS, MOCK_ZOHO_PAYMENTS);
+    const juwonRow = results.find(r => r.fieldManagerId === '9')!;
+    expect(juwonRow.paymentCount).toBe(2);
+  });
+
+  it('orphan payments (no FM on customer) are not attributed to any FM', () => {
+    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES, {}, MOCK_CUSTOMERS, MOCK_ZOHO_PAYMENTS);
+    const totalAttributed = results.reduce((sum, r) => sum + r.paymentCount, 0);
+    // 9 total payments, 2 orphan payments (ORPHAN-1, ORPHAN-2) not attributed
+    expect(totalAttributed).toBe(7);
+  });
+
+  it('date filter applies to payment attribution', () => {
+    // Only payments in 2024 window
+    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES,
+      { startDate: '2024-01-01', endDate: '2024-12-31' },
+      MOCK_CUSTOMERS, MOCK_ZOHO_PAYMENTS
+    );
+    const hallRow = results.find(r => r.fieldManagerId === '7')!;
+    // Only HALL-1000 payment (2024-07-01) is in window; HALL-1001 (2025-01-15) is not
+    expect(hallRow.paymentCount).toBe(1);
+    expect(hallRow.paymentTotal).toBeCloseTo(50000000, 0);
+  });
+
+  it('without payment data, paymentCount=0 for all rows (backward compat)', () => {
+    // When called without customers/payments (old T45 call signature), defaults to 0
     const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES);
     for (const row of results) {
       expect(row.paymentCount).toBe(0);
-    }
-  });
-
-  it('paymentTotal is 0 for all rows', () => {
-    const results = computeFMMetrics(MOCK_WORKERS, MOCK_INVOICES);
-    for (const row of results) {
       expect(row.paymentTotal).toBe(0);
     }
   });
@@ -567,10 +651,11 @@ describe('I. getMetricsByMAF — NULL maf customers included', () => {
     expect(nullRow).toBeDefined();
   });
 
-  it('null maf row has customerCount=10 (Bukola null-maf customers)', () => {
+  it('null maf row has customerCount=12 (Bukola null-maf customers + 2 orphans)', () => {
+    // 10 Bukola null-maf customers + 2 ORPHAN customers added in T46 = 12
     const results = computeMAFMetrics(MOCK_CUSTOMERS, MOCK_INVOICES);
     const nullRow = results.find(r => r.maf === null)!;
-    expect(nullRow.customerCount).toBe(10);
+    expect(nullRow.customerCount).toBe(12);
   });
 });
 
