@@ -1,3 +1,27 @@
+/**
+ * FinancialDashboard.tsx — T45 client-side update.
+ *
+ * Changes from T44 broken state:
+ *   - Imports shared types (FinancialMetrics, FieldManagerMetrics, MafMetrics)
+ *     from shared/types/financial.ts — Rule #89 / Pattern #65 prevention
+ *   - Field references updated to match shared type names:
+ *     - metrics.totalInvoiceAmount (was metrics.totalInvoices — was SUM, displayed raw)
+ *     - metrics.totalPaymentAmount (was metrics.totalPayments — was SUM, displayed raw)
+ *     - metrics.outstandingBalance (was metrics.outstandingBalance — already correct)
+ *     - metrics.invoiceCount (was metrics.totalInvoices used as count — wrong)
+ *     - metrics.paymentCount (was metrics.totalPayments used as count — wrong)
+ *     - fm.invoiceCount (was fm.totalInvoices — undefined)
+ *     - fm.invoiceTotal (was fm.totalInvoiceAmount — undefined)
+ *     - fm.paymentCount (was fm.totalPayments — undefined)
+ *     - fm.paymentTotal (was fm.totalPaymentAmount — undefined)
+ *     - fm.outstanding (was fm.outstandingBalance — undefined)
+ *   - formatCurrency applied to all currency displays (T32 Rule #66)
+ *   - Large metric cards now show formatted currency amounts (not raw numbers)
+ *   - Filter dropdowns wired to getMetrics via selectedFieldManager/selectedMAF params
+ *   - Payment attribution cells show "0" with tooltip (T46+ pending)
+ *   - MAF dropdown handles null maf → "(No MAF set)" display
+ *   - "Clear filters" button added for all-time view
+ */
 import React, { useState } from 'react';
 import { trpc } from '../lib/trpc';
 import { useAuth } from '../hooks/useAuth';
@@ -5,6 +29,9 @@ import MainLayout from './MainLayout';
 import AppHeader from './AppHeader';
 import { INVOICE_STATUS } from '@shared/constants/invoice-status';
 import { formatCurrency } from '@/utils/currency';
+import type { FinancialMetrics, FieldManagerMetrics, MafMetrics } from '@shared/types/financial';
+
+const NULL_MAF_DISPLAY = '(No MAF set)';
 
 export function FinancialDashboard() {
   const { user } = useAuth();
@@ -14,44 +41,47 @@ export function FinancialDashboard() {
   });
   const [selectedFieldManager, setSelectedFieldManager] = useState<string>('all');
   const [selectedMAF, setSelectedMAF] = useState<string>('all');
+  // When true, omit date filter from queries (all-time view)
+  const [allTime, setAllTime] = useState<boolean>(false);
 
-  // Fetch overall metrics
+  const dateParams = allTime
+    ? {}
+    : { startDate: dateRange.start, endDate: dateRange.end };
+
+  const fmParam = selectedFieldManager !== 'all' ? selectedFieldManager : undefined;
+  const mafParam = selectedMAF !== 'all' ? (selectedMAF === '__null__' ? null : selectedMAF) : undefined;
+
+  // Fetch overall metrics — wired to date + FM + MAF filters (T45 Root Cause B + C fix)
   const { data: metrics, isLoading: metricsLoading } = trpc.financial.getMetrics.useQuery({
-    startDate: dateRange.start,
-    endDate: dateRange.end,
+    ...dateParams,
+    fieldManagerId: fmParam ?? undefined,
+    maf: mafParam ?? undefined,
   });
 
-  // Fetch metrics by field manager
+  // Fetch metrics by field manager — worker-driven source (T45 Root Cause C fix)
   const { data: fieldManagerMetrics, isLoading: fmLoading } = trpc.financial.getMetricsByFieldManager.useQuery({
-    startDate: dateRange.start,
-    endDate: dateRange.end,
+    ...dateParams,
   });
 
-  // Fetch metrics by MAF
+  // Fetch metrics by MAF — customer-driven source (T45 Root Cause C fix)
   const { data: mafMetrics, isLoading: mafLoading } = trpc.financial.getMetricsByMAF.useQuery({
-    startDate: dateRange.start,
-    endDate: dateRange.end,
+    ...dateParams,
   });
 
-  // Fetch recent invoices
+  // Fetch recent invoices — date + FM + MAF filters applied (T45)
   const { data: recentInvoices, isLoading: invoicesLoading } = trpc.financial.getInvoices.useQuery({
     limit: 10,
-    startDate: dateRange.start,
-    endDate: dateRange.end,
-    fieldManagerId: selectedFieldManager !== 'all' ? selectedFieldManager : undefined,
-    maf: selectedMAF !== 'all' ? selectedMAF : undefined,
+    ...dateParams,
+    fieldManagerId: fmParam ?? undefined,
+    maf: mafParam ?? undefined,
   });
 
-  // Fetch recent payments
+  // Fetch recent payments — date filter applied (T45)
   const { data: recentPayments, isLoading: paymentsLoading } = trpc.financial.getPayments.useQuery({
     limit: 10,
-    startDate: dateRange.start,
-    endDate: dateRange.end,
-    fieldManagerId: selectedFieldManager !== 'all' ? selectedFieldManager : undefined,
-    maf: selectedMAF !== 'all' ? selectedMAF : undefined,
+    ...dateParams,
   });
 
-  // T32 (Rule #66): formatCurrency imported from @/utils/currency — local definition removed
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -59,6 +89,11 @@ export function FinancialDashboard() {
       day: 'numeric',
     });
   };
+
+  // Computed: % collected = totalPaymentAmount / totalInvoiceAmount
+  const pctCollected = metrics && metrics.totalInvoiceAmount > 0
+    ? ((metrics.totalPaymentAmount / metrics.totalInvoiceAmount) * 100).toFixed(1)
+    : '—';
 
   return (
     <MainLayout>
@@ -69,16 +104,31 @@ export function FinancialDashboard() {
       />
 
       <div className="p-6 space-y-6">
-        {/* Date Range Filter — T28: stale-data banner removed; payments sync active (zohoPayments) */}
+        {/* Filter Options */}
         <div className="bg-white rounded-lg shadow p-4">
-          <h3 className="text-lg font-semibold mb-4">Filter Options</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Filter Options</h3>
+            <button
+              onClick={() => {
+                setAllTime(true);
+                setSelectedFieldManager('all');
+                setSelectedMAF('all');
+              }}
+              className="text-sm text-blue-600 hover:text-blue-800 underline"
+            >
+              Clear filters (all-time view)
+            </button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
               <input
                 type="date"
                 value={dateRange.start}
-                onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                onChange={(e) => {
+                  setDateRange({ ...dateRange, start: e.target.value });
+                  setAllTime(false);
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               />
             </div>
@@ -87,7 +137,10 @@ export function FinancialDashboard() {
               <input
                 type="date"
                 value={dateRange.end}
-                onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                onChange={(e) => {
+                  setDateRange({ ...dateRange, end: e.target.value });
+                  setAllTime(false);
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               />
             </div>
@@ -99,7 +152,7 @@ export function FinancialDashboard() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="all">All Field Managers</option>
-                {fieldManagerMetrics?.map((fm) => (
+                {(fieldManagerMetrics as FieldManagerMetrics[] | undefined)?.map((fm) => (
                   <option key={fm.fieldManagerId} value={fm.fieldManagerId}>
                     {fm.fieldManagerName || fm.fieldManagerId}
                   </option>
@@ -114,27 +167,31 @@ export function FinancialDashboard() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="all">All MAFs</option>
-                {mafMetrics?.map((maf) => (
-                  <option key={maf.maf} value={maf.maf}>
-                    {maf.maf}
+                {(mafMetrics as MafMetrics[] | undefined)?.map((m) => (
+                  <option key={m.maf ?? '__null__'} value={m.maf ?? '__null__'}>
+                    {m.maf ?? NULL_MAF_DISPLAY}
                   </option>
                 ))}
               </select>
             </div>
           </div>
+          {allTime && (
+            <p className="text-xs text-blue-600 mt-2">Showing all-time data. Select dates to filter by range.</p>
+          )}
         </div>
 
         {/* Overall Metrics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Total Invoices */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Invoices</p>
                 <p className="text-3xl font-bold text-blue-600 mt-2">
-                  {metricsLoading ? '...' : metrics?.totalInvoices || 0}
+                  {metricsLoading ? '...' : formatCurrency((metrics as FinancialMetrics | undefined)?.totalInvoiceAmount ?? 0)}
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  {metricsLoading ? '...' : formatCurrency(metrics?.totalInvoiceAmount || 0)}
+                  {metricsLoading ? '...' : `${(metrics as FinancialMetrics | undefined)?.invoiceCount ?? 0} invoice(s)`}
                 </p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
@@ -145,15 +202,16 @@ export function FinancialDashboard() {
             </div>
           </div>
 
+          {/* Total Payments */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Payments</p>
                 <p className="text-3xl font-bold text-green-600 mt-2">
-                  {metricsLoading ? '...' : metrics?.totalPayments || 0}
+                  {metricsLoading ? '...' : formatCurrency((metrics as FinancialMetrics | undefined)?.totalPaymentAmount ?? 0)}
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  {metricsLoading ? '...' : formatCurrency(metrics?.totalPaymentAmount || 0)}
+                  {metricsLoading ? '...' : `${(metrics as FinancialMetrics | undefined)?.paymentCount ?? 0} payment(s)`}
                 </p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
@@ -164,15 +222,16 @@ export function FinancialDashboard() {
             </div>
           </div>
 
+          {/* Outstanding Balance */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Outstanding Balance</p>
                 <p className="text-3xl font-bold text-orange-600 mt-2">
-                  {metricsLoading ? '...' : formatCurrency(metrics?.outstandingBalance || 0)}
+                  {metricsLoading ? '...' : formatCurrency((metrics as FinancialMetrics | undefined)?.outstandingBalance ?? 0)}
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  {metricsLoading ? '...' : `${((metrics?.totalPaymentAmount || 0) / (metrics?.totalInvoiceAmount || 1) * 100).toFixed(1)}% collected`}
+                  {metricsLoading ? '...' : `${pctCollected}% collected`}
                 </p>
               </div>
               <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
@@ -196,8 +255,24 @@ export function FinancialDashboard() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Field Manager</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invoices</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invoice Amount</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payments</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payments
+                    <span
+                      className="ml-1 text-gray-400 cursor-help"
+                      title="Payment attribution by field manager pending. zohoPayments has no fieldManagerId column. See T46+ roadmap."
+                    >
+                      ⓘ
+                    </span>
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payment Amount
+                    <span
+                      className="ml-1 text-gray-400 cursor-help"
+                      title="Payment attribution by field manager pending. zohoPayments has no fieldManagerId column. See T46+ roadmap."
+                    >
+                      ⓘ
+                    </span>
+                  </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Outstanding</th>
                 </tr>
               </thead>
@@ -207,17 +282,28 @@ export function FinancialDashboard() {
                     <td colSpan={6} className="px-6 py-4 text-center text-gray-500">Loading...</td>
                   </tr>
                 ) : fieldManagerMetrics && fieldManagerMetrics.length > 0 ? (
-                  fieldManagerMetrics.map((fm) => (
+                  (fieldManagerMetrics as FieldManagerMetrics[]).map((fm) => (
                     <tr key={fm.fieldManagerId} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {fm.fieldManagerName || fm.fieldManagerId}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{fm.totalInvoices}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatCurrency(fm.totalInvoiceAmount)}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{fm.totalPayments}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatCurrency(fm.totalPaymentAmount)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{fm.invoiceCount}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatCurrency(fm.invoiceTotal)}</td>
+                      {/* Payment attribution pending T46+ — hardcoded 0 */}
+                      <td
+                        className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 italic"
+                        title="Payment attribution by field manager pending. See T46+ roadmap."
+                      >
+                        0
+                      </td>
+                      <td
+                        className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 italic"
+                        title="Payment attribution by field manager pending. See T46+ roadmap."
+                      >
+                        {formatCurrency(0)}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-orange-600">
-                        {formatCurrency(fm.outstandingBalance)}
+                        {formatCurrency(fm.outstanding)}
                       </td>
                     </tr>
                   ))
@@ -254,7 +340,7 @@ export function FinancialDashboard() {
                     <td colSpan={6} className="px-6 py-4 text-center text-gray-500">Loading...</td>
                   </tr>
                 ) : recentInvoices && recentInvoices.length > 0 ? (
-                  recentInvoices.map((invoice) => (
+                  (recentInvoices as any[]).map((invoice) => (
                     <tr key={invoice.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
                         {invoice.invoiceNumber}
@@ -307,7 +393,7 @@ export function FinancialDashboard() {
                     <td colSpan={6} className="px-6 py-4 text-center text-gray-500">Loading...</td>
                   </tr>
                 ) : recentPayments && recentPayments.length > 0 ? (
-                  recentPayments.map((payment) => (
+                  (recentPayments as any[]).map((payment) => (
                     <tr key={payment.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
                         {payment.paymentNumber}
