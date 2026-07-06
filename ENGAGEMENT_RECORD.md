@@ -4614,6 +4614,7 @@ This is a security improvement, not a regression.
 ### T43 carry-forward
 | Priority | Item |
 |----------|------|
+| MEDIUM | Mobile app rate limiter (workerAuth.ts) — T42 delivered DB-backed rate limiting for adminAuth.ts (web app). Mobile app worker auth (workerAuth.ts, per T35 investigation) has NO rate limiting. Same class of vulnerability T34 closed for web app remains open for mobile. Apply same DB-backed pattern from T42. |
 | MEDIUM | Field manager identity migration (Variant C, Rule #82) |
 | LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
 | LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
