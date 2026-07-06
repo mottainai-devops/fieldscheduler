@@ -24,39 +24,59 @@ import * as complianceDb from "../complianceDb";
 import * as zoho from "../services/zoho";
 import { SKIP_REASONS } from '../../shared/const';
 import { verifyPinBcrypt } from '../utils/pinHashing';
+import { isLockedOut, recordFailedAttempt, clearAttempts } from '../utils/rateLimiter';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
+  // T43: DB-backed rate limiter (Rule #86) + T35 bcrypt gap fix (Rule #76)
   login: publicProcedure
     .input(z.object({
       email: z.string().email(),
       password: z.string(), // This is actually the PIN for field workers
     }))
     .mutation(async ({ input }) => {
-      try {
-        const worker = await fieldWorkerDb.getWorkerByEmail(input.email);
-        if (!worker) {
-          throw new Error("Worker not found");
-        }
-        
-        // Use PIN for authentication (password field is PIN for field workers)
-        if (!worker.pin || worker.pin !== input.password) {
-          throw new Error("Invalid PIN");
-        }
-        
-        return {
-          success: true,
-          worker: {
-            id: worker.id,
-            name: worker.name,
-            email: worker.email,
-            role: (worker as any).role ?? "field_manager",
-            preferredWebhookType: (worker as any).preferredWebhookType ?? null,
-          },
-        };
-      } catch (error) {
-        throw new Error(error instanceof Error ? error.message : "Login failed");
+      // T43 Step 1: Rate limiter pre-check (DB-backed, rolling 15-min window)
+      const locked = await isLockedOut(input.email);
+      if (locked) {
+        throw new Error('Too many failed login attempts. Please try again later.');
       }
+
+      const worker = await fieldWorkerDb.getWorkerByEmail(input.email);
+      if (!worker) {
+        // Record failure even for unknown emails (prevents timing-based email enumeration)
+        await recordFailedAttempt(input.email);
+        throw new Error('Invalid password');
+      }
+
+      // T43 / T35 gap fix: bcrypt comparison replaces plaintext comparison
+      // Fail-closed: verifyPinBcrypt returns false for null/non-hash stored values.
+      if (!worker.pin) {
+        await recordFailedAttempt(input.email);
+        throw new Error('Invalid password');
+      }
+
+      const pinValid = await verifyPinBcrypt(input.password, worker.pin);
+      if (!pinValid) {
+        const attempts = await recordFailedAttempt(input.email);
+        if (attempts >= 5) {
+          throw new Error('Too many failed login attempts. Please try again later.');
+        }
+        throw new Error('Invalid password');
+      }
+
+      // Success: clear rate limiter state
+      await clearAttempts(input.email);
+
+      return {
+        success: true,
+        worker: {
+          id: worker.id,
+          name: worker.name,
+          email: worker.email,
+          role: (worker as any).role ?? 'field_manager',
+          preferredWebhookType: (worker as any).preferredWebhookType ?? null,
+        },
+      };
     }),
 
   // Get worker by ID
