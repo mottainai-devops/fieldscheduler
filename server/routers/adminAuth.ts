@@ -98,19 +98,27 @@ export async function verifyPin(input: string, stored: string): Promise<boolean>
   return bcrypt.compare(input, stored);
 }
 
-// ─── T39: Superadmin email set (Rule #69 closure) ────────────────────────────
+// ─── T39/T41: Users-table email set (Rule #69 + Rule #82 closure) ───────────
 //
-// Superadmin identities authenticate via the users table (T14 canonical
-// architecture). These emails are checked first in adminAuth.login; matching
-// emails are routed to the users-table path (users.pin). All other emails
-// continue through the workers-table path (unchanged).
+// Identities in this set authenticate via the users table (T14 canonical
+// architecture). Role is resolved from users.role — NOT hardcoded — so
+// superadmins get 'superadmin' and admins get 'admin' automatically.
 //
-// To add a new superadmin: add their email here AND ensure their users row has
-// a non-null pin (copy from workers.pin or set directly via hashPin()).
+// Superadmin tier (T39 — 2 identities):
+//   adeyadewuyi@gmail.com, info@mottainai.africa
 //
-export const SUPERADMIN_EMAILS = new Set([
+// Admin tier (T41 — 2 identities):
+//   wale@fieldscheduler.net, alabakelani@gmail.com
+//
+// To add a new identity: add their email here AND ensure users.pin is
+// populated (copy from workers.pin or set directly via hashPin()).
+// Role is read from users.role — update that column if needed.
+//
+export const USERS_TABLE_EMAILS = new Set([
   'adeyadewuyi@gmail.com',
   'info@mottainai.africa',
+  'wale@fieldscheduler.net',
+  'alabakelani@gmail.com',
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,16 +140,19 @@ export const adminAuthRouter = router({
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // T39: Superadmin path — users table (T14 canonical architecture)
+        // T39/T41: Users-table path (Rule #69 + Rule #82 closure)
         //
-        // Superadmin identities in SUPERADMIN_EMAILS authenticate via
-        // users.pin. This closes Rule #69: superadmin auth now reads from
-        // the users table as documented in T14 architecture.
+        // Identities in USERS_TABLE_EMAILS authenticate via users.pin.
+        // Role is resolved from users.role (NOT hardcoded) so superadmins
+        // get 'superadmin' and admins get 'admin' automatically.
+        //
+        // T39 delivered superadmin tier (2 identities).
+        // T41 delivers admin tier (2 identities: Wale, Alaba).
         //
         // Error messages deliberately mirror the workers path ("Worker not
         // found", "Invalid password") to prevent email enumeration.
         // ─────────────────────────────────────────────────────────────────
-        if (SUPERADMIN_EMAILS.has(input.email)) {
+        if (USERS_TABLE_EMAILS.has(input.email)) {
           const superUser = await db.getUserByEmail(input.email);
 
           if (!superUser) {
@@ -175,16 +186,19 @@ export const adminAuthRouter = router({
           // via workers path; format: 'worker-{id}-{email}').
           const openId = superUser.openId;
 
+          // Resolve role from users table — supports both superadmin and admin tiers
+          const usersTableRole = superUser.role as 'superadmin' | 'admin';
+
           await db.upsertUser({
             openId,
             name: superUser.name || null,
             email: superUser.email || null,
             loginMethod: 'email',
-            role: 'superadmin',
+            role: usersTableRole,
             fieldManagerId: null,
           });
 
-          console.log('[AdminAuth] Superadmin login (users path):', openId);
+          console.log('[AdminAuth] Users-table login (role:', usersTableRole, '):', openId);
 
           const sessionToken = await sdk.createSessionToken(openId, {
             name: superUser.name || 'Admin',
@@ -197,7 +211,7 @@ export const adminAuthRouter = router({
 
           return {
             success: true,
-            role: 'superadmin' as const,
+            role: usersTableRole,
             worker: {
               id: superUser.id,
               name: superUser.name,
@@ -257,9 +271,10 @@ export const adminAuthRouter = router({
         //
         // ADMIN_WORKER_IDS: Wale Onibudo (id=10), Alaba (id=27) — T15 Item 3 (2026-06-27)
         //
-        // @deprecated SUPERADMIN_WORKER_IDS: superseded by SUPERADMIN_EMAILS (T39).
-        // Superadmin emails now route through the users-table path above and never
-        // reach this code. Retained for audit trail; remove in T40+ cleanup.
+        // @deprecated SUPERADMIN_WORKER_IDS: superseded by USERS_TABLE_EMAILS (T41
+        // rename of SUPERADMIN_EMAILS from T39). Superadmin emails now route through
+        // the users-table path above and never reach this code.
+        // Retained for audit trail; remove in T42+ cleanup.
         // ─────────────────────────────────────────────────────────────────
 
         // T14 Item 2 (Condition 1c): Reject supervisor logins at the web app.
@@ -273,9 +288,14 @@ export const adminAuthRouter = router({
           );
         }
 
-        /** @deprecated T39: superseded by SUPERADMIN_EMAILS. Superadmin emails no longer
-         *  reach this code path. Retained for audit; remove in T40+ cleanup. */
+        /** @deprecated T41: superseded by USERS_TABLE_EMAILS (T41 rename of SUPERADMIN_EMAILS
+         *  from T39). workers.id=1 and workers.id=2 no longer read for role resolution.
+         *  Retained for audit; remove in T42+ cleanup. */
         const SUPERADMIN_WORKER_IDS = new Set([1, 2]);
+
+        /** @deprecated T41: Wale (id=10) and Alaba (id=27) now route through the users-table
+         *  path via USERS_TABLE_EMAILS. This constant is dead code for their identities.
+         *  Retained for audit; remove in T42+ cleanup. */
         const ADMIN_WORKER_IDS = new Set<number>([10, 27]); // Wale Onibudo (10), Alaba (27)
 
         const usersRole: 'superadmin' | 'admin' | 'field_manager' | 'user' =

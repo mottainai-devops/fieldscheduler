@@ -7176,9 +7176,11 @@ function clearAttempts(email) {
 async function verifyPin(input, stored) {
   return bcrypt2.compare(input, stored);
 }
-var SUPERADMIN_EMAILS = /* @__PURE__ */ new Set([
+var USERS_TABLE_EMAILS = /* @__PURE__ */ new Set([
   "adeyadewuyi@gmail.com",
-  "info@mottainai.africa"
+  "info@mottainai.africa",
+  "wale@fieldscheduler.net",
+  "alabakelani@gmail.com"
 ]);
 var adminAuthRouter = router({
   // Login with email and password
@@ -7191,7 +7193,7 @@ var adminAuthRouter = router({
       if (isLockedOut(input.email)) {
         throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
       }
-      if (SUPERADMIN_EMAILS.has(input.email)) {
+      if (USERS_TABLE_EMAILS.has(input.email)) {
         const superUser = await getUserByEmail(input.email);
         if (!superUser) {
           recordFailedAttempt(input.email);
@@ -7215,15 +7217,16 @@ var adminAuthRouter = router({
         }
         clearAttempts(input.email);
         const openId2 = superUser.openId;
+        const usersTableRole = superUser.role;
         await upsertUser({
           openId: openId2,
           name: superUser.name || null,
           email: superUser.email || null,
           loginMethod: "email",
-          role: "superadmin",
+          role: usersTableRole,
           fieldManagerId: null
         });
-        console.log("[AdminAuth] Superadmin login (users path):", openId2);
+        console.log("[AdminAuth] Users-table login (role:", usersTableRole, "):", openId2);
         const sessionToken2 = await sdk.createSessionToken(openId2, {
           name: superUser.name || "Admin"
         });
@@ -7232,7 +7235,7 @@ var adminAuthRouter = router({
         console.log("[AdminAuth] Session cookie set for superadmin:", openId2);
         return {
           success: true,
-          role: "superadmin",
+          role: usersTableRole,
           worker: {
             id: superUser.id,
             name: superUser.name,
