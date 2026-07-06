@@ -668,3 +668,16 @@ export const handoffRequests = mysqlTable("handoffRequests", {
 });
 export type HandoffRequest = typeof handoffRequests.$inferSelect;
 export type InsertHandoffRequest = typeof handoffRequests.$inferInsert;
+
+// ─── Login Attempts (T42 — DB-backed rate limiter, Rule #70 closure) ──────────
+// Each failed login attempt inserts a row. isLockedOut counts rows WHERE
+// attemptedAt > DATE_SUB(NOW(), INTERVAL 15 MINUTE). clearAttempts deletes all
+// rows for the email on successful login. Old rows are pruned on each write to
+// prevent unbounded table growth.
+export const loginAttempts = mysqlTable("loginAttempts", {
+  id:          int("id").autoincrement().primaryKey(),
+  email:       varchar("email", { length: 320 }).notNull(),
+  attemptedAt: timestamp("attemptedAt").defaultNow().notNull(),
+});
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
+export type InsertLoginAttempt = typeof loginAttempts.$inferInsert;

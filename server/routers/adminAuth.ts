@@ -6,75 +6,13 @@ import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { COOKIE_NAME } from "@shared/const";
 import bcrypt from "bcryptjs";
+import { isLockedOut, recordFailedAttempt, clearAttempts, MAX_ATTEMPTS } from "../utils/rateLimiter";
 
-// ─── In-memory rate limiter (T34 Part 2) ─────────────────────────────────────
+// ─── DB-backed rate limiter (T42 — Rule #70 closure) ────────────────────────
 //
-// Tracks failed login attempts per email address. After MAX_ATTEMPTS consecutive
-// failures within WINDOW_MS, the account is locked for LOCKOUT_MS.
-//
-// This is a process-local store — it resets on PM2 restart. For a multi-instance
-// deployment, move this to Redis or a DB-backed table (Rule #70 carry-forward).
-//
-const MAX_ATTEMPTS = 5;
-const WINDOW_MS = 15 * 60 * 1000;   // 15 minutes
-const LOCKOUT_MS = 15 * 60 * 1000;  // 15 minutes
-
-interface AttemptRecord {
-  count: number;
-  windowStart: number;
-  lockedUntil: number | null;
-}
-
-const loginAttempts = new Map<string, AttemptRecord>();
-
-/**
- * Returns true if the email is currently locked out.
- * Clears the window if it has expired.
- */
-function isLockedOut(email: string): boolean {
-  const record = loginAttempts.get(email);
-  if (!record) return false;
-
-  const now = Date.now();
-
-  // If lockout has expired, clear the record
-  if (record.lockedUntil !== null && now >= record.lockedUntil) {
-    loginAttempts.delete(email);
-    return false;
-  }
-
-  return record.lockedUntil !== null && now < record.lockedUntil;
-}
-
-/**
- * Records a failed login attempt. Returns the updated attempt count.
- * If count reaches MAX_ATTEMPTS, sets lockedUntil.
- */
-function recordFailedAttempt(email: string): number {
-  const now = Date.now();
-  let record = loginAttempts.get(email);
-
-  if (!record || now - record.windowStart >= WINDOW_MS) {
-    // Start a fresh window
-    record = { count: 1, windowStart: now, lockedUntil: null };
-  } else {
-    record.count += 1;
-  }
-
-  if (record.count >= MAX_ATTEMPTS) {
-    record.lockedUntil = now + LOCKOUT_MS;
-  }
-
-  loginAttempts.set(email, record);
-  return record.count;
-}
-
-/**
- * Clears the attempt record on successful login.
- */
-function clearAttempts(email: string): void {
-  loginAttempts.delete(email);
-}
+// isLockedOut / recordFailedAttempt / clearAttempts and MAX_ATTEMPTS are
+// imported from server/utils/rateLimiter.ts. State persists across PM2 restarts.
+// Rolling 15-minute window — stricter than the pre-T42 fixed-window-with-reset.
 
 // ─── bcrypt helpers (T35 Item #2 — migration window closed) ─────────────────
 //
@@ -134,8 +72,8 @@ export const adminAuthRouter = router({
       try {
         console.log('[AdminAuth] Login attempt:', input.email);
 
-        // Rate limiting check (T34 Part 2)
-        if (isLockedOut(input.email)) {
+        // Rate limiting check (T42: DB-backed, persists across PM2 restarts)
+        if (await isLockedOut(input.email)) {
           throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
         }
 
@@ -156,12 +94,12 @@ export const adminAuthRouter = router({
           const superUser = await db.getUserByEmail(input.email);
 
           if (!superUser) {
-            recordFailedAttempt(input.email);
+            await recordFailedAttempt(input.email);
             throw new Error("Worker not found");
           }
 
           if (!input.password) {
-            recordFailedAttempt(input.email);
+            await recordFailedAttempt(input.email);
             throw new Error("Password required");
           }
 
@@ -171,7 +109,7 @@ export const adminAuthRouter = router({
 
           const pinValid = await verifyPin(input.password, superUser.pin);
           if (!pinValid) {
-            const attempts = recordFailedAttempt(input.email);
+            const attempts = await recordFailedAttempt(input.email);
             const remaining = MAX_ATTEMPTS - attempts;
             if (remaining <= 0) {
               throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
@@ -179,8 +117,8 @@ export const adminAuthRouter = router({
             throw new Error("Invalid password");
           }
 
-          // Successful superadmin login — clear attempt counter
-          clearAttempts(input.email);
+          // Successful login — clear attempt counter
+          await clearAttempts(input.email);
 
           // Use the existing openId from the users row (set during first login
           // via workers path; format: 'worker-{id}-{email}').
@@ -230,13 +168,13 @@ export const adminAuthRouter = router({
         if (!worker) {
           // Record failed attempt even for unknown emails (prevents email enumeration
           // via timing differences — both paths now go through the same code path)
-          recordFailedAttempt(input.email);
+          await recordFailedAttempt(input.email);
           throw new Error("Worker not found");
         }
         
         // PIN verification — bcrypt comparison (T34 Part 2)
         if (!input.password) {
-          recordFailedAttempt(input.email);
+          await recordFailedAttempt(input.email);
           throw new Error("Password required");
         }
         if (worker.pin === null || worker.pin === undefined) {
@@ -245,7 +183,7 @@ export const adminAuthRouter = router({
 
         const pinValid = await verifyPin(input.password, worker.pin);
         if (!pinValid) {
-          const attempts = recordFailedAttempt(input.email);
+          const attempts = await recordFailedAttempt(input.email);
           const remaining = MAX_ATTEMPTS - attempts;
           if (remaining <= 0) {
             throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
@@ -254,7 +192,7 @@ export const adminAuthRouter = router({
         }
 
         // Successful login — clear attempt counter
-        clearAttempts(input.email);
+        await clearAttempts(input.email);
         
         // Create a user record in the users table if it doesn't exist.
         // Use the worker's email as the openId for session purposes.

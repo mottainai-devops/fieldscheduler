@@ -25,6 +25,7 @@ __export(schema_exports, {
   handoffRequests: () => handoffRequests,
   invoiceItems: () => invoiceItems,
   invoices: () => invoices,
+  loginAttempts: () => loginAttempts,
   notifications: () => notifications,
   paymentEvidence: () => paymentEvidence,
   routeCustomers: () => routeCustomers,
@@ -47,7 +48,7 @@ __export(schema_exports, {
   zohoTokens: () => zohoTokens
 });
 import { date, decimal, int, mysqlEnum, mysqlTable, text, timestamp, tinyint, unique, varchar } from "drizzle-orm/mysql-core";
-var users, adminUsers, workers, vehicles, customers, fieldManagerTags, tagBasedRoutes, routes, routeCustomers, workerLocations, violationTypes, complianceViolations, abatementNotices, paymentEvidence, customerPaymentStatus, buildingIdLinkageRequests, customerBuildingIdRelations, notifications, workerNotifications, zohoTokens, filterPresets, zohoSyncHistory, zohoSyncJobs, zohoInvoices, zohoPayments, invoices, invoiceItems, customerVisitNotes, routeSchedules, routeInstances, routeScheduleCustomers, routeInstanceCustomerOverrides, calendarAuditLog, handoffRequests;
+var users, adminUsers, workers, vehicles, customers, fieldManagerTags, tagBasedRoutes, routes, routeCustomers, workerLocations, violationTypes, complianceViolations, abatementNotices, paymentEvidence, customerPaymentStatus, buildingIdLinkageRequests, customerBuildingIdRelations, notifications, workerNotifications, zohoTokens, filterPresets, zohoSyncHistory, zohoSyncJobs, zohoInvoices, zohoPayments, invoices, invoiceItems, customerVisitNotes, routeSchedules, routeInstances, routeScheduleCustomers, routeInstanceCustomerOverrides, calendarAuditLog, handoffRequests, loginAttempts;
 var init_schema = __esm({
   "drizzle/schema.ts"() {
     users = mysqlTable("users", {
@@ -596,6 +597,11 @@ var init_schema = __esm({
       status: mysqlEnum("status", ["pending", "accepted", "declined"]).default("pending").notNull(),
       createdAt: timestamp("createdAt").defaultNow().notNull(),
       updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+    });
+    loginAttempts = mysqlTable("loginAttempts", {
+      id: int("id").autoincrement().primaryKey(),
+      email: varchar("email", { length: 320 }).notNull(),
+      attemptedAt: timestamp("attemptedAt").defaultNow().notNull()
     });
   }
 });
@@ -7142,37 +7148,52 @@ init_fieldWorkerDb();
 init_db();
 import { z as z9 } from "zod";
 import bcrypt2 from "bcryptjs";
+
+// server/utils/rateLimiter.ts
+init_db();
+import { sql as sql4 } from "drizzle-orm";
 var MAX_ATTEMPTS = 5;
-var WINDOW_MS = 15 * 60 * 1e3;
-var LOCKOUT_MS = 15 * 60 * 1e3;
-var loginAttempts = /* @__PURE__ */ new Map();
-function isLockedOut(email) {
-  const record = loginAttempts.get(email);
-  if (!record) return false;
-  const now = Date.now();
-  if (record.lockedUntil !== null && now >= record.lockedUntil) {
-    loginAttempts.delete(email);
-    return false;
-  }
-  return record.lockedUntil !== null && now < record.lockedUntil;
+var WINDOW_MINUTES = 15;
+async function isLockedOut(email) {
+  const db = await getDb();
+  if (!db) return false;
+  const [rows] = await db.execute(sql4`
+    SELECT COUNT(*) AS cnt
+    FROM loginAttempts
+    WHERE email = ${email}
+      AND attemptedAt > DATE_SUB(NOW(), INTERVAL ${WINDOW_MINUTES} MINUTE)
+  `);
+  const count = rows[0]?.cnt ?? 0;
+  return Number(count) >= MAX_ATTEMPTS;
 }
-function recordFailedAttempt(email) {
-  const now = Date.now();
-  let record = loginAttempts.get(email);
-  if (!record || now - record.windowStart >= WINDOW_MS) {
-    record = { count: 1, windowStart: now, lockedUntil: null };
-  } else {
-    record.count += 1;
-  }
-  if (record.count >= MAX_ATTEMPTS) {
-    record.lockedUntil = now + LOCKOUT_MS;
-  }
-  loginAttempts.set(email, record);
-  return record.count;
+async function recordFailedAttempt(email) {
+  const db = await getDb();
+  if (!db) return 0;
+  await db.execute(sql4`
+    DELETE FROM loginAttempts
+    WHERE email = ${email}
+      AND attemptedAt <= DATE_SUB(NOW(), INTERVAL ${WINDOW_MINUTES} MINUTE)
+  `);
+  await db.execute(sql4`
+    INSERT INTO loginAttempts (email) VALUES (${email})
+  `);
+  const [rows] = await db.execute(sql4`
+    SELECT COUNT(*) AS cnt
+    FROM loginAttempts
+    WHERE email = ${email}
+      AND attemptedAt > DATE_SUB(NOW(), INTERVAL ${WINDOW_MINUTES} MINUTE)
+  `);
+  return Number(rows[0]?.cnt ?? 1);
 }
-function clearAttempts(email) {
-  loginAttempts.delete(email);
+async function clearAttempts(email) {
+  const db = await getDb();
+  if (!db) return;
+  await db.execute(sql4`
+    DELETE FROM loginAttempts WHERE email = ${email}
+  `);
 }
+
+// server/routers/adminAuth.ts
 async function verifyPin(input, stored) {
   return bcrypt2.compare(input, stored);
 }
@@ -7190,17 +7211,17 @@ var adminAuthRouter = router({
   })).mutation(async ({ input, ctx }) => {
     try {
       console.log("[AdminAuth] Login attempt:", input.email);
-      if (isLockedOut(input.email)) {
+      if (await isLockedOut(input.email)) {
         throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
       }
       if (USERS_TABLE_EMAILS.has(input.email)) {
         const superUser = await getUserByEmail(input.email);
         if (!superUser) {
-          recordFailedAttempt(input.email);
+          await recordFailedAttempt(input.email);
           throw new Error("Worker not found");
         }
         if (!input.password) {
-          recordFailedAttempt(input.email);
+          await recordFailedAttempt(input.email);
           throw new Error("Password required");
         }
         if (superUser.pin === null || superUser.pin === void 0) {
@@ -7208,14 +7229,14 @@ var adminAuthRouter = router({
         }
         const pinValid2 = await verifyPin(input.password, superUser.pin);
         if (!pinValid2) {
-          const attempts = recordFailedAttempt(input.email);
+          const attempts = await recordFailedAttempt(input.email);
           const remaining = MAX_ATTEMPTS - attempts;
           if (remaining <= 0) {
             throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
           }
           throw new Error("Invalid password");
         }
-        clearAttempts(input.email);
+        await clearAttempts(input.email);
         const openId2 = superUser.openId;
         const usersTableRole = superUser.role;
         await upsertUser({
@@ -7246,11 +7267,11 @@ var adminAuthRouter = router({
       const worker = await getWorkerByEmail(input.email);
       console.log("[AdminAuth] Worker found:", worker?.email || "NOT FOUND");
       if (!worker) {
-        recordFailedAttempt(input.email);
+        await recordFailedAttempt(input.email);
         throw new Error("Worker not found");
       }
       if (!input.password) {
-        recordFailedAttempt(input.email);
+        await recordFailedAttempt(input.email);
         throw new Error("Password required");
       }
       if (worker.pin === null || worker.pin === void 0) {
@@ -7258,14 +7279,14 @@ var adminAuthRouter = router({
       }
       const pinValid = await verifyPin(input.password, worker.pin);
       if (!pinValid) {
-        const attempts = recordFailedAttempt(input.email);
+        const attempts = await recordFailedAttempt(input.email);
         const remaining = MAX_ATTEMPTS - attempts;
         if (remaining <= 0) {
           throw new Error("Too many failed login attempts. Please try again in 15 minutes.");
         }
         throw new Error("Invalid password");
       }
-      clearAttempts(input.email);
+      await clearAttempts(input.email);
       const openId = `worker-${worker.id}-${worker.email}`;
       if (worker.role === "supervisor") {
         throw new Error(
@@ -8009,7 +8030,7 @@ init_db();
 init_schema();
 import { TRPCError as TRPCError4 } from "@trpc/server";
 import { z as z14 } from "zod";
-import { sql as sql4 } from "drizzle-orm";
+import { sql as sql5 } from "drizzle-orm";
 import { eq as eq12, and as and7, inArray as inArray2 } from "drizzle-orm";
 
 // shared/constants/maf.ts
@@ -8051,19 +8072,19 @@ var fieldManagerRouter = router({
         completionRate: { picked: 0, total: 0, percentage: null }
       };
     }
-    const customerCountResult = await db.select({ count: sql4`COUNT(*)` }).from(customers).where(eq12(customers.fieldManager, fmId));
+    const customerCountResult = await db.select({ count: sql5`COUNT(*)` }).from(customers).where(eq12(customers.fieldManager, fmId));
     const customerCount = Number(customerCountResult[0]?.count ?? 0);
-    const pendingRouteResult = await db.select({ count: sql4`COUNT(*)` }).from(routes).where(and7(
+    const pendingRouteResult = await db.select({ count: sql5`COUNT(*)` }).from(routes).where(and7(
       eq12(routes.workerId, fmId),
       eq12(routes.status, "pending_assignment")
     ));
     const pendingRouteCount = Number(pendingRouteResult[0]?.count ?? 0);
-    const unroutedResult = await db.select({ count: sql4`COUNT(*)` }).from(customers).where(and7(
+    const unroutedResult = await db.select({ count: sql5`COUNT(*)` }).from(customers).where(and7(
       eq12(customers.fieldManager, fmId),
       inArray2(customers.routeAssignmentStatus, ["unassigned", "untreated"])
     ));
     const unroutedCustomerCount = Number(unroutedResult[0]?.count ?? 0);
-    const completionResult = await db.execute(sql4`
+    const completionResult = await db.execute(sql5`
       SELECT
         COUNT(*) as total,
         SUM(CASE WHEN rc.completion_type = 'picked' THEN 1 ELSE 0 END) as picked
@@ -8117,7 +8138,7 @@ var fieldManagerRouter = router({
     const defaultEnd = now.toISOString().slice(0, 10);
     const startDate = input.startDate ?? defaultStart;
     const endDate = input.endDate ?? defaultEnd;
-    const result = await db.execute(sql4`
+    const result = await db.execute(sql5`
         SELECT
           COALESCE(SUM(total), 0) as total,
           COUNT(*) as invoiceCount
@@ -8154,7 +8175,7 @@ var fieldManagerRouter = router({
     if (!db) {
       return { items: [], summary: { totalCount: 0, totalOutstanding: 0 } };
     }
-    const result = await db.execute(sql4`
+    const result = await db.execute(sql5`
       SELECT
         id,
         invoiceNumber,
@@ -8166,7 +8187,7 @@ var fieldManagerRouter = router({
       FROM invoices
       WHERE fieldManagerId = CAST(${fmId} AS CHAR)
         AND balance > 0
-        AND status IN (${sql4.raw(OUTSTANDING_STATUS_LIST)})
+        AND status IN (${sql5.raw(OUTSTANDING_STATUS_LIST)})
       ORDER BY balance DESC
     `);
     const rows = result[0];
@@ -8236,7 +8257,7 @@ var fieldManagerRouter = router({
     const defaultEnd = now.toISOString().slice(0, 10);
     const startDate = input.startDate ?? defaultStart;
     const endDate = input.endDate ?? defaultEnd;
-    const customerResult = await db.execute(sql4`
+    const customerResult = await db.execute(sql5`
         SELECT
           maf,
           COUNT(*) AS customerCount
@@ -8250,12 +8271,12 @@ var fieldManagerRouter = router({
       const key = row.maf === null || row.maf === void 0 ? NULL_MAF_SENTINEL : String(row.maf);
       customerMap.set(key, Number(row.customerCount));
     }
-    const invoiceResult = await db.execute(sql4`
+    const invoiceResult = await db.execute(sql5`
         SELECT
           maf,
           COALESCE(SUM(total), 0) AS revenue,
           COALESCE(SUM(CASE
-            WHEN balance > 0 AND status IN (${sql4.raw(OUTSTANDING_STATUS_LIST)})
+            WHEN balance > 0 AND status IN (${sql5.raw(OUTSTANDING_STATUS_LIST)})
             THEN balance ELSE 0 END), 0) AS outstanding,
           COUNT(*) AS invoiceCount
         FROM invoices
@@ -8274,7 +8295,7 @@ var fieldManagerRouter = router({
         invoiceCount: Number(row.invoiceCount)
       });
     }
-    const completionResult = await db.execute(sql4`
+    const completionResult = await db.execute(sql5`
         SELECT
           c.maf,
           COUNT(*) AS totalStops,
@@ -8335,7 +8356,7 @@ var fieldManagerRouter = router({
     const fmId = requireFieldManagerId(ctx);
     const db = await getDb();
     if (!db) return [];
-    const result = await db.execute(sql4`
+    const result = await db.execute(sql5`
       SELECT
         r.id,
         r.scheduledDate,
@@ -8651,7 +8672,7 @@ import { z as z16 } from "zod";
 init_db();
 init_schema();
 import { TRPCError as TRPCError6 } from "@trpc/server";
-import { eq as eq14, and as and9, sql as sql5 } from "drizzle-orm";
+import { eq as eq14, and as and9, sql as sql6 } from "drizzle-orm";
 async function writeAudit(db, params) {
   if (!db) return;
   await db.insert(calendarAuditLog).values({
@@ -9129,17 +9150,17 @@ var calendarOverridesRouter = router({
   ).query(async ({ input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError6({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
-    let query = db.select().from(calendarAuditLog).orderBy(sql5`${calendarAuditLog.createdAt} DESC`).limit(input.limit);
+    let query = db.select().from(calendarAuditLog).orderBy(sql6`${calendarAuditLog.createdAt} DESC`).limit(input.limit);
     if (input.entityType && input.entityId) {
       return db.select().from(calendarAuditLog).where(
         and9(
           eq14(calendarAuditLog.entityType, input.entityType),
           eq14(calendarAuditLog.entityId, input.entityId)
         )
-      ).orderBy(sql5`${calendarAuditLog.createdAt} DESC`).limit(input.limit);
+      ).orderBy(sql6`${calendarAuditLog.createdAt} DESC`).limit(input.limit);
     }
     if (input.entityType) {
-      return db.select().from(calendarAuditLog).where(eq14(calendarAuditLog.entityType, input.entityType)).orderBy(sql5`${calendarAuditLog.createdAt} DESC`).limit(input.limit);
+      return db.select().from(calendarAuditLog).where(eq14(calendarAuditLog.entityType, input.entityType)).orderBy(sql6`${calendarAuditLog.createdAt} DESC`).limit(input.limit);
     }
     return query;
   })
@@ -9829,7 +9850,7 @@ var zoho_webhook_default = router2;
 
 // server/migrations/supervisorRole.ts
 init_db();
-import { sql as sql6 } from "drizzle-orm";
+import { sql as sql7 } from "drizzle-orm";
 async function runSupervisorRoleMigration() {
   try {
     const db = await getDb();
@@ -9838,7 +9859,7 @@ async function runSupervisorRoleMigration() {
       return;
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         ALTER TABLE workers
         ADD COLUMN \`role\` ENUM('field_manager','supervisor') NOT NULL DEFAULT 'field_manager'
       `);
@@ -9852,7 +9873,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         ALTER TABLE workers
         ADD COLUMN \`preferredWebhookType\` ENUM('payt','monthly') NULL DEFAULT NULL
       `);
@@ -9866,7 +9887,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         ALTER TABLE routeCustomers
         ADD COLUMN \`pickedAt\` TIMESTAMP NULL DEFAULT NULL
       `);
@@ -9880,7 +9901,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         ALTER TABLE workers
         ADD COLUMN \`surveyAppUserId\` VARCHAR(100) NULL DEFAULT NULL
       `);
@@ -9894,7 +9915,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         ALTER TABLE customers
         ADD COLUMN \`pickupFrequency\` INT NOT NULL DEFAULT 0
       `);
@@ -9908,7 +9929,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         CREATE TABLE IF NOT EXISTS \`routeScheduleCustomers\` (
           \`id\` INT AUTO_INCREMENT PRIMARY KEY,
           \`scheduleId\` INT NOT NULL,
@@ -9933,7 +9954,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         CREATE TABLE IF NOT EXISTS \`routeInstanceCustomerOverrides\` (
           \`id\` INT AUTO_INCREMENT PRIMARY KEY,
           \`instanceId\` INT NOT NULL,
@@ -9960,7 +9981,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         CREATE TABLE IF NOT EXISTS \`calendarAuditLog\` (
           \`id\` INT AUTO_INCREMENT PRIMARY KEY,
           \`entityType\` ENUM('schedule','instance','schedule_customer','instance_override') NOT NULL,
@@ -9984,7 +10005,7 @@ async function runSupervisorRoleMigration() {
       }
     }
     try {
-      await db.execute(sql6`
+      await db.execute(sql7`
         ALTER TABLE routes
         ADD COLUMN \`supervisorId\` INT NULL DEFAULT NULL,
         ADD CONSTRAINT \`fk_routes_supervisor\` FOREIGN KEY (\`supervisorId\`) REFERENCES \`workers\`(\`id\`)
@@ -10009,7 +10030,7 @@ async function runSupervisorRoleMigration() {
 
 // server/migrations/systemAdminRole.ts
 init_db();
-import { sql as sql7 } from "drizzle-orm";
+import { sql as sql8 } from "drizzle-orm";
 async function runSystemAdminRoleMigration() {
   try {
     const db = await getDb();
@@ -10018,7 +10039,7 @@ async function runSystemAdminRoleMigration() {
       return;
     }
     try {
-      await db.execute(sql7`
+      await db.execute(sql8`
         ALTER TABLE \`users\`
         MODIFY COLUMN \`role\` ENUM('user','admin','field_manager','superadmin','supervisor') NOT NULL DEFAULT 'user'
       `);
