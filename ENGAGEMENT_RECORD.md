@@ -4504,3 +4504,51 @@ Verified: SHOW COLUMNS confirms both enum extensions present in fieldworker_db.c
 | LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
 | LOW | T40 Phase 2: live route editing (in_progress) |
 | LOW | T40 Phase 3: completed route reactivation |
+
+
+---
+
+## T41 — Admin Identity Migration: Variant B (Rule #82 Closure) — CLOSED (2026-07-06)
+
+### Scope
+
+Variant B of the three-tier identity migration (Rule #82). Wale Onibudo (wale@fieldscheduler.net) and Alaba (alabakelani@gmail.com) now authenticate via the users table, identical to the superadmin tier delivered in T39.
+
+### Pre-Deploy (Production)
+
+- Backups: ~/users-full-t41-backup.sql, ~/workers-full-t41-backup.sql
+- PIN copy: UPDATE users u INNER JOIN workers w ON w.email = u.email SET u.pin = w.pin WHERE u.email IN ('wale@fieldscheduler.net', 'alabakelani@gmail.com') — 2 rows updated
+- Verified: both rows show pin_length=60, pin_prefix=$2b$
+
+### Files Changed (3 files)
+
+- server/routers/adminAuth.ts: SUPERADMIN_EMAILS renamed to USERS_TABLE_EMAILS (4 identities: 2 superadmin + 2 admin); role resolved from users.role (not hardcoded); @deprecated ADMIN_WORKER_IDS
+- server/adminAuth.t39.test.ts: Updated all SUPERADMIN_EMAILS references to USERS_TABLE_EMAILS; added T41 test cases (admin tier membership, role resolution, regression)
+- dist/index.js: Rebuilt
+
+### Login Flow After T41
+
+USERS_TABLE_EMAILS.has(email) is checked first. Matching emails (all 4) go to the users-table path: db.getUserByEmail -> users.pin bcrypt compare -> db.upsertUser with role = users.role -> session token. All other emails (field managers, supervisors) continue through the workers-table path unchanged.
+
+Role resolution: const usersTableRole = superUser.role as 'superadmin' | 'admin' — role comes from the database row, not hardcoded. Tier promotions/demotions are a DB-only operation.
+
+### Verification
+
+- npm test: 156/156 passing
+- npm run build: clean build
+- Production: git pull + pm2 restart, app returns 200 OK, no errors in logs
+- users table: Wale (id=5016) and Alaba (id=11607) both have pin_length=60, pin_prefix=$2b$
+
+### Pattern and Rule Formalization
+
+- Rule #85 — When migrating identity tiers to the users table, role must be resolved from users.role (not hardcoded in the login procedure). This ensures a single source of truth for role assignment and makes tier promotions/demotions a DB-only operation.
+
+### T42 Carry-Forward
+
+| Priority | Item |
+|----------|------|
+| MEDIUM | DB-backed rate limiter to replace in-memory Map (Rule #70) |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
+| LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal (T42+ per deprecation comments) |
+| LOW | Remove old .backup.* directories if disk space is needed |
