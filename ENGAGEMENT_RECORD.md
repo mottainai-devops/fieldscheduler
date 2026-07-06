@@ -4552,3 +4552,70 @@ Role resolution: const usersTableRole = superUser.role as 'superadmin' | 'admin'
 | LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
 | LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal (T42+ per deprecation comments) |
 | LOW | Remove old .backup.* directories if disk space is needed |
+
+---
+
+## T42 — DB-backed Rate Limiter (Rule #70 Closure) ✅
+
+**Ticket:** T42
+**Commit:** ae27e577
+**Date:** 2026-07-06
+
+### Problem (Rule #70)
+The login rate limiter used a process-local `Map<string, AttemptRecord>`. PM2 restarts
+(deploys, crashes, OOM kills) silently reset all lockout state, allowing an attacker to
+bypass the 5-attempt lockout by triggering a restart.
+
+### Solution
+Replaced the in-memory Map with a `loginAttempts` MySQL table. Every failed attempt
+inserts a row; lockout is determined by counting rows within a rolling 15-minute window.
+State now survives PM2 restarts, server reboots, and process crashes.
+
+### Schema (migration 0022)
+```sql
+CREATE TABLE loginAttempts (
+  id          INT NOT NULL AUTO_INCREMENT,
+  email       VARCHAR(320) NOT NULL,
+  attemptedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_loginAttempts_email_attemptedAt (email, attemptedAt)
+);
+```
+
+### Files changed (6 files, 399 insertions, 146 deletions)
+| File | Change |
+|------|--------|
+| drizzle/migrations/0022_create_login_attempts.sql | New migration |
+| drizzle/schema.ts | loginAttempts table definition |
+| server/utils/rateLimiter.ts | isLockedOut, recordFailedAttempt, clearAttempts — all DB-backed, all async |
+| server/routers/adminAuth.ts | All call sites updated to await; in-memory Map removed |
+| server/rateLimiter.db.test.ts | 14 behavioral tests |
+
+### Behavioral note (T42 Note 1 from owner review)
+The rolling window is STRICTER than the pre-T42 fixed-window-with-reset.
+Pre-T42: attacker could pace 4 failures every 15+ minutes indefinitely.
+Post-T42: any 5 failures within any rolling 15-minute period triggers lockout.
+This is a security improvement, not a regression.
+
+### Test results
+170/170 passing (14 new T42 tests + 156 pre-existing).
+
+### Production deployment
+- Migration applied: loginAttempts table created, compound index verified
+- git pull: ae27e577 pulled successfully
+- Build: clean (31.55s)
+- PM2 restart: online, 129.7 MB, 200 OK
+- loginAttempts table: 0 rows (clean slate), index confirmed
+
+### Rule established
+- **Rule #86** — Rate limiter state must be persisted in the database, not in process memory.
+  In-memory Maps reset on every PM2 restart, silently bypassing lockout protection.
+
+### T43 carry-forward
+| Priority | Item |
+|----------|------|
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
+| LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
+| LOW | Remove old .backup.* directories |
+| LOW | loginAttempts table: add periodic cleanup job (rows older than 24h) |
