@@ -4695,3 +4695,32 @@ Test categories:
 | LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
 | LOW | Remove old .backup.* directories |
 | LOW | loginAttempts table: add periodic cleanup job (rows older than 24h) |
+
+---
+## T44 — Financial Dashboard Forensic Audit ✅
+**Ticket:** T44
+**Date:** 2026-07-06
+**Type:** Investigation only — no code changes
+
+### Root causes identified (3)
+1. **Field name mismatch (server → client):** Server returns `totalInvoices` (sum), `totalPayments` (sum), `totalOutstanding`, `invoiceTotal`, `outstanding`. Client expects `totalInvoiceAmount`, `totalPaymentAmount`, `outstandingBalance`, `totalInvoices` (count), `totalPayments` (count). Every mismatched field silently returns undefined → 0 → "₦0.00".
+2. **Date filter not applied in SQL:** All procedures accept `startDate`/`endDate` but no WHERE clause uses them. Date picker is non-functional. All-time totals always returned.
+3. **Dropdown data is invoice-driven, not worker-driven:** FM and MAF dropdowns built from GROUP BY on invoices table. Workers/MAFs with zero invoices (Bukola, all her MAFs) are excluded.
+
+### Defect-to-root-cause mapping
+| Defect | Root Cause |
+|--------|-----------|
+| FM dropdown missing Bukola | C (invoice-driven GROUP BY) |
+| Dropdown shows raw IDs | A (fieldManagerName not returned) + C |
+| MAF dropdown missing Bukola's MAFs | C (invoice-driven GROUP BY) |
+| Total Invoices "14760687.5" + "₦0.00" | A (field name mismatch) + B (no date filter) |
+| Total Payments "221338894.9" + "₦0.00" | A (field name mismatch) + B (no date filter) |
+| Outstanding Balance ₦0.00 | A (totalOutstanding vs outstandingBalance) |
+| Metrics by FM all ₦0.00 | A (all 5 field names wrong) |
+| Date picker non-functional | B (WHERE clause absent) |
+
+### T45 recommended fix shape
+Single tranche. Priority: rename fields → add workers JOIN → worker-driven dropdowns → date filter → wire filter params. ~2–3 cycles.
+
+### Carry-forward
+- zohoPayments has no fieldManagerId — per-FM payment totals require separate investigation (T46)
