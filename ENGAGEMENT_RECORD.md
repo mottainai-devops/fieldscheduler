@@ -4793,3 +4793,55 @@ Single tranche. Priority: rename fields → add workers JOIN → worker-driven d
 | LOW | adminUsers table + adminAuthDb.ts cleanup |
 | LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
 
+
+---
+
+## T46 — zohoPayments Field Manager Attribution
+
+**Opened:** T45 carry-forward (payment attribution hardcoded to 0 in Financial Dashboard FM table)
+**Closed:** Jul 2026
+**Commit:** `00734c7a`
+
+### Problem
+`getMetricsByFieldManager` returned `paymentCount=0` and `paymentTotal=0` for all field managers because `zohoPayments` has no `fieldManagerId` column. The T45 fix left these fields hardcoded to 0 with a tooltip saying "pending T46+".
+
+### Investigation (5 steps)
+**a. zohoPayments schema:** No `invoiceNumber`, no `fieldManagerId`. Only link to customers is `customerId` (= Zoho contact ID).
+**b. customers schema:** Has `zohoContactId` (varchar 100) and `fieldManager` (int, FK to workers.id).
+**c. Join path:** `zohoPayments.customerId = customers.zohoContactId → customers.fieldManager`
+**d. Coverage:** 1177/1179 payments attributed (99.8%). ₦7,450 unattributed (2 customers with no FM set). System total ₦221,338,894.90.
+**e. Sync flow:** `zohoFinancialSync.ts` → `syncAllPayments` → inserts `customerId: customer.zohoContactId`. Join path is intentional and stable.
+
+### Path decision: Path B Variant (customer→FM derivation)
+No schema migration, no backfill. Derive at query time. Performance negligible at 1,179 payments.
+
+### Per-FM production values (confirmed)
+| Field Manager | Payments | Total |
+|---|---|---|
+| Halleluyah (7) | 446 | ₦122,663,521.15 |
+| Juwon (9) | 438 | ₦76,623,755.00 |
+| Bukola (8) | 292 | ₦22,037,718.75 |
+| Low.Low income. (9722) | 1 | ₦6,450.00 |
+
+### Changes
+- `server/routers/financialRouter.ts`: `getMetricsByFieldManager` — added payment attribution query with date filter support; `getPayments` — wired FM and MAF filters via customer join (all 8 filter combinations)
+- `client/src/components/FinancialDashboard.tsx`: Removed T46-pending tooltips; payment cells show real `paymentCount`/`paymentTotal`
+- `shared/types/financial.ts`: Updated `FieldManagerMetrics` comment to document join path and coverage
+- `server/financialRouter.t45.test.ts`: Section G updated (2 old assertions → 7 new T46 assertions); added `MockZohoPaymentRow`, `zohoContactId` to `MockCustomerRow`, `MOCK_ZOHO_PAYMENTS`
+
+### Tests
+**239/239 passing** (5 net new T46 tests). No regressions.
+
+### Production
+Build: 31.45s. PM2 online. HTTP 200 confirmed.
+
+### Rule established
+**Rule #90** — When a financial metric cannot be attributed directly (no FK column), the canonical derivation path is via the customer→FM relationship. Derivation is preferred over denormalization at this scale (< 10k rows).
+
+### T47 carry-forward
+| Priority | Item |
+|---|---|
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| LOW | `loginAttempts` periodic cleanup job (rows older than 24h) |
+| LOW | `adminUsers` table + `adminAuthDb.ts` cleanup |
+| LOW | `SUPERADMIN_WORKER_IDS` / `ADMIN_WORKER_IDS` dead code removal |
