@@ -4620,3 +4620,78 @@ This is a security improvement, not a regression.
 | LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
 | LOW | Remove old .backup.* directories |
 | LOW | loginAttempts table: add periodic cleanup job (rows older than 24h) |
+
+---
+## T43 — Mobile App Rate Limiter + T35 bcrypt Gap Fix (workerAuth.login) ✅
+**Ticket:** T43
+**Commit:** 91a3f2c0
+**Date:** 2026-07-06
+
+### Problem 1 — Missing rate limiter in workerAuth.login (Rule #86 gap)
+T42 applied the DB-backed rate limiter to `adminAuth.ts` (web admin login). The mobile app
+login procedure (`workerAuth.login`) had no rate limiting at all — an attacker could make
+unlimited login attempts against any worker email. Same class of vulnerability as T34/T42.
+
+### Problem 2 — T35 bcrypt gap in workerAuth.login (Rule #76 gap)
+T35 applied bcrypt-only PIN comparison to `workerAuth.verifyPin`. The `workerAuth.login`
+procedure (used by the Flutter mobile app) still used plaintext comparison:
+
+    // Pre-T43 (INSECURE):
+    if (!worker.pin || worker.pin !== input.password) {
+      throw new Error("Invalid PIN");
+    }
+
+This meant a worker with a bcrypt-hashed PIN could never log in via the mobile app login
+screen, and a worker with a plaintext PIN could be authenticated by passing the plaintext
+value directly. Rule #76 (bcrypt-only comparison) was not applied to this path.
+
+### Solution
+Rewrote `workerAuth.login` to:
+1. Rate limiter pre-check — `isLockedOut(email)` before any DB lookup
+2. Record failures — `recordFailedAttempt(email)` on unknown email, null PIN, or wrong PIN
+3. Lockout on 5th failure — `recordFailedAttempt` returns the current attempt count; throw lockout error if >= 5
+4. bcrypt comparison — `verifyPinBcrypt(input.password, worker.pin)` replaces `worker.pin !== input.password`
+5. Clear on success — `clearAttempts(email)` after successful authentication
+
+The same DB-backed helpers from T42 (`server/utils/rateLimiter.ts`) are reused — no new
+infrastructure required.
+
+### Files changed (2 files, 428 insertions, 22 deletions)
+| File | Change |
+|------|--------|
+| server/routers/workerAuth.ts | Rate limiter import added; login procedure rewritten (T43 + T35 gap fix) |
+| server/workerAuth.login.t43.test.ts | 17 behavioral tests (new file) |
+
+### Test results
+187/187 passing (17 new T43 tests + 170 pre-existing).
+
+Test categories:
+- Rate limiter pre-check: 3 tests (lockout blocks, proceeds when clear, called on every attempt)
+- Failed attempt recording: 5 tests (unknown email, null PIN, bcrypt mismatch, 5th failure lockout, generic error < 5)
+- T35 gap fix: 3 tests (verifyPinBcrypt called with correct args, bcrypt mismatch rejects, plaintext comparison not used)
+- Successful login: 3 tests (clears attempts, returns worker data, defaults role)
+- Cross-path isolation: 1 test (worker lockout does not affect admin email)
+- DB persistence semantics: 2 tests (Rule #86 contract, email passed without normalization)
+
+### Production deployment
+- No schema migration required (loginAttempts table already exists from T42)
+- git pull: 91a3f2c0 pulled successfully (2 files changed, 428 insertions)
+- Build: clean (29.48s)
+- PM2 restart: online, 200 OK
+- loginAttempts table: confirmed present from T42
+
+### Rule established
+- **Rule #87** — T35 bcrypt hardening (Rule #76) must be applied to ALL auth paths that
+  compare a PIN or password, not just the primary PIN verification endpoint. When T35 is
+  applied to one path (e.g., `workerAuth.verifyPin`), a gap audit of all sibling paths
+  (e.g., `workerAuth.login`) must be performed in the same ticket or scheduled as a
+  carry-forward item.
+
+### T44 carry-forward
+| Priority | Item |
+|----------|------|
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| LOW | adminUsers table + adminAuthDb.ts cleanup (dormant infrastructure) |
+| LOW | SUPERADMIN_WORKER_IDS + ADMIN_WORKER_IDS dead code removal |
+| LOW | Remove old .backup.* directories |
+| LOW | loginAttempts table: add periodic cleanup job (rows older than 24h) |
