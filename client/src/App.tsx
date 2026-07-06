@@ -49,6 +49,7 @@ import FinancialDashboard from "./pages/FinancialDashboard";
 import ReportBuilderPage from "./pages/ReportBuilderPage";
 import ScheduledReportsPage from "./pages/ScheduledReportsPage";
 import PendingAssignments from "./pages/PendingAssignments";
+import AdminRoutes from "./pages/AdminRoutes";
 // T26: Field Manager personal dashboard
 import FieldManagerDashboard from "./pages/FieldManagerDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -152,6 +153,8 @@ function Router() {
       <LayoutRoute path={"/route-schedules"} component={RouteSchedules} requireFieldManager />
       {/* T15 Item 5: admin tier — pending assignments visible to superadmin + admin only */}
       <LayoutRoute path={"/pending-assignments"} component={PendingAssignments} requireAdmin />
+      {/* T40: Admin route management — edit/delete/reorder customers on editable routes */}
+      <LayoutRoute path={"/admin/routes"} component={AdminRoutes} requireAdmin />
       {/* T26: Field Manager personal dashboard — scoped to ctx.user.fieldManagerId (Pattern #51 / Rule #59) */}
       <LayoutRoute path={"/field-manager/dashboard"} component={FieldManagerDashboard} requireFieldManager />
 

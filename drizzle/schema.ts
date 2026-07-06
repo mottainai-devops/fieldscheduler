@@ -629,13 +629,15 @@ export type InsertRouteInstanceCustomerOverride = typeof routeInstanceCustomerOv
 export const calendarAuditLog = mysqlTable("calendarAuditLog", {
   id: int("id").autoincrement().primaryKey(),
   // What entity was changed
-  entityType: mysqlEnum("entityType", ["schedule", "instance", "schedule_customer", "instance_override"]).notNull(),
+  // T40: added 'route' and 'route_customer' for route editing audit trail
+  entityType: mysqlEnum("entityType", ["schedule", "instance", "schedule_customer", "instance_override", "route", "route_customer"]).notNull(),
   entityId: int("entityId").notNull(),
   // What action was taken
   action: mysqlEnum("action", [
     "created", "updated", "cancelled", "rescheduled",
     "customer_skipped", "customer_removed", "customer_added",
-    "handoff_requested", "handoff_accepted", "auto_paused"
+    "handoff_requested", "handoff_accepted", "auto_paused",
+    "deleted" // T40: route deletion
   ]).notNull(),
   // JSON snapshot of the entity before the change (null for creates)
   previousState: text("previousState"),

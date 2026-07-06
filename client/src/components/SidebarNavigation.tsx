@@ -108,6 +108,8 @@ const navigationGroups: NavGroup[] = [
       { label: "Route Schedules", href: "/route-schedules", icon: Route, minRole: "fieldManager" },
       // T15 Item 5: Pending Assignments — admin tier (superadmin + admin)
       { label: "Pending Assignments", href: "/pending-assignments", icon: ClockAlert, minRole: "admin" },
+      // T40: Admin route editing — edit/delete/reorder customers on editable routes
+      { label: "Edit Routes", href: "/admin/routes", icon: Route, minRole: "admin" },
     ],
   },
   {

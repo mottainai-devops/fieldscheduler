@@ -557,7 +557,8 @@ var init_schema = __esm({
     calendarAuditLog = mysqlTable("calendarAuditLog", {
       id: int("id").autoincrement().primaryKey(),
       // What entity was changed
-      entityType: mysqlEnum("entityType", ["schedule", "instance", "schedule_customer", "instance_override"]).notNull(),
+      // T40: added 'route' and 'route_customer' for route editing audit trail
+      entityType: mysqlEnum("entityType", ["schedule", "instance", "schedule_customer", "instance_override", "route", "route_customer"]).notNull(),
       entityId: int("entityId").notNull(),
       // What action was taken
       action: mysqlEnum("action", [
@@ -570,7 +571,9 @@ var init_schema = __esm({
         "customer_added",
         "handoff_requested",
         "handoff_accepted",
-        "auto_paused"
+        "auto_paused",
+        "deleted"
+        // T40: route deletion
       ]).notNull(),
       // JSON snapshot of the entity before the change (null for creates)
       previousState: text("previousState"),
@@ -738,9 +741,31 @@ var init_pinHashing = __esm({
   }
 });
 
+// shared/constants/routes.ts
+function routeStatusGateMessage(status) {
+  return `Cannot modify route in status '${status}'. Only routes in status ${EDITABLE_ROUTE_STATUSES.map((s) => `'${s}'`).join(", ")} can be edited.`;
+}
+function routeDeleteGateMessage(status) {
+  return `Cannot delete route in status '${status}'. Only routes in status ${DELETABLE_ROUTE_STATUSES.map((s) => `'${s}'`).join(", ")} can be deleted.`;
+}
+var EDITABLE_ROUTE_STATUSES, DELETABLE_ROUTE_STATUSES;
+var init_routes = __esm({
+  "shared/constants/routes.ts"() {
+    EDITABLE_ROUTE_STATUSES = [
+      "pending",
+      "pending_assignment",
+      "optimized",
+      "assigned",
+      "cancelled"
+    ];
+    DELETABLE_ROUTE_STATUSES = EDITABLE_ROUTE_STATUSES;
+  }
+});
+
 // server/fieldWorkerDb.ts
 var fieldWorkerDb_exports = {};
 __export(fieldWorkerDb_exports, {
+  addCustomerToRoute: () => addCustomerToRoute,
   addCustomersToRoute: () => addCustomersToRoute,
   assignSupervisorToRoute: () => assignSupervisorToRoute,
   createCustomer: () => createCustomer,
@@ -777,6 +802,8 @@ __export(fieldWorkerDb_exports, {
   getWorkerLocation: () => getWorkerLocation,
   getWorkerLocations: () => getWorkerLocations,
   getWorkerRoutesOnDate: () => getWorkerRoutesOnDate,
+  removeCustomerFromRoute: () => removeCustomerFromRoute,
+  reorderRouteCustomers: () => reorderRouteCustomers,
   saveFilterPreset: () => saveFilterPreset,
   updateCustomer: () => updateCustomer,
   updateFilterPreset: () => updateFilterPreset,
@@ -787,7 +814,7 @@ __export(fieldWorkerDb_exports, {
   updateWorkerLocation: () => updateWorkerLocation,
   upsertCustomerFromZoho: () => upsertCustomerFromZoho
 });
-import { eq as eq2, desc, and, sql, or, inArray, like } from "drizzle-orm";
+import { eq as eq2, desc, and, sql, or, inArray, like, max } from "drizzle-orm";
 async function getAllWorkers() {
   const db = await getDb();
   if (!db) return [];
@@ -1183,9 +1210,27 @@ async function assignSupervisorToRoute(routeId, supervisorWorkerId) {
   }).where(eq2(routes.id, routeId));
   return await getRouteById(routeId);
 }
-async function deleteRoute(id) {
+async function deleteRoute(id, actor) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const current = await getRouteById(id);
+  if (!current) throw new Error(`Route ${id} not found`);
+  if (!DELETABLE_ROUTE_STATUSES.includes(current.status)) {
+    throw new Error(routeDeleteGateMessage(current.status));
+  }
+  if (actor) {
+    await db.insert(calendarAuditLog).values({
+      entityType: "route",
+      entityId: id,
+      action: "deleted",
+      previousState: JSON.stringify(current),
+      newState: null,
+      actorType: "admin",
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null
+    });
+  }
   await db.delete(routeCustomers).where(eq2(routeCustomers.routeId, id));
   await db.delete(routes).where(eq2(routes.id, id));
 }
@@ -1299,11 +1344,41 @@ async function getWorkerRoutesOnDate(workerId, scheduledDate) {
   const rows = await db.select({ id: routes.id, status: routes.status, scheduledDate: routes.scheduledDate }).from(routes).where(and(eq2(routes.workerId, workerId), eq2(routes.scheduledDate, scheduledDate)));
   return rows;
 }
-async function updateRoute(id, data) {
+async function updateRoute(id, data, actor) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(routes).set(data).where(eq2(routes.id, id));
-  return await getRouteById(id);
+  const current = await getRouteById(id);
+  if (!current) throw new Error(`Route ${id} not found`);
+  if (!EDITABLE_ROUTE_STATUSES.includes(current.status)) {
+    throw new Error(routeStatusGateMessage(current.status));
+  }
+  const allowedFields = {};
+  if (data.workerId !== void 0) allowedFields.workerId = data.workerId;
+  if (data.vehicleId !== void 0) allowedFields.vehicleId = data.vehicleId;
+  if (data.totalDistance !== void 0) allowedFields.totalDistance = data.totalDistance;
+  if (data.estimatedDuration !== void 0) allowedFields.estimatedDuration = data.estimatedDuration;
+  if (data.efficiencyScore !== void 0) allowedFields.efficiencyScore = data.efficiencyScore;
+  if (data.status !== void 0) allowedFields.status = data.status;
+  if (data.scheduledDate !== void 0) allowedFields.scheduledDate = data.scheduledDate;
+  if (data.dispatchedAt !== void 0) allowedFields.dispatchedAt = data.dispatchedAt;
+  if (data.routingReasonNote !== void 0) allowedFields.routingReasonNote = data.routingReasonNote;
+  if (Object.keys(allowedFields).length === 0) return current;
+  await db.update(routes).set(allowedFields).where(eq2(routes.id, id));
+  const updated = await getRouteById(id);
+  if (actor) {
+    await db.insert(calendarAuditLog).values({
+      entityType: "route",
+      entityId: id,
+      action: "updated",
+      previousState: JSON.stringify(current),
+      newState: JSON.stringify(updated),
+      actorType: "admin",
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null
+    });
+  }
+  return updated;
 }
 async function updateCustomer(id, data) {
   const db = await getDb();
@@ -1406,11 +1481,120 @@ async function getSkipAnalytics(dayWindow = 30) {
     }))
   };
 }
+async function addCustomerToRoute(routeId, customerId, actor) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const route = await getRouteById(routeId);
+  if (!route) throw new Error(`Route ${routeId} not found`);
+  if (!EDITABLE_ROUTE_STATUSES.includes(route.status)) {
+    throw new Error(routeStatusGateMessage(route.status));
+  }
+  const existing = await db.select({ id: routeCustomers.id }).from(routeCustomers).where(and(eq2(routeCustomers.routeId, routeId), eq2(routeCustomers.customerId, customerId))).limit(1);
+  if (existing.length > 0) {
+    throw new Error(`Customer ${customerId} is already on route ${routeId}`);
+  }
+  const maxResult = await db.select({ maxSeq: max(routeCustomers.sequenceNumber) }).from(routeCustomers).where(eq2(routeCustomers.routeId, routeId));
+  const nextSeq = (maxResult[0]?.maxSeq ?? 0) + 1;
+  await db.insert(routeCustomers).values({
+    routeId,
+    customerId,
+    sequenceNumber: nextSeq,
+    estimatedServiceTime: 30,
+    completionType: "not_attempted"
+  });
+  if (actor) {
+    const customer = await getCustomerById(customerId);
+    await db.insert(calendarAuditLog).values({
+      entityType: "route_customer",
+      entityId: routeId,
+      action: "customer_added",
+      previousState: null,
+      newState: JSON.stringify({ customerId, customerName: customer?.name ?? null, sequenceNumber: nextSeq }),
+      actorType: "admin",
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null
+    });
+  }
+  return await getRouteCustomers(routeId);
+}
+async function removeCustomerFromRoute(routeId, customerId, actor) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const route = await getRouteById(routeId);
+  if (!route) throw new Error(`Route ${routeId} not found`);
+  if (!EDITABLE_ROUTE_STATUSES.includes(route.status)) {
+    throw new Error(routeStatusGateMessage(route.status));
+  }
+  const existing = await db.select().from(routeCustomers).where(and(eq2(routeCustomers.routeId, routeId), eq2(routeCustomers.customerId, customerId))).limit(1);
+  if (existing.length === 0) {
+    throw new Error(`Customer ${customerId} is not on route ${routeId}`);
+  }
+  const removedSeq = existing[0].sequenceNumber;
+  await db.delete(routeCustomers).where(
+    and(eq2(routeCustomers.routeId, routeId), eq2(routeCustomers.customerId, customerId))
+  );
+  await db.update(routeCustomers).set({ sequenceNumber: sql`${routeCustomers.sequenceNumber} - 1` }).where(and(eq2(routeCustomers.routeId, routeId), sql`${routeCustomers.sequenceNumber} > ${removedSeq}`));
+  if (actor) {
+    const customer = await getCustomerById(customerId);
+    await db.insert(calendarAuditLog).values({
+      entityType: "route_customer",
+      entityId: routeId,
+      action: "customer_removed",
+      previousState: JSON.stringify({ customerId, customerName: customer?.name ?? null, sequenceNumber: removedSeq }),
+      newState: null,
+      actorType: "admin",
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null
+    });
+  }
+  return await getRouteCustomers(routeId);
+}
+async function reorderRouteCustomers(routeId, orderedCustomerIds, actor) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const route = await getRouteById(routeId);
+  if (!route) throw new Error(`Route ${routeId} not found`);
+  if (!EDITABLE_ROUTE_STATUSES.includes(route.status)) {
+    throw new Error(routeStatusGateMessage(route.status));
+  }
+  const currentRows = await db.select({ customerId: routeCustomers.customerId }).from(routeCustomers).where(eq2(routeCustomers.routeId, routeId));
+  const currentIdArray = currentRows.map((r) => r.customerId);
+  const currentIds = new Set(currentIdArray);
+  const newIds = new Set(orderedCustomerIds);
+  if (currentIds.size !== newIds.size || currentIdArray.some((id) => !newIds.has(id))) {
+    throw new Error(
+      `Reorder validation failed: orderedCustomerIds must contain exactly the same customers as the route. Expected ${currentIds.size} customers, got ${newIds.size}.`
+    );
+  }
+  for (let i = 0; i < orderedCustomerIds.length; i++) {
+    await db.update(routeCustomers).set({ sequenceNumber: i + 1 }).where(and(
+      eq2(routeCustomers.routeId, routeId),
+      eq2(routeCustomers.customerId, orderedCustomerIds[i])
+    ));
+  }
+  if (actor) {
+    await db.insert(calendarAuditLog).values({
+      entityType: "route",
+      entityId: routeId,
+      action: "updated",
+      previousState: JSON.stringify({ order: currentIdArray }),
+      newState: JSON.stringify({ order: orderedCustomerIds }),
+      actorType: "admin",
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: "reorder"
+    });
+  }
+  return await getRouteCustomers(routeId);
+}
 var init_fieldWorkerDb = __esm({
   "server/fieldWorkerDb.ts"() {
     init_db();
     init_schema();
     init_pinHashing();
+    init_routes();
   }
 });
 
@@ -3908,9 +4092,9 @@ function centroidOf(cs) {
   return { lat: sum.lat / cs.length, lng: sum.lng / cs.length };
 }
 function radiusOf(cs, centroid) {
-  return cs.reduce((max, c) => {
+  return cs.reduce((max2, c) => {
     const d = haversine(centroid.lat, centroid.lng, parseFloat(c.latitude), parseFloat(c.longitude));
-    return d > max ? d : max;
+    return d > max2 ? d : max2;
   }, 0);
 }
 function clusterCustomersByCount(customers2, customersPerCluster = 10) {
@@ -4275,6 +4459,10 @@ var fieldWorkerRouter = router({
   getRouteDetails: fieldManagerProcedure.input(z5.object({ id: z5.number() })).query(async ({ input }) => {
     return await getRouteDetails(input.id);
   }),
+  // T40: getRouteCustomers — returns ordered customer list for a route
+  getRouteCustomers: fieldManagerProcedure.input(z5.object({ routeId: z5.number() })).query(async ({ input }) => {
+    return await getRouteCustomers(input.routeId);
+  }),
   // T14 Item 3: fieldManagerProcedure — route reads accessible to all admin-tier roles
   getRoutesByWorkerId: fieldManagerProcedure.input(z5.object({ workerId: z5.number() })).query(async ({ input }) => {
     return await getRoutesByWorkerId(input.workerId);
@@ -4408,6 +4596,7 @@ var fieldWorkerRouter = router({
   }),
   // T14 Item 3: adminProcedure — route updates are admin-tier
   // T16 Item 5: driftLogger applied
+  // T40: added routingReasonNote, pending_assignment status, actor tracking for audit trail
   updateRoute: adminProcedure.use(driftLogger("updateRoute", {
     shape: {
       id: true,
@@ -4419,7 +4608,8 @@ var fieldWorkerRouter = router({
       status: true,
       scheduledDate: true,
       customerIds: true,
-      dispatchedAt: true
+      dispatchedAt: true,
+      routingReasonNote: true
     }
   })).input(z5.object({
     id: z5.number(),
@@ -4428,17 +4618,45 @@ var fieldWorkerRouter = router({
     totalDistance: z5.string().optional(),
     estimatedDuration: z5.string().optional(),
     efficiencyScore: z5.number().optional(),
-    status: z5.enum(["assigned", "pending", "in_progress", "completed", "cancelled", "optimized"]).optional(),
+    status: z5.enum(["assigned", "pending", "pending_assignment", "in_progress", "completed", "cancelled", "optimized"]).optional(),
     scheduledDate: z5.string().optional(),
     customerIds: z5.array(z5.number()).optional(),
-    dispatchedAt: z5.string().optional()
-  })).mutation(async ({ input }) => {
-    const { id, ...data } = input;
-    return await updateRoute(id, data);
+    dispatchedAt: z5.string().optional(),
+    routingReasonNote: z5.string().max(500).optional()
+  })).mutation(async ({ input, ctx }) => {
+    const { id, customerIds: _ignored, ...data } = input;
+    const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+    return await updateRoute(id, data, actor);
   }),
-  // T14 Item 3: superadminProcedure — route deletion is destructive, superadmin only
-  deleteRoute: superadminProcedure.input(z5.object({ id: z5.number() })).mutation(async ({ input }) => {
-    return await deleteRoute(input.id);
+  // T14 Item 3: adminProcedure — route deletion
+  // T40: changed from superadminProcedure to adminProcedure + status gate (Q2 decision)
+  deleteRoute: adminProcedure.input(z5.object({ id: z5.number() })).mutation(async ({ input, ctx }) => {
+    const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+    return await deleteRoute(input.id, actor);
+  }),
+  // T40: addCustomerToRoute — admin can add a customer to an editable route
+  addCustomerToRoute: adminProcedure.input(z5.object({
+    routeId: z5.number(),
+    customerId: z5.number()
+  })).mutation(async ({ input, ctx }) => {
+    const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+    return await addCustomerToRoute(input.routeId, input.customerId, actor);
+  }),
+  // T40: removeCustomerFromRoute — admin can remove a customer from an editable route
+  removeCustomerFromRoute: adminProcedure.input(z5.object({
+    routeId: z5.number(),
+    customerId: z5.number()
+  })).mutation(async ({ input, ctx }) => {
+    const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+    return await removeCustomerFromRoute(input.routeId, input.customerId, actor);
+  }),
+  // T40: reorderRouteCustomers — admin can reorder stops on an editable route
+  reorderRouteCustomers: adminProcedure.input(z5.object({
+    routeId: z5.number(),
+    orderedCustomerIds: z5.array(z5.number()).min(1)
+  })).mutation(async ({ input, ctx }) => {
+    const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+    return await reorderRouteCustomers(input.routeId, input.orderedCustomerIds, actor);
   }),
   /**
    * T15 Item 5: Get all routes with status='pending_assignment'.

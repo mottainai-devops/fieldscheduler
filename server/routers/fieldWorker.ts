@@ -358,6 +358,12 @@ export const fieldWorkerRouter = router({
     .query(async ({ input }) => {
       return await fieldWorkerDb.getRouteDetails(input.id);
     }),
+  // T40: getRouteCustomers — returns ordered customer list for a route
+  getRouteCustomers: fieldManagerProcedure
+    .input(z.object({ routeId: z.number() }))
+    .query(async ({ input }) => {
+      return await fieldWorkerDb.getRouteCustomers(input.routeId);
+    }),
 
   // T14 Item 3: fieldManagerProcedure — route reads accessible to all admin-tier roles
   getRoutesByWorkerId: fieldManagerProcedure
@@ -495,12 +501,14 @@ export const fieldWorkerRouter = router({
 
   // T14 Item 3: adminProcedure — route updates are admin-tier
   // T16 Item 5: driftLogger applied
+  // T40: added routingReasonNote, pending_assignment status, actor tracking for audit trail
   updateRoute: adminProcedure
     .use(driftLogger('updateRoute', {
       shape: {
         id: true, workerId: true, vehicleId: true, totalDistance: true,
         estimatedDuration: true, efficiencyScore: true, status: true,
         scheduledDate: true, customerIds: true, dispatchedAt: true,
+        routingReasonNote: true,
       }
     }))
     .input(z.object({
@@ -510,21 +518,58 @@ export const fieldWorkerRouter = router({
       totalDistance: z.string().optional(),
       estimatedDuration: z.string().optional(),
       efficiencyScore: z.number().optional(),
-      status: z.enum(["assigned", "pending", "in_progress", "completed", "cancelled", "optimized"]).optional(),
+      status: z.enum(["assigned", "pending", "pending_assignment", "in_progress", "completed", "cancelled", "optimized"]).optional(),
       scheduledDate: z.string().optional(),
       customerIds: z.array(z.number()).optional(),
       dispatchedAt: z.string().optional(),
+      routingReasonNote: z.string().max(500).optional(),
     }))
-    .mutation(async ({ input }) => {
-      const { id, ...data } = input;
-      return await fieldWorkerDb.updateRoute(id, data);
+    .mutation(async ({ input, ctx }) => {
+      const { id, customerIds: _ignored, ...data } = input;
+      const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+      return await fieldWorkerDb.updateRoute(id, data, actor);
     }),
 
-  // T14 Item 3: superadminProcedure — route deletion is destructive, superadmin only
-  deleteRoute: superadminProcedure
+  // T14 Item 3: adminProcedure — route deletion
+  // T40: changed from superadminProcedure to adminProcedure + status gate (Q2 decision)
+  deleteRoute: adminProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      return await fieldWorkerDb.deleteRoute(input.id);
+    .mutation(async ({ input, ctx }) => {
+      const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+      return await fieldWorkerDb.deleteRoute(input.id, actor);
+    }),
+
+  // T40: addCustomerToRoute — admin can add a customer to an editable route
+  addCustomerToRoute: adminProcedure
+    .input(z.object({
+      routeId: z.number(),
+      customerId: z.number(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+      return await fieldWorkerDb.addCustomerToRoute(input.routeId, input.customerId, actor);
+    }),
+
+  // T40: removeCustomerFromRoute — admin can remove a customer from an editable route
+  removeCustomerFromRoute: adminProcedure
+    .input(z.object({
+      routeId: z.number(),
+      customerId: z.number(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+      return await fieldWorkerDb.removeCustomerFromRoute(input.routeId, input.customerId, actor);
+    }),
+
+  // T40: reorderRouteCustomers — admin can reorder stops on an editable route
+  reorderRouteCustomers: adminProcedure
+    .input(z.object({
+      routeId: z.number(),
+      orderedCustomerIds: z.array(z.number()).min(1),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const actor = { id: ctx.user.id, name: ctx.user.name ?? null };
+      return await fieldWorkerDb.reorderRouteCustomers(input.routeId, input.orderedCustomerIds, actor);
     }),
 
   /**

@@ -1,8 +1,9 @@
-import { eq, desc, and, sql, or, inArray, like } from "drizzle-orm";
+import { eq, desc, and, sql, or, inArray, like, max } from "drizzle-orm";
 import { getDb } from "./db";
-import { workers, vehicles, customers, routes, routeCustomers, workerLocations } from "../drizzle/schema";
+import { workers, vehicles, customers, routes, routeCustomers, workerLocations, calendarAuditLog } from "../drizzle/schema";
 import { hashPin } from "./utils/pinHashing";
 import { RoutingReasonValue } from '../shared/const';
+import { EDITABLE_ROUTE_STATUSES, DELETABLE_ROUTE_STATUSES, routeStatusGateMessage, routeDeleteGateMessage } from '../shared/constants/routes';
 
 // Worker operations
 export async function getAllWorkers() {
@@ -674,10 +675,33 @@ export async function assignSupervisorToRoute(routeId: number, supervisorWorkerI
   return await getRouteById(routeId);
 }
 
-export async function deleteRoute(id: number) {
+// T40: deleteRoute — status gate + audit trail
+export async function deleteRoute(id: number, actor?: { id: number; name: string | null }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // T40: status gate — only deletable-status routes can be deleted
+  const current = await getRouteById(id);
+  if (!current) throw new Error(`Route ${id} not found`);
+  if (!(DELETABLE_ROUTE_STATUSES as readonly string[]).includes(current.status)) {
+    throw new Error(routeDeleteGateMessage(current.status));
+  }
+
+  // T40: write audit entry BEFORE deleting (so we have the snapshot)
+  if (actor) {
+    await db.insert(calendarAuditLog).values({
+      entityType: 'route',
+      entityId: id,
+      action: 'deleted',
+      previousState: JSON.stringify(current),
+      newState: null,
+      actorType: 'admin',
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null,
+    });
+  }
+
   // First delete route customers
   await db.delete(routeCustomers).where(eq(routeCustomers.routeId, id));
   
@@ -892,21 +916,65 @@ export async function getWorkerRoutesOnDate(workerId: number, scheduledDate: str
 }
 
 // Update route with flexible fields
-export async function updateRoute(id: number, data: {
-  workerId?: number;
-  vehicleId?: number;
-  totalDistance?: string;
-  estimatedDuration?: string;
-  efficiencyScore?: number;
-  status?: string;
-  scheduledDate?: string;
-  dispatchedAt?: string;
-}) {
+// T40: hardened — status gate, explicit field allowlist, audit trail, closes pre-existing `as any` silent-write vulnerability
+export async function updateRoute(
+  id: number,
+  data: {
+    workerId?: number;
+    vehicleId?: number;
+    totalDistance?: string;
+    estimatedDuration?: string;
+    efficiencyScore?: number;
+    status?: string;
+    scheduledDate?: string;
+    dispatchedAt?: string;
+    routingReasonNote?: string;
+  },
+  actor?: { id: number; name: string | null }
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  await db.update(routes).set(data as any).where(eq(routes.id, id));
-  return await getRouteById(id);
+
+  // T40: status gate — fetch current route and check it's in an editable status
+  const current = await getRouteById(id);
+  if (!current) throw new Error(`Route ${id} not found`);
+  if (!(EDITABLE_ROUTE_STATUSES as readonly string[]).includes(current.status)) {
+    throw new Error(routeStatusGateMessage(current.status));
+  }
+
+  // T40: explicit field allowlist — no `as any` cast
+  const allowedFields: Record<string, unknown> = {};
+  if (data.workerId !== undefined) allowedFields.workerId = data.workerId;
+  if (data.vehicleId !== undefined) allowedFields.vehicleId = data.vehicleId;
+  if (data.totalDistance !== undefined) allowedFields.totalDistance = data.totalDistance;
+  if (data.estimatedDuration !== undefined) allowedFields.estimatedDuration = data.estimatedDuration;
+  if (data.efficiencyScore !== undefined) allowedFields.efficiencyScore = data.efficiencyScore;
+  if (data.status !== undefined) allowedFields.status = data.status;
+  if (data.scheduledDate !== undefined) allowedFields.scheduledDate = data.scheduledDate;
+  if (data.dispatchedAt !== undefined) allowedFields.dispatchedAt = data.dispatchedAt;
+  if (data.routingReasonNote !== undefined) allowedFields.routingReasonNote = data.routingReasonNote;
+
+  if (Object.keys(allowedFields).length === 0) return current; // no-op
+
+  await db.update(routes).set(allowedFields as any).where(eq(routes.id, id));
+  const updated = await getRouteById(id);
+
+  // T40: write audit entry
+  if (actor) {
+    await db.insert(calendarAuditLog).values({
+      entityType: 'route',
+      entityId: id,
+      action: 'updated',
+      previousState: JSON.stringify(current),
+      newState: JSON.stringify(updated),
+      actorType: 'admin',
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null,
+    });
+  }
+
+  return updated;
 }
 
 // Update customer
@@ -1052,4 +1120,201 @@ export async function getSkipAnalytics(dayWindow: number = 30) {
       workerName: n.workerName ?? 'Unknown',
     })),
   };
+}
+
+// ─── T40: Route customer management helpers ────────────────────────────────────
+
+/**
+ * addCustomerToRoute — append a single customer to an editable route.
+ * - Status gate: route must be in EDITABLE_ROUTE_STATUSES
+ * - Duplicate guard: (routeId, customerId) must not already exist
+ * - Appends at end: sequenceNumber = MAX(existing) + 1
+ * - Writes audit entry to calendarAuditLog
+ */
+export async function addCustomerToRoute(
+  routeId: number,
+  customerId: number,
+  actor?: { id: number; name: string | null }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Status gate
+  const route = await getRouteById(routeId);
+  if (!route) throw new Error(`Route ${routeId} not found`);
+  if (!(EDITABLE_ROUTE_STATUSES as readonly string[]).includes(route.status)) {
+    throw new Error(routeStatusGateMessage(route.status));
+  }
+
+  // Duplicate guard
+  const existing = await db
+    .select({ id: routeCustomers.id })
+    .from(routeCustomers)
+    .where(and(eq(routeCustomers.routeId, routeId), eq(routeCustomers.customerId, customerId)))
+    .limit(1);
+  if (existing.length > 0) {
+    throw new Error(`Customer ${customerId} is already on route ${routeId}`);
+  }
+
+  // Compute next sequence number
+  const maxResult = await db
+    .select({ maxSeq: max(routeCustomers.sequenceNumber) })
+    .from(routeCustomers)
+    .where(eq(routeCustomers.routeId, routeId));
+  const nextSeq = (maxResult[0]?.maxSeq ?? 0) + 1;
+
+  await db.insert(routeCustomers).values({
+    routeId,
+    customerId,
+    sequenceNumber: nextSeq,
+    estimatedServiceTime: 30,
+    completionType: 'not_attempted',
+  } as any);
+
+  // Audit entry
+  if (actor) {
+    const customer = await getCustomerById(customerId);
+    await db.insert(calendarAuditLog).values({
+      entityType: 'route_customer',
+      entityId: routeId,
+      action: 'customer_added',
+      previousState: null,
+      newState: JSON.stringify({ customerId, customerName: customer?.name ?? null, sequenceNumber: nextSeq }),
+      actorType: 'admin',
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null,
+    });
+  }
+
+  return await getRouteCustomers(routeId);
+}
+
+/**
+ * removeCustomerFromRoute — remove a customer from an editable route.
+ * - Status gate: route must be in EDITABLE_ROUTE_STATUSES
+ * - Compacts sequence numbers of remaining stops after removal
+ * - Writes audit entry to calendarAuditLog
+ */
+export async function removeCustomerFromRoute(
+  routeId: number,
+  customerId: number,
+  actor?: { id: number; name: string | null }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Status gate
+  const route = await getRouteById(routeId);
+  if (!route) throw new Error(`Route ${routeId} not found`);
+  if (!(EDITABLE_ROUTE_STATUSES as readonly string[]).includes(route.status)) {
+    throw new Error(routeStatusGateMessage(route.status));
+  }
+
+  // Find the row to delete
+  const existing = await db
+    .select()
+    .from(routeCustomers)
+    .where(and(eq(routeCustomers.routeId, routeId), eq(routeCustomers.customerId, customerId)))
+    .limit(1);
+  if (existing.length === 0) {
+    throw new Error(`Customer ${customerId} is not on route ${routeId}`);
+  }
+  const removedSeq = existing[0].sequenceNumber;
+
+  // Delete the row
+  await db.delete(routeCustomers).where(
+    and(eq(routeCustomers.routeId, routeId), eq(routeCustomers.customerId, customerId))
+  );
+
+  // Compact sequence numbers: decrement all stops after the removed one
+  await db.update(routeCustomers)
+    .set({ sequenceNumber: sql`${routeCustomers.sequenceNumber} - 1` })
+    .where(and(eq(routeCustomers.routeId, routeId), sql`${routeCustomers.sequenceNumber} > ${removedSeq}`));
+
+  // Audit entry
+  if (actor) {
+    const customer = await getCustomerById(customerId);
+    await db.insert(calendarAuditLog).values({
+      entityType: 'route_customer',
+      entityId: routeId,
+      action: 'customer_removed',
+      previousState: JSON.stringify({ customerId, customerName: customer?.name ?? null, sequenceNumber: removedSeq }),
+      newState: null,
+      actorType: 'admin',
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: null,
+    });
+  }
+
+  return await getRouteCustomers(routeId);
+}
+
+/**
+ * reorderRouteCustomers — reorder stops on an editable route.
+ * - Status gate: route must be in EDITABLE_ROUTE_STATUSES
+ * - Validates: orderedCustomerIds must be exactly the same set as current customers
+ * - Updates sequenceNumbers based on array position (1-indexed)
+ * - Writes audit entry to calendarAuditLog
+ */
+export async function reorderRouteCustomers(
+  routeId: number,
+  orderedCustomerIds: number[],
+  actor?: { id: number; name: string | null }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Status gate
+  const route = await getRouteById(routeId);
+  if (!route) throw new Error(`Route ${routeId} not found`);
+  if (!(EDITABLE_ROUTE_STATUSES as readonly string[]).includes(route.status)) {
+    throw new Error(routeStatusGateMessage(route.status));
+  }
+
+  // Validate: same set of customer IDs
+  const currentRows = await db
+    .select({ customerId: routeCustomers.customerId })
+    .from(routeCustomers)
+    .where(eq(routeCustomers.routeId, routeId));
+  const currentIdArray = currentRows.map(r => r.customerId);
+  const currentIds = new Set(currentIdArray);
+  const newIds = new Set(orderedCustomerIds);
+  if (
+    currentIds.size !== newIds.size ||
+    currentIdArray.some(id => !newIds.has(id))
+  ) {
+    throw new Error(
+      `Reorder validation failed: orderedCustomerIds must contain exactly the same customers as the route. ` +
+      `Expected ${currentIds.size} customers, got ${newIds.size}.`
+    );
+  }
+
+  // Update sequence numbers
+  for (let i = 0; i < orderedCustomerIds.length; i++) {
+    await db.update(routeCustomers)
+      .set({ sequenceNumber: i + 1 })
+      .where(and(
+        eq(routeCustomers.routeId, routeId),
+        eq(routeCustomers.customerId, orderedCustomerIds[i])
+      ));
+  }
+
+  // Audit entry
+  if (actor) {
+    await db.insert(calendarAuditLog).values({
+      entityType: 'route',
+      entityId: routeId,
+      action: 'updated',
+      previousState: JSON.stringify({ order: currentIdArray }),
+      newState: JSON.stringify({ order: orderedCustomerIds }),
+      actorType: 'admin',
+      actorId: actor.id,
+      actorName: actor.name ?? null,
+      reason: 'reorder',
+    });
+  }
+
+  return await getRouteCustomers(routeId);
 }
