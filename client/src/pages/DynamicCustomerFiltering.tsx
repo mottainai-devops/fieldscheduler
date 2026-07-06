@@ -17,7 +17,7 @@ interface Customer {
   email?: string;
   phone?: string;
   address?: string;
-  customermaf?: string;
+  maf?: string;
   latitude?: string;
   longitude?: string;
   priority?: string;
@@ -53,7 +53,7 @@ export default function DynamicCustomerFiltering() {
     }
 
     let filtered = allCustomers.filter((customer) =>
-      selectedTags.includes(customer.customermaf || "")
+      selectedTags.includes(customer.maf || "")
     );
 
     // Apply search filter
@@ -327,7 +327,7 @@ export default function DynamicCustomerFiltering() {
                         <div className="flex-1">
                           <h3 className="font-semibold text-white">{customer.name}</h3>
                           <div className="flex gap-2 mt-2 flex-wrap">
-                            <Badge className="bg-blue-600 text-white font-mono">{customer.customermaf}</Badge>
+                            <Badge className="bg-blue-600 text-white font-mono">{customer.maf}</Badge>
                             {customer.buildingId && (
                               <Badge className="bg-slate-600 text-slate-100">{customer.buildingId}</Badge>
                             )}

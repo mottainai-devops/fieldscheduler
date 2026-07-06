@@ -630,12 +630,12 @@ export async function getPendingAssignmentRoutes() {
         .where(eq(routeCustomers.routeId, route.id));
       // Fetch MAF codes for lot-coverage grouping in PendingAssignments supervisor picker
       const mafResult = await db
-        .select({ customermaf: customers.customermaf })
+        .select({ maf: customers.maf })
         .from(routeCustomers)
         .innerJoin(customers, eq(routeCustomers.customerId, customers.id))
         .where(eq(routeCustomers.routeId, route.id));
       const customerMafs = mafResult
-        .map((r) => r.customermaf)
+        .map((r) => r.maf)
         .filter((m): m is string => !!m);
       return { ...route, customerCount: Number(countResult[0]?.count || 0), customerMafs };
     })

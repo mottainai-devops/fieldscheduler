@@ -24,7 +24,7 @@ interface PickupModalProps {
     phone?: string;
     email?: string;
     address?: string;
-    customermaf?: string;
+    maf?: string;
     unitCode?: string;
     arcgisBuildingId?: string;
     latitude?: string | number;
@@ -144,7 +144,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
       const raw = localStorage.getItem("lots.cache");
       if (!raw) return undefined;
       const lots: Array<{ lotCode: string; paytWebhook?: string | null; monthlyWebhook?: string | null }> = JSON.parse(raw);
-      const lotMatch = (customer.customermaf || "").match(/-?(\d+)$/);
+      const lotMatch = (customer.maf || "").match(/-?(\d+)$/);
       const lotCode = lotMatch ? lotMatch[1] : null;
       if (!lotCode) return undefined;
       const lot = lots.find((l) =>
@@ -161,8 +161,8 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
   })();
   // Fallback: live admin dashboard call when cache is absent or lot not found
   const { data: webhookDataFallback } = trpc.workerAuth.getWebhookForCustomer.useQuery(
-    { customermaf: customer.customermaf || "", webhookType },
-    { enabled: !!customer.customermaf && step === "form" && !webhookData }
+    { maf: customer.maf || "", webhookType },
+    { enabled: !!customer.maf && step === "form" && !webhookData }
   );
   const resolvedWebhookData = webhookData ?? webhookDataFallback;
 
@@ -223,7 +223,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
     }
 
     // Derive lot code from customer MAF (e.g. "DIC-410" -> "410")
-    const lotMatch = (customer.customermaf || "").match(/-?(\d+)$/);
+    const lotMatch = (customer.maf || "").match(/-?(\d+)$/);
     const lotCode = lotMatch ? lotMatch[1] : defaultLotCode;
 
     setSubmitting(true);
@@ -273,7 +273,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
           arcgisBuildingId: customer.arcgisBuildingId || "",
           compositeCustomerId: offlineCompositeId,
           customerType: offlineCustomerType,
-          mafCode: customer.customermaf || "",
+          mafCode: customer.maf || "",
           latitude: String(customer.latitude || ""),
           longitude: String(customer.longitude || ""),
           lotCode,
@@ -350,8 +350,8 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
       appendIfPresent(formData, "unitCode", customer.unitCode);
       appendIfPresent(formData, "arcgisBuildingId", customer.arcgisBuildingId);
       appendIfPresent(formData, "buildingId", customer.arcgisBuildingId);
-      appendIfPresent(formData, "mafCode", customer.customermaf);
-      appendIfPresent(formData, "userIdentificationNumber", customer.customermaf);
+      appendIfPresent(formData, "mafCode", customer.maf);
+      appendIfPresent(formData, "userIdentificationNumber", customer.maf);
       appendIfPresent(formData, "latitude", customer.latitude != null ? String(customer.latitude) : null);
       appendIfPresent(formData, "longitude", customer.longitude != null ? String(customer.longitude) : null);
       appendIfPresent(formData, "lotCode", lotCode);
@@ -457,7 +457,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
           <div className="space-y-4 pt-2">
             {/* Customer info summary */}
             <div className="bg-slate-700/50 rounded-lg p-3 text-sm space-y-1">
-              <p className="text-slate-300"><span className="text-slate-500">MAF:</span> {customer.customermaf || "—"}</p>
+              <p className="text-slate-300"><span className="text-slate-500">MAF:</span> {customer.maf || "—"}</p>
               <p className="text-slate-300"><span className="text-slate-500">Address:</span> {customer.address || "—"}</p>
               <p className="text-slate-300">
                 <span className="text-slate-500">Billing:</span>{" "}
@@ -465,7 +465,7 @@ export default function PickupModal({ open, onClose, onSuccess, routeId, schedul
                   {webhookType === "payt" ? "PAYT" : "Monthly"}
                 </span>
               </p>
-              {!resolvedWebhookData?.webhookUrl && customer.customermaf && (
+              {!resolvedWebhookData?.webhookUrl && customer.maf && (
                 <p className="text-amber-400 text-xs flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3" /> Webhook URL not found for this lot
                 </p>

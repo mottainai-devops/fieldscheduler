@@ -227,7 +227,7 @@ export const fieldWorkerRouter = router({
   createCustomer: adminProcedure
     .use(driftLogger('createCustomer', {
       shape: {
-        name: true, email: true, phone: true, address: true, customermaf: true,
+        name: true, email: true, phone: true, address: true, maf: true,
         fieldManager: true, latitude: true, longitude: true, serviceType: true,
         priority: true, buildingId: true, zohoContactId: true, coordinateSource: true,
         isMainBuilding: true, mainBuildingCustomerId: true,
@@ -238,7 +238,7 @@ export const fieldWorkerRouter = router({
       email: z.string().optional(),
       phone: z.string().optional(),
       address: z.string().optional(),
-      customermaf: z.string().optional(),
+      maf: z.string().optional(),
       fieldManager: z.number().optional(),
       latitude: z.string().optional(),
       longitude: z.string().optional(),
@@ -262,7 +262,7 @@ export const fieldWorkerRouter = router({
       email: z.string().optional(),
       phone: z.string().optional(),
       address: z.string().optional(),
-      customermaf: z.string().optional(),
+      maf: z.string().optional(),
       fieldManager: z.number().optional(),
       assignmentStatus: z.string().optional(),
       latitude: z.string().optional(),

@@ -549,13 +549,13 @@ export const workerAuthRouter = router({
   // Get the webhook URL for a customer's MAF code from the admin dashboard
   getWebhookForCustomer: publicProcedure
     .input(z.object({
-      customermaf: z.string(),
+      maf: z.string(),
       webhookType: z.enum(["payt", "monthly"]),
     }))
     .query(async ({ input }) => {
       try {
         // Extract lot number from MAF code (e.g. "DIC-410" -> "410", "AFT-099" -> "099")
-        const lotMatch = input.customermaf.match(/-?(\d+)$/);
+        const lotMatch = input.maf.match(/-?(\d+)$/);
         if (!lotMatch) return { webhookUrl: null };
         const lotNumber = lotMatch[1];
 

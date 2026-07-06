@@ -90,7 +90,7 @@ export default function ClusterManagement() {
   // Get all unique building IDs from clusters
   const allClusters = asArray(clusters);
   const buildingIds = Array.from(new Set(
-    allClusters.flatMap(c => c.customers.map(cust => cust.customermaf)).filter(Boolean)
+    allClusters.flatMap(c => c.customers.map(cust => cust.maf)).filter(Boolean)
   )).sort();
 
   // Get all unique field managers from clusters
@@ -104,7 +104,7 @@ export default function ClusterManagement() {
 
     // Apply primary filter (either building OR manager, not both)
     if (primaryFilterType === 'building' && filterBuilding !== 'none') {
-      filteredCustomers = filteredCustomers.filter(c => c.customermaf === filterBuilding);
+      filteredCustomers = filteredCustomers.filter(c => c.maf === filterBuilding);
     } else if (primaryFilterType === 'manager' && filterManager !== 'none') {
       filteredCustomers = filteredCustomers.filter(c => c.fieldManager === filterManager);
     }

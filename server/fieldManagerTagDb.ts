@@ -175,7 +175,7 @@ export async function getCustomersForTag(customermaf: string) {
     return await db
       .select()
       .from(customers)
-      .where(eq(customers.customermaf, customermaf));
+      .where(eq(customers.maf, customermaf));
   } catch (error) {
     console.error("[FieldManagerTagDb] Failed to get customers for tag:", error);
     return [];
@@ -201,7 +201,7 @@ export async function getCustomersForFieldManager(fieldManagerId: number) {
       .from(customers)
       .where(
         customermafCodes.length === 1
-          ? eq(customers.customermaf, customermafCodes[0])
+          ? eq(customers.maf, customermafCodes[0])
           : undefined
       );
   } catch (error) {

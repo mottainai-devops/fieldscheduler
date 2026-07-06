@@ -87,7 +87,7 @@ export default function CreateRoute() {
       result = result.filter((c: any) => c.fieldManager?.toString() === selectedFieldManager);
     }
     if (selectedMAF) {
-      result = result.filter((c: any) => c.customermaf === selectedMAF);
+      result = result.filter((c: any) => c.maf === selectedMAF);
     }
     if (selectedCustomerType) {
       result = result.filter((c: any) => c.customerType === selectedCustomerType);
@@ -185,7 +185,7 @@ export default function CreateRoute() {
     }
     const selectedCustomerData = asArray(customers).filter(c => customerIds.includes(c.id));
     const unmatched = selectedCustomerData.filter(c => {
-      const maf = (c.customermaf || '').trim();
+      const maf = (c.maf || '').trim();
       if (!maf) return false;
       return !supLots.some((l: any) => lotCodesMatch(String(l.lotCode), maf));
     });
@@ -196,7 +196,7 @@ export default function CreateRoute() {
       blocked: true,
       group: 'partial_coverage',
       badge: `✗ ${unmatched.length} lot${unmatched.length !== 1 ? 's' : ''} missing`,
-      unmatchedMafs: unmatched.map(c => c.customermaf),
+      unmatchedMafs: unmatched.map(c => c.maf),
     };
   };
 
@@ -242,11 +242,11 @@ export default function CreateRoute() {
         new Set(
           asArray(customers)
             .filter(c => c.fieldManager?.toString() === selectedFieldManager)
-            .map(c => c.customermaf)
+            .map(c => c.maf)
             .filter(Boolean)
         )
       ).sort()
-    : Array.from(new Set(asArray(customers).map(c => c.customermaf).filter(Boolean))).sort();
+    : Array.from(new Set(asArray(customers).map(c => c.maf).filter(Boolean))).sort();
   
   const hasActiveFilters = selectedFieldManager || selectedMAF || selectedCustomerType || selectedRouteStatus || searchQuery;
   
@@ -681,10 +681,10 @@ export default function CreateRoute() {
                             <h3 className="font-medium text-white">{customer.name}</h3>
                             <div className="flex items-center gap-2">
                               <span className={`text-xs px-2 py-1 rounded ${
-                                customer.customermaf ? "bg-blue-600/20 text-blue-400" :
+                                customer.maf ? "bg-blue-600/20 text-blue-400" :
                                 "bg-gray-600/20 text-gray-400"
                               }`}>
-                                {customer.customermaf || "No MAF"}
+                                {customer.maf || "No MAF"}
                               </span>
                               {selectedCustomers.includes(customer.id) && (
                                 <CheckCircle className="w-4 h-4 text-blue-400" />

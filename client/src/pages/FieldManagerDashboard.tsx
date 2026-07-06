@@ -545,7 +545,7 @@ export default function FieldManagerDashboard() {
         {/* ── Panel 5: Per-MAF Breakdown (T31) ─────────────────────────────── */}
         {/* Full-width row below Outstanding Balances / Recent Routes.           */}
         {/* Driven by the same From/To date range as Revenue (Decision i).      */}
-        {/* NULL customermaf rows shown as "(No MAF set)" (Decision 3).         */}
+        {/* NULL maf rows shown as "(No MAF set)" (Decision 3). Column renamed customermaf→maf in T38. */}
         {/* Sort: outstanding DESC (Decision 2). Completion: "—" if null (Decision 1). */}
         <Card className="bg-slate-800 border-slate-700">
           <CardHeader className="pb-3">

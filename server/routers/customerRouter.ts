@@ -29,7 +29,7 @@ export const customerRouter = router({
       latitude: z.number().optional(),
       longitude: z.number().optional(),
       zohoContactId: z.string().optional(),
-      customermaf: z.string().optional(),
+      maf: z.string().optional(),
       fieldManager: z.number().optional(),
     }))
     .mutation(async ({ input }) => {

@@ -257,7 +257,7 @@ export const fieldManagerRouter = router({
    * Returns:
    *   - items: Array of {
    *       maf: string | null,          — MAF code; null rendered as "(No MAF set)"
-   *       customerCount: number,       — customers.fieldManager = fmId with this customermaf
+   *       customerCount: number,       — customers.fieldManager = fmId with this maf
    *       revenue: number,             — SUM(invoices.total) for this MAF + FM + date range
    *       outstanding: number,         — SUM(invoices.balance) where balance>0 + status filter
    *       invoiceCount: number,        — COUNT of non-void invoices in date range
@@ -266,7 +266,7 @@ export const fieldManagerRouter = router({
    *   - summary: { totalCustomers, totalRevenue, totalOutstanding, totalInvoices }
    *
    * Design decisions (T31):
-   *   - NULL customermaf rows included as a distinct row (Decision 3)
+   *   - NULL maf rows included as a distinct row (Decision 3)
    *   - Rows with customers but no invoices included (Bukola case)
    *   - Rows with invoices but no customers included (edge case)
    *   - Sort: outstanding DESC (Decision 2)
@@ -303,11 +303,11 @@ export const fieldManagerRouter = router({
       // customers.fieldManager is INT (not fieldManagerId — confirmed T31 investigation)
       const customerResult = await db.execute(sql`
         SELECT
-          customermaf AS maf,
+          maf,
           COUNT(*) AS customerCount
         FROM customers
         WHERE fieldManager = ${fmId}
-        GROUP BY customermaf
+        GROUP BY maf
       `);
       const customerRows = (customerResult[0] as unknown) as any[];
 
@@ -352,7 +352,7 @@ export const fieldManagerRouter = router({
       // routeCustomers → routes → customers; filter by routes.workerId = fmId
       const completionResult = await db.execute(sql`
         SELECT
-          c.customermaf AS maf,
+          c.maf,
           COUNT(*) AS totalStops,
           SUM(CASE WHEN rc.completion_type = 'picked' THEN 1 ELSE 0 END) AS picked
         FROM routeCustomers rc
@@ -360,7 +360,7 @@ export const fieldManagerRouter = router({
         JOIN customers c ON rc.customerId = c.id
         WHERE r.workerId = ${fmId}
           AND r.scheduledDate >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 30 DAY), '%Y-%m-%d')
-        GROUP BY c.customermaf
+        GROUP BY c.maf
       `);
       const completionRows = (completionResult[0] as unknown) as any[];
 

@@ -14,7 +14,7 @@ interface FilterPreset {
     priority?: string[];
     manager?: string[];
     dateRange?: { start: string; end: string };
-    customermaf?: string[];
+    maf?: string[];
   };
   createdAt: Date;
 }
@@ -28,7 +28,7 @@ export default function AdvancedFilters() {
     priority: [] as string[],
     manager: [] as string[],
     dateRange: { start: "", end: "" },
-    customermaf: [] as string[],
+    maf: [] as string[],
   });
 
   // Load presets from localStorage on mount
@@ -87,7 +87,7 @@ export default function AdvancedFilters() {
       priority: [],
       manager: [],
       dateRange: { start: "", end: "" },
-      customermaf: [],
+      maf: [],
     });
   };
 
@@ -221,9 +221,9 @@ export default function AdvancedFilters() {
               {["AFT-200", "AFT-221", "AFT-099", "DIC-087", "MOT-108", "HSY-060"].map((id) => (
                 <Button
                   key={id}
-                  onClick={() => toggleFilter("customermaf", id)}
+                  onClick={() => toggleFilter("maf", id)}
                   className={`text-xs ${
-                    selectedFilters.customermaf.includes(id)
+                    selectedFilters.maf.includes(id)
                       ? "bg-purple-600 hover:bg-purple-700 text-white"
                       : "bg-slate-700 hover:bg-slate-600 text-slate-300"
                   }`}

@@ -5,26 +5,27 @@
  *
  * Background (T32 investigation):
  *   The MAF concept uses two different column names across the schema:
- *   - customers.customermaf  — the customer's assigned MAF category (e.g. "Low income", "High income")
- *   - invoices.maf           — the MAF tag on a Zoho invoice (mirrors customers.customermaf at sync time)
+ *   - customers.maf  — the customer's assigned MAF category (e.g. "Low income", "High income")
+ *                      (renamed from customers.customermaf in T38)
+ *   - invoices.maf   — the MAF tag on a Zoho invoice (mirrors customers.maf at sync time)
  *
- *   These are intentionally different column names (Option A decision, T32). No schema migration
- *   is planned. These constants document the split and allow query aliases to be written consistently:
- *     SELECT customermaf AS maf FROM customers  — normalises to a single 'maf' key in results
+ *   T38 renamed customers.customermaf → customers.maf so both columns now share the same
+ *   name 'maf'. CUSTOMER_MAF_COLUMN is kept as a constant for raw SQL consumers; the
+ *   AS alias is now a no-op (maf AS maf) but retained for symmetry.
  *
  * Usage:
  *   import { CUSTOMER_MAF_COLUMN, INVOICE_MAF_COLUMN, MAF_ALIAS } from '@shared/constants/maf';
  *
  *   // In raw SQL strings:
- *   `SELECT ${CUSTOMER_MAF_COLUMN} AS ${MAF_ALIAS} FROM customers`
+ *   `SELECT ${CUSTOMER_MAF_COLUMN} FROM customers`
  *   `GROUP BY ${INVOICE_MAF_COLUMN}`
  *
  *   // In Drizzle ORM select (use the schema field directly — these constants are for raw SQL only):
- *   db.select({ maf: customers.customermaf })
+ *   db.select({ maf: customers.maf })
  */
 
-/** Column name on the customers table: `customermaf` */
-export const CUSTOMER_MAF_COLUMN = 'customermaf' as const;
+/** Column name on the customers table: `maf` (renamed from `customermaf` in T38) */
+export const CUSTOMER_MAF_COLUMN = 'maf' as const;
 
 /** Column name on the invoices table: `maf` */
 export const INVOICE_MAF_COLUMN = 'maf' as const;

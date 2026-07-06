@@ -20,7 +20,7 @@ export default function FieldManagerQuickStats() {
   const totalManagers = Object.keys(allTags).length;
   const pendingRoutes = routes.filter((r) => r.status === "pending").length;
   const activeRoutes = routes.filter((r) => r.status === "in_progress").length;
-  const filteredCustomersCount = allCustomers.filter((c) => c.customermaf).length;
+  const filteredCustomersCount = allCustomers.filter((c) => c.maf).length;
 
   const isLoading = tagsLoading || customersLoading || routesLoading || workersLoading;
 

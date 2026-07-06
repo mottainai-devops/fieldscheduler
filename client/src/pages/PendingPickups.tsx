@@ -330,7 +330,7 @@ export default function PendingPickups() {
             phone: editPickup.customerPhone,
             email: editPickup.customerEmail,
             address: editPickup.customerAddress,
-            customermaf: editPickup.mafCode,
+            maf: editPickup.mafCode,
             unitCode: editPickup.unitCode,
             arcgisBuildingId: editPickup.arcgisBuildingId,
             latitude: editPickup.latitude,

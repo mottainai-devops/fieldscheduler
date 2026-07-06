@@ -92,7 +92,7 @@ export const customers = mysqlTable("customers", {
   email: varchar("email", { length: 320 }),
   phone: varchar("phone", { length: 50 }),
   address: text("address"),
-  customermaf: varchar("customermaf", { length: 100 }),
+  maf: varchar("maf", { length: 100 }),
   fieldManager: int("fieldManager").references(() => workers.id),
   routeAssignmentStatus: mysqlEnum("routeAssignmentStatus", ["assigned", "unassigned", "untreated"]).default("unassigned"),
   latitude: varchar("latitude", { length: 50 }),

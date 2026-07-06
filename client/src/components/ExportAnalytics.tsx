@@ -22,7 +22,7 @@ export default function ExportAnalytics() {
   const activeRoutes = routes.filter((r) => r.status === "in_progress").length;
   const completedRoutes = routes.filter((r) => r.status === "completed").length;
   const pendingRoutes = routes.filter((r) => r.status === "pending").length;
-  const taggedCustomers = allCustomers.filter((c) => c.customermaf).length;
+  const taggedCustomers = allCustomers.filter((c) => c.maf).length;
 
   const isLoading = tagsLoading || customersLoading || routesLoading || workersLoading;
 

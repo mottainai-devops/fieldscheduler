@@ -65,7 +65,7 @@ export default function AreaRouteCreation() {
   // Apply primary filter (either building OR field manager, not both)
   if (primaryFilterType === 'building' && filterBuilding !== "none") {
     unassignedCustomers = unassignedCustomers.filter(
-      customer => customer.customermaf === filterBuilding
+      customer => customer.maf === filterBuilding
     );
   } else if (primaryFilterType === 'manager' && filterFieldManager !== "none") {
     unassignedCustomers = unassignedCustomers.filter(

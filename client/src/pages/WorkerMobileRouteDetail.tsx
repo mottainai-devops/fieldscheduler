@@ -276,8 +276,8 @@ export default function WorkerMobileRouteDetail() {
                       <h4 className="font-semibold text-white mb-1">
                         {customer.customer?.name || "Unknown Customer"}
                       </h4>
-                      {customer.customer?.customermaf && (
-                        <p className="text-xs text-slate-500 mb-1">{customer.customer.customermaf}</p>
+                      {customer.customer?.maf && (
+                        <p className="text-xs text-slate-500 mb-1">{customer.customer.maf}</p>
                       )}
                       {customer.customer?.address && (
                         <p className="text-sm text-slate-400">{customer.customer.address}</p>

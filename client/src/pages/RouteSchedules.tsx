@@ -507,7 +507,7 @@ function CustomerOverrideDialog({
               <div key={rc.customerId} className="flex items-center justify-between bg-slate-900 rounded-lg px-3 py-2">
                 <div>
                   <p className="text-sm font-medium text-white">{rc.customer?.name ?? `Customer #${rc.customerId}`}</p>
-                  {rc.customer?.customermaf && <p className="text-xs text-slate-500">{rc.customer.customermaf}</p>}
+                  {rc.customer?.maf && <p className="text-xs text-slate-500">{rc.customer.maf}</p>}
                   {rc.overrideType === 'added' && (
                     <span className="text-xs text-green-400 flex items-center gap-1"><UserPlus className="w-3 h-3" /> Added for this occurrence</span>
                   )}
@@ -551,7 +551,7 @@ function CustomerOverrideDialog({
             >
               <option value="">Select customer...</option>
               {(allCustomers as any[]).filter(c => !resolvedCustomers.some((rc: any) => rc.customerId === c.id)).map((c: any) => (
-                <option key={c.id} value={String(c.id)}>{c.name} {c.customermaf ? `(${c.customermaf})` : ''}</option>
+                <option key={c.id} value={String(c.id)}>{c.name} {c.maf ? `(${c.maf})` : ''}</option>
               ))}
             </select>
             <Button size="sm" onClick={handleAdd} disabled={!addCustomerId} className="bg-purple-600 hover:bg-purple-700">

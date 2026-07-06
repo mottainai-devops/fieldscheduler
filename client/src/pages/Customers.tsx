@@ -31,7 +31,7 @@ export default function Customers() {
   const availableMAFs = useMemo(() => {
     if (!selectedFieldManager) {
       // Show all MAFs if no field manager selected
-      return [...new Set(customers.map(c => c.customermaf).filter(Boolean))].sort();
+      return [...new Set(customers.map(c => c.maf).filter(Boolean))].sort();
     }
     
     // Filter MAFs by selected field manager
@@ -39,7 +39,7 @@ export default function Customers() {
     return [...new Set(
       customers
         .filter(c => c.fieldManager === fieldManagerId)
-        .map(c => c.customermaf)
+        .map(c => c.maf)
         .filter(Boolean)
     )].sort();
   }, [customers, selectedFieldManager]);
@@ -82,9 +82,9 @@ export default function Customers() {
       // MAF filter
       if (selectedMAF) {
         if (selectedMAF === "no_maf") {
-          if (customer.customermaf !== null) return false;
+          if (customer.maf !== null) return false;
         } else {
-          if (customer.customermaf !== selectedMAF) return false;
+          if (customer.maf !== selectedMAF) return false;
         }
       }
 
@@ -121,7 +121,7 @@ export default function Customers() {
 
   // Quick stats
   const stats = useMemo(() => {
-    const uniqueMAFs = new Set(customers.map(c => c.customermaf).filter(Boolean));
+    const uniqueMAFs = new Set(customers.map(c => c.maf).filter(Boolean));
     const managersCount = new Set(customers.map(c => c.fieldManager).filter(Boolean)).size;
     const routeAssigned = customers.filter(c => c.routeAssignmentStatus === "assigned").length;
     const untreated = customers.filter(c => c.routeAssignmentStatus === "untreated").length;
@@ -281,10 +281,10 @@ export default function Customers() {
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="font-medium text-white">{customer.name}</h3>
                   <span className={`text-xs px-2 py-1 rounded ${
-                    customer.customermaf ? "bg-blue-600/20 text-blue-400" :
+                    customer.maf ? "bg-blue-600/20 text-blue-400" :
                     "bg-gray-600/20 text-gray-400"
                   }`}>
-                    {customer.customermaf || "No MAF"}
+                    {customer.maf || "No MAF"}
                   </span>
                 </div>
                 
