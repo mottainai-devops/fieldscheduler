@@ -14,13 +14,35 @@ import * as zoho from "./zoho";
  * Upsert key: zohoInvoiceId (UNIQUE on invoices table).
  * On duplicate: update status, balance, fieldManagerId, maf, customerName, updatedAt.
  */
-export async function syncAllInvoices(): Promise<{ success: number; failed: number; total: number }> {
+/**
+ * T48 rate-limit sentinel: Zoho returns HTTP 429 with code 45 when the daily
+ * limit (11,000 calls) is exceeded. We detect this and stop cleanly so the
+ * next scheduled run can resume from the beginning (idempotent upserts mean
+ * already-synced invoices are just updated, not duplicated).
+ */
+function isZohoRateLimitError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown>;
+  // Axios-style: err.response.status === 429
+  if (e['response'] && typeof e['response'] === 'object') {
+    const resp = e['response'] as Record<string, unknown>;
+    if (resp['status'] === 429) return true;
+    // Zoho also embeds { code: 45 } in the response data
+    if (resp['data'] && typeof resp['data'] === 'object') {
+      const data = resp['data'] as Record<string, unknown>;
+      if (data['code'] === 45) return true;
+    }
+  }
+  return false;
+}
+
+export async function syncAllInvoices(): Promise<{ success: number; failed: number; total: number; rateLimited: boolean }> {
   console.log('[Zoho Financial Sync] Starting invoice sync (T48)...');
 
   const db = await getDb();
   if (!db) {
     console.error('[Zoho Financial Sync] Database not available');
-    return { success: 0, failed: 0, total: 0 };
+    return { success: 0, failed: 0, total: 0, rateLimited: false };
   }
 
   // Get all customers with Zoho contact IDs
@@ -37,8 +59,12 @@ export async function syncAllInvoices(): Promise<{ success: number; failed: numb
 
   let success = 0;
   let failed = 0;
+  let rateLimited = false;
 
   for (const customer of customersWithZoho) {
+    // Stop immediately if we already hit the rate limit on a previous customer
+    if (rateLimited) break;
+
     try {
       if (!customer.zohoContactId) continue;
 
@@ -97,13 +123,19 @@ export async function syncAllInvoices(): Promise<{ success: number; failed: numb
       await new Promise(resolve => setTimeout(resolve, 100));
 
     } catch (customerError) {
+      if (isZohoRateLimitError(customerError)) {
+        console.warn(`[Zoho Financial Sync] Rate limit hit after ${success} invoices. Stopping cleanly — next run will resume from the beginning (upsert is idempotent).`);
+        rateLimited = true;
+        break;
+      }
       console.error(`[Zoho Financial Sync] Failed to sync invoices for customer ${customer.name}:`, customerError);
       failed++;
     }
   }
 
-  console.log(`[Zoho Financial Sync] Invoice sync complete: ${success} upserted, ${failed} failed, ${customersWithZoho.length} customers processed`);
-  return { success, failed, total: customersWithZoho.length };
+  const statusMsg = rateLimited ? 'stopped (rate limited)' : 'complete';
+  console.log(`[Zoho Financial Sync] Invoice sync ${statusMsg}: ${success} upserted, ${failed} failed, ${customersWithZoho.length} customers total`);
+  return { success, failed, total: customersWithZoho.length, rateLimited };
 }
 
 /**

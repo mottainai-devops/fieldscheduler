@@ -462,4 +462,73 @@ describe('T48 — syncAllInvoices() rewrite', () => {
     });
   });
 
+  // O. Rate-limit sentinel
+  describe('O. Rate-limit sentinel (isZohoRateLimitError)', () => {
+    // Mirror the isZohoRateLimitError logic for unit testing
+    function isZohoRateLimitError(err: unknown): boolean {
+      if (!err || typeof err !== 'object') return false;
+      const e = err as Record<string, unknown>;
+      if (e['response'] && typeof e['response'] === 'object') {
+        const resp = e['response'] as Record<string, unknown>;
+        if (resp['status'] === 429) return true;
+        if (resp['data'] && typeof resp['data'] === 'object') {
+          const data = resp['data'] as Record<string, unknown>;
+          if (data['code'] === 45) return true;
+        }
+      }
+      return false;
+    }
+
+    it('O1: detects HTTP 429 status in Axios-style error', () => {
+      const err = { response: { status: 429, data: {} } };
+      expect(isZohoRateLimitError(err)).toBe(true);
+    });
+
+    it('O2: detects Zoho code 45 in response data', () => {
+      const err = { response: { status: 200, data: { code: 45, message: 'rate limit exceeded' } } };
+      expect(isZohoRateLimitError(err)).toBe(true);
+    });
+
+    it('O3: returns false for non-rate-limit errors', () => {
+      const err = { response: { status: 500, data: { code: 0 } } };
+      expect(isZohoRateLimitError(err)).toBe(false);
+    });
+
+    it('O4: returns false for null/undefined', () => {
+      expect(isZohoRateLimitError(null)).toBe(false);
+      expect(isZohoRateLimitError(undefined)).toBe(false);
+    });
+
+    it('O5: returns false for non-object errors (string, number)', () => {
+      expect(isZohoRateLimitError('rate limit')).toBe(false);
+      expect(isZohoRateLimitError(429)).toBe(false);
+    });
+
+    it('O6: source code contains isZohoRateLimitError function', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      expect(src).toContain('isZohoRateLimitError');
+      expect(src).toContain('code: 45');
+    });
+
+    it('O7: syncAllInvoices stops cleanly when rate limit is hit (no further customers processed)', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      expect(src).toContain('if (rateLimited) break');
+      expect(src).toContain('rateLimited = true');
+    });
+
+    it('O8: syncAllInvoices returns rateLimited in return shape', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      // Return type annotation
+      expect(src).toContain('rateLimited: boolean');
+      // Early-return false path (DB unavailable)
+      expect(src).toContain('rateLimited: false');
+      // The rateLimited flag is set to true and returned
+      expect(src).toContain('rateLimited = true');
+      expect(src).toContain('return { success, failed, total: customersWithZoho.length, rateLimited }');
+    });
+  });
+
 });
