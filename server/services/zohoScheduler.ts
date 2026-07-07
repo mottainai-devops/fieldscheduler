@@ -127,14 +127,20 @@ async function executeSyncJob(jobId: number, jobName: string) {
     }
 
     // T48 Fix 4: Wire invoice sync into scheduler (runs after payments)
-    console.log('[Zoho Scheduler] Starting invoice sync...');
-    try {
-      const invoiceResult = await syncAllInvoices();
-      invoiceSyncedCount = invoiceResult.success;
-      invoiceFailedCount = invoiceResult.failed;
-      console.log(`[Zoho Scheduler] Invoice sync complete: ${invoiceResult.success} upserted, ${invoiceResult.failed} failed`);
-    } catch (invoiceError) {
-      console.error('[Zoho Scheduler] Invoice sync failed (non-fatal):', invoiceError);
+    // T49: ZOHO_INVOICE_SYNC_ENABLED=false disables invoice sync while attribution format bug is being fixed
+    const invoiceSyncEnabled = process.env.ZOHO_INVOICE_SYNC_ENABLED !== 'false';
+    if (invoiceSyncEnabled) {
+      console.log('[Zoho Scheduler] Starting invoice sync...');
+      try {
+        const invoiceResult = await syncAllInvoices();
+        invoiceSyncedCount = invoiceResult.success;
+        invoiceFailedCount = invoiceResult.failed;
+        console.log(`[Zoho Scheduler] Invoice sync complete: ${invoiceResult.success} upserted, ${invoiceResult.failed} failed`);
+      } catch (invoiceError) {
+        console.error('[Zoho Scheduler] Invoice sync failed (non-fatal):', invoiceError);
+      }
+    } else {
+      console.log('[Zoho Scheduler] Invoice sync DISABLED via ZOHO_INVOICE_SYNC_ENABLED=false (T49 attribution fix pending)');
     }
 
     const durationMs = Date.now() - startTime;
