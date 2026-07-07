@@ -4845,3 +4845,36 @@ Build: 31.45s. PM2 online. HTTP 200 confirmed.
 | LOW | `loginAttempts` periodic cleanup job (rows older than 24h) |
 | LOW | `adminUsers` table + `adminAuthDb.ts` cleanup |
 | LOW | `SUPERADMIN_WORKER_IDS` / `ADMIN_WORKER_IDS` dead code removal |
+
+---
+
+## T47 — Invoice Sync Coverage Gap: Forensic Investigation
+
+**Status:** Complete (read-only investigation)  
+**Commit:** N/A (no code changes — findings only)  
+**Date:** 2026-07-07
+
+### Findings Summary
+
+Three root causes explain why the Financial Dashboard shows only 251 invoices against 7,941 customers:
+
+**Root Cause 1 (PRIMARY):** `syncAllInvoices()` is never called by the scheduler. The scheduled job calls `syncZohoContacts()` then `syncAllPayments()` — invoice sync was written but never wired. All 251 invoices are from a one-time manual import in November 2025.
+
+**Root Cause 2 (SECONDARY):** Collation mismatch (`utf8mb4_0900_ai_ci` vs `utf8mb4_unicode_ci`) prevents the `invoices.zohoCustomerId → customers.zohoContactId` join from working at runtime.
+
+**Root Cause 3 (TERTIARY):** The 201 Zoho-synced invoices (Population B) have `fieldManagerId = NULL` and `maf = NULL` — invisible to all FM/MAF-filtered dashboard views. `syncAllInvoices()` does not resolve FM/MAF attribution from the customer record.
+
+### T48 Fix Brief
+
+| Priority | Fix | Complexity |
+|---|---|---|
+| CRITICAL | Wire `syncAllInvoices()` into scheduler | 5 lines |
+| CRITICAL | Populate `fieldManagerId`/`maf` during invoice sync | Medium |
+| MEDIUM | Add pagination to `getCustomerInvoices()` (per_page: 200) | Small |
+| MEDIUM | Fix collation mismatch on `invoices.zohoCustomerId` | 1 migration line |
+| LOW | Update `zohoSyncHistory` to track invoice sync results | Small |
+
+### Rule #91
+
+When a sync function is written, it must be wired into the scheduler in the same commit. A sync function that exists but is not called is equivalent to a sync function that does not exist.
+
