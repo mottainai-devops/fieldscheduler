@@ -791,17 +791,33 @@ export async function getCustomerInvoices(zohoContactId: string): Promise<any[]>
   }
 
   try {
-    const response = await axios.get(`${ZOHO_API_URL}/invoices`, {
-      headers: {
-        Authorization: `Zoho-oauthtoken ${accessToken}`,
-      },
-      params: {
-        customer_id: zohoContactId,
-        organization_id: ZOHO_ORGANIZATION_ID,
-      },
-    });
+    // T48 Fix 2: Paginate with per_page=200 to avoid missing invoices for high-volume customers
+    const allInvoices: any[] = [];
+    let page = 1;
+    let hasMorePages = true;
 
-    return response.data.invoices || [];
+    while (hasMorePages) {
+      const response = await axios.get(`${ZOHO_API_URL}/invoices`, {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`,
+        },
+        params: {
+          customer_id: zohoContactId,
+          organization_id: ZOHO_ORGANIZATION_ID,
+          per_page: 200,
+          page,
+        },
+      });
+
+      const pageInvoices = response.data.invoices || [];
+      allInvoices.push(...pageInvoices);
+
+      const pageContext = response.data.page_context;
+      hasMorePages = !!(pageContext && pageContext.has_more_page);
+      page++;
+    }
+
+    return allInvoices;
   } catch (error: any) {
     if (error.response?.status === 401) {
       const newToken = await refreshAccessToken();

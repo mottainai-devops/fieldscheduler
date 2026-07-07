@@ -404,6 +404,9 @@ export const zohoSyncHistory = mysqlTable("zohoSyncHistory", {
   failedContacts: int("failedContacts").default(0),
   fieldManagerCount: int("fieldManagerCount").default(0),
   customermafCount: int("customermafCount").default(0),
+  // T48 Fix 4: invoice sync tracking columns
+  invoiceSyncedCount: int("invoiceSyncedCount").default(0),
+  invoiceFailedCount: int("invoiceFailedCount").default(0),
   errorMessage: text("errorMessage"),
   errorStack: text("errorStack"),
   durationMs: int("durationMs"),

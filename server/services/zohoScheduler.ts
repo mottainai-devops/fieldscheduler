@@ -1,5 +1,5 @@
 import { syncZohoContacts } from "./zoho";
-import { syncAllPayments } from "./zohoFinancialSync";
+import { syncAllInvoices, syncAllPayments } from "./zohoFinancialSync";
 import { getDb } from "../db";
 import { zohoSyncHistory, zohoSyncJobs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -117,11 +117,24 @@ async function executeSyncJob(jobId: number, jobName: string) {
     // T28 Path A: wire payments sync after contacts sync.
     // Payments reference invoices semantically; contacts must be current first.
     console.log('[Zoho Scheduler] Starting payments sync...');
+    let invoiceSyncedCount = 0;
+    let invoiceFailedCount = 0;
     try {
       const paymentResult = await syncAllPayments();
       console.log(`[Zoho Scheduler] Payments sync complete: ${paymentResult.success} synced, ${paymentResult.failed} failed`);
     } catch (paymentError) {
       console.error('[Zoho Scheduler] Payments sync failed (non-fatal):', paymentError);
+    }
+
+    // T48 Fix 4: Wire invoice sync into scheduler (runs after payments)
+    console.log('[Zoho Scheduler] Starting invoice sync...');
+    try {
+      const invoiceResult = await syncAllInvoices();
+      invoiceSyncedCount = invoiceResult.success;
+      invoiceFailedCount = invoiceResult.failed;
+      console.log(`[Zoho Scheduler] Invoice sync complete: ${invoiceResult.success} upserted, ${invoiceResult.failed} failed`);
+    } catch (invoiceError) {
+      console.error('[Zoho Scheduler] Invoice sync failed (non-fatal):', invoiceError);
     }
 
     const durationMs = Date.now() - startTime;
@@ -135,6 +148,8 @@ async function executeSyncJob(jobId: number, jobName: string) {
       failedContacts: syncResult.errors,
       fieldManagerCount: syncResult.fieldManagerCount || 0,
       customermafCount: syncResult.customermafCount || 0,
+      invoiceSyncedCount,
+      invoiceFailedCount,
       durationMs,
       errorMessage: syncResult.success ? null : "Sync completed with errors",
     });
