@@ -4924,3 +4924,123 @@ When a sync function is rate-limited mid-run, it must stop cleanly (not retry) a
 | LOW | `loginAttempts` periodic cleanup job (rows older than 24h) |
 | LOW | `adminUsers` table + `adminAuthDb.ts` cleanup |
 | LOW | `SUPERADMIN_WORKER_IDS` / `ADMIN_WORKER_IDS` dead code removal |
+
+---
+
+## T49 — Invoice FM Attribution Format Fix (fieldManagerId name→ID backfill + forward-fix)
+
+**Status:** Complete  
+**Commits:** `7ba1f848` (forward-fix + tests)  
+**Date:** 2026-07-07
+
+### Root cause
+
+`syncAllInvoices()` (T48) stored the raw Zoho custom field string (e.g., `"Halleluyah"`) directly into `invoices.fieldManagerId`. All downstream queries (`financialRouter.ts`, `fieldManager.ts`) filter and join on `fieldManagerId` as a numeric worker ID string (e.g., `"7"`). This silent format divergence caused all FM-scoped financial queries to return zero results — no error, no crash.
+
+### Investigation results (Step A — full audit)
+
+| fieldManagerId value | Count | Total (₦) | Resolution |
+|---|---|---|---|
+| "Bukola" | 13,075 | ₦135,759,049.50 | → `'8'` |
+| "Halleluyah" | 11,678 | ₦392,201,432.80 | → `'7'` |
+| "Juwon" | 7,806 | ₦390,403,856.16 | → `'9'` |
+| "Low.low income" | 227 | ₦802,600.00 | → NULL (phantom) |
+| "Low low income" | 66 | ₦713,800.00 | → NULL (phantom) |
+| "Outside IbSW" | 51 | ₦212,550.00 | → NULL (territorial) |
+| NULL | 41 | ₦174,150.00 | Unchanged |
+| "Low.Low income." | 4 | ₦10,750.00 | → NULL (phantom) |
+| "Outside IBSW now Oluyole LGA." | 2 | ₦19,350.00 | → NULL (territorial) |
+
+**Owner decision:** Phantom workers (9683, 9722) and territorial labels are Zoho data quality artifacts. They should not be attributed to any worker. NULL is the correct representation. When Zoho is tagged correctly, the next sync catches it.
+
+### Fix 1 — Backfill (production DB, 2026-07-07)
+
+Pre-backfill backup: `~/invoices-pre-t49-backup-full.sql` (6.1 MB, 32,950 rows).
+
+```sql
+BEGIN;
+UPDATE invoices SET fieldManagerId = '7' WHERE fieldManagerId = 'Halleluyah';
+UPDATE invoices SET fieldManagerId = '8' WHERE fieldManagerId = 'Bukola';
+UPDATE invoices SET fieldManagerId = '9' WHERE fieldManagerId = 'Juwon';
+UPDATE invoices SET fieldManagerId = NULL 
+WHERE fieldManagerId IN ('Low low income', 'Low.low income', 'Low.Low income.', 'Outside IbSW', 'Outside IBSW now Oluyole LGA.');
+COMMIT;
+```
+
+**Post-backfill state:**
+
+| fieldManagerId | Count | Total (₦) |
+|---|---|---|
+| `'8'` (Bukola) | 13,075 | 135,759,049.50 |
+| `'7'` (Halleluyah) | 11,678 | 392,201,432.80 |
+| `'9'` (Juwon) | 7,806 | 390,403,856.16 |
+| NULL | 391 | 1,933,200.00 |
+
+String-name rows remaining: **0**. Total rows: **32,950** (unchanged).
+
+### Fix 2 — Forward-fix `syncAllInvoices()` (commit `7ba1f848`)
+
+| Change | File | Description |
+|---|---|---|
+| Import workers | `zohoFinancialSync.ts` | Added `workers` to schema import |
+| Build lookup map | `zohoFinancialSync.ts` | `workerIdByName = Map<string, string>` built from `workers` table (field_manager role) before sync loop |
+| Resolve FM name→ID | `zohoFinancialSync.ts` | `resolvedFieldManagerId = workerIdByName.get(rawName) ?? null` — stored in INSERT and ON DUPLICATE UPDATE |
+| Unmapped name logging | `zohoFinancialSync.ts` | `console.warn('[syncAllInvoices] Unmapped FM name: ...')` — observability without auto-creating workers |
+| Tests | `zohoFinancialSync.t48.test.ts` | Suite P (P1–P14): 14 new tests. Updated A1, E2, `simulateSyncAllInvoices()` |
+
+### Tests
+
+- 14 new tests (suite P) covering name→ID resolution
+- All 291 tests passing (was 277 before T49)
+
+### Rule #93
+
+**Sync write format and query filter format must be verified together.** When a sync function populates a column that downstream queries filter or join on, both sides' format expectations must be documented and tested as a pair. Silent format divergence (sync writes strings, queries expect numerics) produces zero query results without any error.
+
+### Rule #65 retirement
+
+Rule #65 ("update Bukola's Zoho invoices to set FIELD MANAGER") is **retired**. Investigation revealed the FIELD MANAGER field WAS set on Zoho invoices (value: `"Bukola"`). The gap was FieldScheduler's sync not resolving the string name to worker ID. T49 closed this. Rule #65 was a misdiagnosis based on T31's investigation that predated T47/T48 findings.
+
+> Original Rule #65 retired in T49. Root cause was FieldScheduler-side name→ID resolution gap, not Zoho-side FM tagging. Fixed by T49 backfill + forward-fix.
+
+### Rule #94 — Diagnosis reversibility
+
+When a bug's root cause is initially assigned to one system (e.g., Zoho FM tagging) and later investigation reveals a different root cause (e.g., our sync attribution logic), the engagement record must be updated to reflect the corrected understanding. Rules based on incorrect diagnoses must be explicitly retired, not left dangling.
+
+### T49 Phase 5 — Re-enable nightly sync
+
+The nightly invoice sync was disabled in T49 Phase 1 via `ZOHO_INVOICE_SYNC_ENABLED=false` in production `.env`. Both fixes are now deployed. To re-enable:
+
+1. Owner sets `ZOHO_INVOICE_SYNC_ENABLED=true` in production `.env` (or removes the line — defaults to enabled)
+2. `pm2 restart all`
+3. Verify next nightly run (2026-07-08T00:00:00Z) completes and Financial Dashboard shows correct per-FM breakdown
+
+### Behavioral verification checklist
+
+**Financial Dashboard (admin session):**
+- [ ] Bukola dashboard shows ~₦135M all-time revenue
+- [ ] Halleluyah dashboard shows ~₦392M all-time revenue
+- [ ] Juwon dashboard shows ~₦390M all-time revenue
+- [ ] Unattributed row (if displayed) shows 391 invoices
+- [ ] Sum of three FMs ≈ Zoho total minus unattributed
+
+**Ground truth alignment:**
+- [ ] Spot check: pick a Zoho INV-XXXXX, find it in FieldScheduler with correct FM attribution
+- [ ] Sum of per-FM outstanding ≈ Zoho outstanding minus unattributed
+
+**Forward-fix verification (post-next-sync):**
+- [ ] No string-name values in `invoices.fieldManagerId` after nightly run
+- [ ] Log shows `[syncAllInvoices] Unmapped FM name` for any untagged customers (not stored)
+
+### T50 carry-forward
+
+| Priority | Item |
+|---|---|
+| HIGH | Re-enable nightly sync: owner sets `ZOHO_INVOICE_SYNC_ENABLED=true`, PM2 restart |
+| HIGH | Monitor first nightly sync run (2026-07-08T00:00:00Z) — verify remaining ~3,241 customers synced |
+| HIGH | Contact sync failure investigation (separate issue from T49) |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| MEDIUM | Phantom worker table row deletion (9683, 9722) — discretionary |
+| LOW | `loginAttempts` periodic cleanup job (rows older than 24h) |
+| LOW | `adminUsers` table + `adminAuthDb.ts` cleanup |
+| LOW | `SUPERADMIN_WORKER_IDS` / `ADMIN_WORKER_IDS` dead code removal |
