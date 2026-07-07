@@ -4878,3 +4878,49 @@ Three root causes explain why the Financial Dashboard shows only 251 invoices ag
 
 When a sync function is written, it must be wired into the scheduler in the same commit. A sync function that exists but is not called is equivalent to a sync function that does not exist.
 
+
+---
+
+## T48 — Invoice Sync Coverage Gap: Fix + Controlled Sync Run
+**Status:** Complete  
+**Commits:** `f4a2d9c1` (foundation), `ba1a4848` (rate-limit sentinel)  
+**Date:** 2026-07-07
+
+### What was fixed
+
+| Fix | File | Description |
+|---|---|---|
+| Fix 1 | `zohoFinancialSync.ts` | Rewrote `syncAllInvoices()` to write to `invoices` table (not `zohoInvoices`) with FM/MAF attribution from Zoho custom fields (`customer_cf_field_manager`, `customer_cf_customermaf`). Added `isZohoRateLimitError` sentinel — detects HTTP 429 / Zoho code 45 and stops cleanly with `rateLimited: true` in return shape. |
+| Fix 2 | `zoho.ts` | Added pagination to `getCustomerInvoices()` — fetches all pages (per_page: 200) instead of first page only. |
+| Fix 3 | `zohoScheduler.ts` | Wired `syncAllInvoices()` into `executeSyncJob()`. Logs `invoiceSyncedCount` and `invoiceFailedCount` to `zohoSyncHistory`. |
+| Fix 4 | `drizzle/schema.ts` | Added `invoiceSyncedCount` and `invoiceFailedCount` columns to `zohoSyncHistory`. |
+| Fix 5 | `server/routers/integrations.ts` | Added `syncAllInvoices` tRPC procedure for admin-triggered manual sync. |
+
+### Controlled sync run results (2026-07-07)
+- **Before:** 251 invoices in DB (50 app-generated, 201 one-time manual import)
+- **After:** 32,950 invoices synced before Zoho daily rate limit (11,000 calls/day) was hit
+- **FM attribution rate:** 99.9% (32,909 / 32,950)
+- **MAF attribution rate:** 76.8% (25,312 / 32,950)
+- **Rate limit behavior:** Sync stopped cleanly at customer ~4,700 of 7,941; remaining ~3,241 customers will be picked up by the scheduled nightly run
+- **Zoho token auto-refreshed** mid-sync without interruption
+
+### Scheduled sync
+- Job T16 scheduled for 2026-07-08T00:00:00.000Z (midnight UTC)
+- Will resume from beginning (idempotent upsert on `zohoInvoiceId`) — already-synced invoices updated, new ones added
+- Remaining ~3,241 customers will be synced; full coverage expected within 2 nightly runs
+
+### Tests
+- 38 new tests (sections A–O) covering all sync behaviors
+- 277/277 total tests passing
+
+### Rule #92
+When a sync function is rate-limited mid-run, it must stop cleanly (not retry) and return a `rateLimited: boolean` flag. The scheduler must log this flag in the sync history. Resumption is handled by the next scheduled run (idempotent upsert).
+
+### T49 carry-forward
+| Priority | Item |
+|---|---|
+| HIGH | Monitor first nightly sync run (2026-07-08T00:00:00Z) — verify remaining customers synced |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| LOW | `loginAttempts` periodic cleanup job (rows older than 24h) |
+| LOW | `adminUsers` table + `adminAuthDb.ts` cleanup |
+| LOW | `SUPERADMIN_WORKER_IDS` / `ADMIN_WORKER_IDS` dead code removal |
