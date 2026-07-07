@@ -2,6 +2,7 @@ import { protectedProcedure, fieldManagerProcedure, adminProcedure, superadminPr
 import { z } from "zod";
 import * as zoho from "../services/zoho";
 import * as scheduler from "../services/zohoScheduler";
+import { syncAllInvoices } from "../services/zohoFinancialSync";
 
 export const integrationsRouter = router({
   // Get Zoho authorization status
@@ -47,6 +48,19 @@ export const integrationsRouter = router({
         customermafCount: 0,
         error: error.message 
       };
+    }
+  }),
+
+  // T48: Manual invoice sync trigger (superadmin only — high-impact, long-running)
+  syncAllInvoices: superadminProcedure.mutation(async () => {
+    try {
+      console.log('[Integrations] Starting manual invoice sync (T48)...');
+      const result = await syncAllInvoices();
+      console.log('[Integrations] Invoice sync result:', JSON.stringify(result));
+      return { success: true, synced: result.success, failed: result.failed, total: result.total };
+    } catch (error: any) {
+      console.error('[Integrations] Invoice sync error:', error);
+      return { success: false, synced: 0, failed: 0, total: 0, error: error.message };
     }
   }),
 
