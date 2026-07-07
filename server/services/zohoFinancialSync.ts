@@ -1,18 +1,24 @@
 import { getDb } from "../db";
-import { invoices, zohoPayments, customers } from "../../drizzle/schema";
+import { invoices, zohoPayments, customers, workers } from "../../drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import * as zoho from "./zoho";
 
 /**
  * T48 Fix 1: Sync all invoices from Zoho Books into the `invoices` table.
+ * T49 Fix 2: Resolve FM name→ID during sync (never store raw string names).
  *
- * Attribution strategy (T48 Cycle 1 finding):
- *   - fieldManagerId: read from invoice.customer_cf_field_manager (Zoho custom field, string name e.g. "Halleluyah")
+ * Attribution strategy:
+ *   - fieldManagerId: read from invoice.customer_cf_field_manager (Zoho custom field, string name
+ *     e.g. "Halleluyah"), then resolved to numeric worker ID via workerIdByName map.
+ *     Unmatched names (phantoms, territorial labels, typos) → NULL with a log warning.
  *   - maf: read from invoice.customer_cf_customermaf (Zoho custom field, MAF code e.g. "MOT-076")
  *   - customerId: resolved via customers.zohoContactId = invoice.customer_id (internal FK)
  *
  * Upsert key: zohoInvoiceId (UNIQUE on invoices table).
  * On duplicate: update status, balance, fieldManagerId, maf, customerName, updatedAt.
+ *
+ * Rule #93: Sync write format and query filter format must be verified together.
+ * Silent format divergence produces zero query results without errors.
  */
 /**
  * T48 rate-limit sentinel: Zoho returns HTTP 429 with code 45 when the daily
@@ -37,13 +43,24 @@ function isZohoRateLimitError(err: unknown): boolean {
 }
 
 export async function syncAllInvoices(): Promise<{ success: number; failed: number; total: number; rateLimited: boolean }> {
-  console.log('[Zoho Financial Sync] Starting invoice sync (T48)...');
+  console.log('[Zoho Financial Sync] Starting invoice sync (T48/T49)...');
 
   const db = await getDb();
   if (!db) {
     console.error('[Zoho Financial Sync] Database not available');
     return { success: 0, failed: 0, total: 0, rateLimited: false };
   }
+
+  // T49 Fix 2: Build name→ID lookup map from workers table (field_manager role only).
+  // Only canonical workers with real IDs are included. Phantom rows, territorial labels,
+  // and any name not present in this map will resolve to NULL (not stored as strings).
+  const allWorkers = await db.select({ id: workers.id, name: workers.name })
+    .from(workers)
+    .where(eq(workers.role, 'field_manager'));
+  const workerIdByName = new Map<string, string>(
+    allWorkers.map(w => [w.name, String(w.id)])
+  );
+  console.log(`[Zoho Financial Sync] Loaded ${allWorkers.length} field managers for name→ID resolution`);
 
   // Get all customers with Zoho contact IDs
   const allCustomers = await db.select().from(customers);
@@ -78,10 +95,19 @@ export async function syncAllInvoices(): Promise<{ success: number; failed: numb
       for (const inv of zohoInvoiceList) {
         try {
           // T48 Fix 1: Extract FM and MAF from Zoho custom fields on the invoice
-          const fieldManagerName: string | null =
+          // T49 Fix 2: Resolve FM name→ID; never store raw string names
+          const rawFieldManagerName: string | null =
             inv.customer_cf_field_manager_unformatted ||
             inv.customer_cf_field_manager ||
             null;
+          const resolvedFieldManagerId: string | null = rawFieldManagerName
+            ? (workerIdByName.get(rawFieldManagerName) ?? null)
+            : null;
+          // Log unmapped names for observability (owner can tag Zoho correctly; do NOT auto-create workers)
+          if (rawFieldManagerName && !workerIdByName.has(rawFieldManagerName)) {
+            console.warn(`[syncAllInvoices] Unmapped FM name: "${rawFieldManagerName}" — storing NULL`);
+          }
+
           const mafCode: string | null =
             inv.customer_cf_customermaf_unformatted ||
             inv.customer_cf_customermaf ||
@@ -93,7 +119,7 @@ export async function syncAllInvoices(): Promise<{ success: number; failed: numb
           await db.insert(invoices).values({
             zohoInvoiceId: inv.invoice_id,
             customerId: internalCustomerId,
-            fieldManagerId: fieldManagerName,
+            fieldManagerId: resolvedFieldManagerId,
             maf: mafCode,
             invoiceNumber: inv.invoice_number,
             invoiceDate: inv.date ? new Date(inv.date) : new Date(),
@@ -106,7 +132,7 @@ export async function syncAllInvoices(): Promise<{ success: number; failed: numb
             set: {
               status: inv.status || "unpaid",
               balance: inv.balance?.toString() || "0",
-              fieldManagerId: fieldManagerName,
+              fieldManagerId: resolvedFieldManagerId,
               maf: mafCode,
               customerName: inv.customer_name || customer.name || null,
               updatedAt: sql`NOW()`,

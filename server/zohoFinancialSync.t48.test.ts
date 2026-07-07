@@ -1,5 +1,5 @@
 /**
- * T48 — Behavioral verification: syncAllInvoices() rewrite
+ * T48/T49 — Behavioral verification: syncAllInvoices() rewrite + name→ID fix
  *
  * Tests verify:
  *  A. syncAllInvoices() writes to `invoices` table (not `zohoInvoices`)
@@ -16,6 +16,8 @@
  *  L. syncAllPayments() is unchanged (still writes to zohoPayments)
  *  M. zohoScheduler imports syncAllInvoices (not just syncAllPayments)
  *  N. zohoSyncHistory schema has invoiceSyncedCount and invoiceFailedCount columns
+ *  O. Rate-limit sentinel (isZohoRateLimitError)
+ *  P. T49 name→ID resolution: FM string names resolve to numeric worker IDs; phantoms/untagged → NULL
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -78,12 +80,29 @@ function makeCustomer(overrides: Partial<MockCustomer> = {}): MockCustomer {
 // the attribution and upsert logic without a live DB or Zoho API connection.
 
 /**
- * Extract FM name from invoice payload (mirrors syncAllInvoices logic)
+ * Extract raw FM name from invoice payload (mirrors syncAllInvoices logic)
  */
-function extractFieldManager(inv: MockInvoicePayload): string | null {
+function extractRawFieldManagerName(inv: MockInvoicePayload): string | null {
   return inv.customer_cf_field_manager_unformatted ||
     inv.customer_cf_field_manager ||
     null;
+}
+
+/**
+ * T49 Fix 2: Resolve raw FM name to numeric worker ID string.
+ * Returns null for unmatched names (phantoms, territorial labels, typos).
+ */
+function resolveFieldManagerId(
+  rawName: string | null,
+  workerIdByName: Map<string, string>
+): string | null {
+  if (!rawName) return null;
+  return workerIdByName.get(rawName) ?? null;
+}
+
+/** Backward-compat alias used by existing B-suite tests */
+function extractFieldManager(inv: MockInvoicePayload): string | null {
+  return extractRawFieldManagerName(inv);
 }
 
 /**
@@ -118,12 +137,14 @@ function buildCustomerMap(customers: MockCustomer[]): Map<string, number> {
 
 /**
  * Simulate the syncAllInvoices loop for a batch of customers
+ * T49: accepts optional workerIdByName map for name→ID resolution.
  * Returns { success, failed, upsertedRows } for verification
  */
 async function simulateSyncAllInvoices(
   customers: MockCustomer[],
   invoicesByCustomer: Map<string, MockInvoicePayload[]>,
-  failingInvoiceIds: Set<string> = new Set()
+  failingInvoiceIds: Set<string> = new Set(),
+  workerIdByName: Map<string, string> = new Map()
 ): Promise<{ success: number; failed: number; total: number; upsertedRows: any[] }> {
   const customersWithZoho = customers.filter(c => c.zohoContactId);
   const customerMap = buildCustomerMap(customersWithZoho);
@@ -144,10 +165,14 @@ async function simulateSyncAllInvoices(
         continue;
       }
 
+      // T49 Fix 2: resolve raw FM name → numeric ID string (or null)
+      const rawFmName = extractRawFieldManagerName(inv);
+      const resolvedFmId = resolveFieldManagerId(rawFmName, workerIdByName);
+
       const row = {
         zohoInvoiceId: inv.invoice_id,
         customerId: resolveCustomerId(inv.customer_id, customerMap),
-        fieldManagerId: extractFieldManager(inv),
+        fieldManagerId: resolvedFmId,
         maf: extractMaf(inv),
         invoiceNumber: inv.invoice_number,
         invoiceDate: new Date(inv.date),
@@ -177,7 +202,8 @@ describe('T48 — syncAllInvoices() rewrite', () => {
       // Verify the import in the source file
       const fs = await import('fs');
       const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
-      expect(src).toContain("import { invoices, zohoPayments, customers }");
+      // T49: import now includes workers for name→ID resolution
+      expect(src).toContain("import { invoices, zohoPayments, customers, workers }");
       expect(src).not.toContain("import { zohoInvoices,");
     });
 
@@ -285,15 +311,17 @@ describe('T48 — syncAllInvoices() rewrite', () => {
       expect(result.upsertedRows[0].zohoInvoiceId).toBe('ZOHO-INV-001');
     });
 
-    it('E2: upserted row includes fieldManagerId and maf from Zoho custom fields', async () => {
+    it('E2: upserted row includes resolved numeric fieldManagerId and maf (T49)', async () => {
       const customers = [makeCustomer()];
       const inv = makeInvoice({
         customer_cf_field_manager_unformatted: 'Bukola',
         customer_cf_customermaf_unformatted: 'DIC-413',
       });
       const invoicesByCustomer = new Map([['ZOHO-CUST-001', [inv]]]);
-      const result = await simulateSyncAllInvoices(customers, invoicesByCustomer);
-      expect(result.upsertedRows[0].fieldManagerId).toBe('Bukola');
+      // T49: pass workerIdByName map so 'Bukola' resolves to '8'
+      const workerMap = new Map([['Bukola', '8'], ['Halleluyah', '7'], ['Juwon', '9']]);
+      const result = await simulateSyncAllInvoices(customers, invoicesByCustomer, new Set(), workerMap);
+      expect(result.upsertedRows[0].fieldManagerId).toBe('8');
       expect(result.upsertedRows[0].maf).toBe('DIC-413');
     });
 
@@ -529,6 +557,96 @@ describe('T48 — syncAllInvoices() rewrite', () => {
       expect(src).toContain('rateLimited = true');
       expect(src).toContain('return { success, failed, total: customersWithZoho.length, rateLimited }');
     });
+  });
+
+  // P. T49 — name→ID resolution
+  describe('P. T49 — FM name→ID resolution in syncAllInvoices()', () => {
+
+    const canonicalWorkerMap = new Map([
+      ['Halleluyah', '7'],
+      ['Bukola', '8'],
+      ['Juwon', '9'],
+    ]);
+
+    it('P1: "Halleluyah" resolves to worker ID "7"', () => {
+      expect(resolveFieldManagerId('Halleluyah', canonicalWorkerMap)).toBe('7');
+    });
+
+    it('P2: "Bukola" resolves to worker ID "8"', () => {
+      expect(resolveFieldManagerId('Bukola', canonicalWorkerMap)).toBe('8');
+    });
+
+    it('P3: "Juwon" resolves to worker ID "9"', () => {
+      expect(resolveFieldManagerId('Juwon', canonicalWorkerMap)).toBe('9');
+    });
+
+    it('P4: phantom name "Low.low income" resolves to NULL (not in canonical map)', () => {
+      expect(resolveFieldManagerId('Low.low income', canonicalWorkerMap)).toBeNull();
+    });
+
+    it('P5: territorial label "Outside IbSW" resolves to NULL', () => {
+      expect(resolveFieldManagerId('Outside IbSW', canonicalWorkerMap)).toBeNull();
+    });
+
+    it('P6: empty string resolves to NULL', () => {
+      expect(resolveFieldManagerId('', canonicalWorkerMap)).toBeNull();
+    });
+
+    it('P7: null input resolves to NULL', () => {
+      expect(resolveFieldManagerId(null, canonicalWorkerMap)).toBeNull();
+    });
+
+    it('P8: unknown new name resolves to NULL (future-proof)', () => {
+      expect(resolveFieldManagerId('SomeNewValidName', canonicalWorkerMap)).toBeNull();
+    });
+
+    it('P9: full sync simulation — Halleluyah invoice stores "7", not the string name', async () => {
+      const customers = [makeCustomer({ id: 1, zohoContactId: 'ZOHO-CUST-001' })];
+      const inv = makeInvoice({ customer_cf_field_manager_unformatted: 'Halleluyah' });
+      const invoicesByCustomer = new Map([['ZOHO-CUST-001', [inv]]]);
+      const result = await simulateSyncAllInvoices(customers, invoicesByCustomer, new Set(), canonicalWorkerMap);
+      expect(result.upsertedRows[0].fieldManagerId).toBe('7');
+    });
+
+    it('P10: full sync simulation — phantom name stores NULL, not the string name', async () => {
+      const customers = [makeCustomer({ id: 1, zohoContactId: 'ZOHO-CUST-001' })];
+      const inv = makeInvoice({ customer_cf_field_manager_unformatted: 'Low.low income' });
+      const invoicesByCustomer = new Map([['ZOHO-CUST-001', [inv]]]);
+      const result = await simulateSyncAllInvoices(customers, invoicesByCustomer, new Set(), canonicalWorkerMap);
+      expect(result.upsertedRows[0].fieldManagerId).toBeNull();
+    });
+
+    it('P11: source code builds workerIdByName map from workers table', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      expect(src).toContain('workerIdByName');
+      expect(src).toContain("eq(workers.role, 'field_manager')");
+    });
+
+    it('P12: source code uses resolvedFieldManagerId (not raw name) in upsert', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      expect(src).toContain('resolvedFieldManagerId');
+      expect(src).toContain('workerIdByName.get(rawFieldManagerName)');
+      // Raw name must NOT be stored directly
+      expect(src).not.toContain('fieldManagerId: fieldManagerName');
+      expect(src).not.toContain('fieldManagerId: rawFieldManagerName');
+    });
+
+    it('P13: source code logs a warning for unmapped FM names', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      expect(src).toContain('Unmapped FM name');
+      expect(src).toContain('console.warn');
+    });
+
+    it('P14: source code imports workers from schema', async () => {
+      const fs = await import('fs');
+      const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
+      expect(src).toContain('workers');
+      expect(src).toContain("import { invoices, zohoPayments, customers, workers }");
+    });
+
   });
 
 });
