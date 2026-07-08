@@ -5181,3 +5181,67 @@ When a schema change is added to `drizzle/schema.ts`, the corresponding `ALTER T
 | LOW | `loginAttempts` periodic cleanup job |
 | LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
 
+
+---
+
+## T52 — Shared CSV Export Abstraction + Customers Page Download CSV Button
+
+**Status:** COMPLETE  
+**Commit:** `6b80823c`  
+**Date:** 2026-07-08  
+**Tests:** 22 new (Suite R). Total: **331 passing** (was 309).
+
+### What was done
+
+**New files:**
+
+| File | Purpose |
+|---|---|
+| `shared/types/export.ts` | `ExportColumn`, `ExportRequest`, `ExportResponse` shared types |
+| `server/utils/csvExport.ts` | RFC 4180 CSV serialization with UTF-8 BOM (Excel-safe) |
+| `server/utils/exportFilename.ts` | Filter-encoded filename generation (`customers_manager-Bukola_2026-07-08.csv`) |
+| `server/routers/exportRouter.ts` | tRPC export router — `customers` procedure with role scoping |
+| `client/src/hooks/useExport.ts` | `useCustomerExport` hook — Blob + anchor download trigger |
+| `server/export.t52.test.ts` | Suite R (22 tests) — escapeCsv, buildCsvString, filename, router unit |
+
+**Modified files:**
+
+| File | Change |
+|---|---|
+| `server/routers.ts` | Mount `exportRouter` at `trpc.export` |
+| `client/src/pages/Customers.tsx` | Add "Download CSV" button wired to active filter state |
+
+### Architecture decisions
+
+1. **Server-side serialization** — CSV body built on the server, returned as a string in the tRPC mutation response. No streaming needed at current data volumes (~7,941 rows ≈ 1.6 MB).
+2. **Role scoping mirrors `getCustomers`** — `fieldManagerProcedure` + `ctx.user.fieldManagerId` gate ensures field managers can only export their own customers.
+3. **Filter-encoded filenames** — active filters are encoded in the filename (e.g., `customers_manager-Bukola_maf-AFT-221_2026-07-08.csv`), making exports self-documenting.
+4. **UTF-8 BOM** — prepended to all CSV output so Excel opens the file correctly without manual encoding selection.
+5. **Single registration point** — `exportRouter` is the only place to add future entity exports (invoices, payments, routes). Per-module work is: add column definitions + wire the button.
+
+### Pattern #68 / Rule #97 (formalized)
+
+> **Rule #97 — Cross-cutting features get shared abstractions on first request.**
+> When a feature is needed for one module but is clearly applicable to multiple modules (CSV export, bulk actions, print views, etc.), build the shared abstraction at the time of the first request rather than a per-module implementation. The first consumer wires to the abstraction; subsequent modules add columns + button only.
+
+### Post-deploy verification (completed 2026-07-08)
+
+- ✓ Build succeeded in 30.65s (no TypeScript errors)
+- ✓ PM2 restarted cleanly — `online`, 0s uptime, no new errors
+- ✓ Single `ER_BAD_FIELD_ERROR` in error log confirmed as pre-T51 entry (last nightly sync before T51 schema migration)
+- ✓ No `exportRouter` or `csvExport` errors in log
+
+### T53 carry-forward
+
+| Priority | Item |
+|---|---|
+| **CRITICAL** | Morning verification: confirm zohoSyncHistory row written with completedAt + invoiceSyncedCount (T51 fix validation) |
+| **CRITICAL** | Morning verification: confirm contactSyncFailures ~2,435 rows (T51 fix validation) |
+| **HIGH** | Extract CUSTOMERMAF key from `contactSyncFailures.failurePayload` → fix extraction in `syncZohoContacts()` |
+| **HIGH** | Rate limit handling in sync code (delay between pages, retry on 429) |
+| MEDIUM | Backfill decision: once contact sync fixed, decide whether to re-sync the 2,435 failed contacts |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| MEDIUM | Phantom worker row deletion (workers 9683, 9722) |
+| MEDIUM | CSV export: add Download CSV to Invoices page (second consumer of exportRouter) |
+| LOW | `loginAttempts` periodic cleanup job |
+| LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
