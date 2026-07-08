@@ -19,6 +19,7 @@ import { workerNotificationsRouter } from "./routers/workerNotificationsRouter";
 import { adminNotificationsRouter } from "./routers/adminNotificationsRouter";
 import { COOKIE_NAME } from "@shared/const";
 import { customerRouter } from './routers/customerRouter';
+import { exportRouter } from './routers/exportRouter';
 import { fieldManagerRouter } from './routers/fieldManager';
 import { calendarRouter } from './routers/calendar';
 import { calendarOverridesRouter } from './routers/calendarOverrides';
@@ -140,6 +141,8 @@ export const appRouter = router({
   fieldManager: fieldManagerRouter,
   // T14 Condition 5: Mount previously orphaned routers
   analytics: analyticsRouter,
+  // T52: Shared CSV export abstraction (Pattern #68 / Rule #97)
+  export: exportRouter,
   financial: financialRouter,
   reporting: reportingRouter,
 

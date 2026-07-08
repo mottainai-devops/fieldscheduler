@@ -4,9 +4,11 @@ import { Link } from "wouter";
 import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTING_REASONS } from '@shared/const';
+import { useCustomerExport } from "@/hooks/useExport";
 
 export default function Customers() {
   const { isAdmin, isFieldManager, fieldManagerId } = useAuth();
+  const { downloadCsv, isExporting } = useCustomerExport();
   const { data: customers = [], isLoading } = trpc.fieldWorker.getCustomers.useQuery();
   const { data: workers = [] } = trpc.fieldWorker.getWorkers.useQuery();
   
@@ -263,10 +265,44 @@ export default function Customers() {
         </div>
       </div>
 
-      {/* Customer Locations */}
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold text-white mb-2">Customer Locations</h2>
-        <p className="text-sm text-slate-400">Showing {filteredCustomers.length} of {customers.length} customers</p>
+      {/* Customer Locations — T52: Download CSV */}
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white mb-1">Customer Locations</h2>
+          <p className="text-sm text-slate-400">Showing {filteredCustomers.length} of {customers.length} customers</p>
+        </div>
+        <button
+          onClick={() =>
+            downloadCsv({
+              fieldManagerId: selectedFieldManager,
+              maf: selectedMAF,
+              customerType: selectedCustomerType,
+              routeStatus: selectedRouteStatus,
+              routingReason: selectedRoutingReason,
+              searchTerm,
+            })
+          }
+          disabled={isExporting || isLoading}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+          title="Download filtered customers as CSV"
+        >
+          {isExporting ? (
+            <>
+              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Preparing...
+            </>
+          ) : (
+            <>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download CSV
+            </>
+          )}
+        </button>
       </div>
 
       {filteredCustomers.length === 0 ? (
