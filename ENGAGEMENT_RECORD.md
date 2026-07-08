@@ -5105,3 +5105,79 @@ Sync functions with partial failure modes MUST log per-record failure detail (id
 
 Once T51 fixes the contact sync, a controlled backfill of invoices for newly-synced contacts will be needed (similar to T48's controlled sync).
 
+
+---
+
+## T51 — zohoSyncHistory Schema Fix + Per-Record Contact Sync Failure Logging
+
+**Date:** 2026-07-08  
+**Status:** Complete. Deployed to production. Awaiting tonight's nightly run for behavioral verification.
+
+### Fix 1 — zohoSyncHistory schema migration (Rule #96 closure)
+
+**Problem:** T48 added `invoiceSyncedCount` and `invoiceFailedCount` columns to `drizzle/schema.ts` but never applied the migration to production. Every nightly sync since T48 (runs 6–10) failed to write its history record with `ER_BAD_FIELD_ERROR: Unknown column 'invoiceSyncedCount'`.
+
+**Fix:** `ALTER TABLE zohoSyncHistory ADD COLUMN invoiceSyncedCount INT NULL, ADD COLUMN invoiceFailedCount INT NULL` applied directly to production (Rule #81 — no pnpm db:push).
+
+**Verification:** `SHOW COLUMNS FROM zohoSyncHistory` confirms both columns present. No code change needed — schema.ts already had the columns.
+
+### Fix 2 — Per-record contact sync failure logging (Rule #95 closure)
+
+**New table:** `contactSyncFailures (id, contactId, syncRunId, failureReason, failurePayload, occurredAt)` with indexes on contactId, syncRunId, occurredAt.
+
+**Code changes:**
+- `syncZohoContacts(syncRunId?: number | null)` — new optional parameter
+- buildingId gate (line 537): inserts `contactSyncFailures` row with `failureReason='buildingId_null'` and diagnostic payload: `{contactName, customerMafKeys, cfMafPresent, customFieldsPresent, customFieldsSample}`
+- catch-all error path: inserts row with `failureReason='unexpected_error'` and `{message}`
+- Failure count reconciliation: after loop, verifies `errorCount === COUNT(*) FROM contactSyncFailures WHERE syncRunId=?`
+- `zohoScheduler.ts executeSyncJob()`: pre-creates `zohoSyncHistory` row with `status='in_progress'` before calling sync, passes `syncRunId`, updates row on completion (instead of INSERT after)
+
+### Rule #96 — Schema migrations must be applied in the same deploy as the code that references them
+
+When a schema change is added to `drizzle/schema.ts`, the corresponding `ALTER TABLE` (or `pnpm db:push`) must be applied to production in the same deploy. A schema change that lands in code without the matching production migration causes silent INSERT failures on every run until discovered.
+
+**Instance:** T48 added `invoiceSyncedCount`/`invoiceFailedCount` to schema.ts but did not apply the migration. Every sync run from T48 to T51 (runs 6–10, ~5 days) failed to write history records. The sync itself succeeded, but observability was completely dark.
+
+**Extended Rule #88:** If a tranche touches an observability path (sync history, audit logs, failure counters), verify that path records the tranche's own delivery before closing out.
+
+### Tests
+
+18 new tests (suite Q, Q1–Q14 + 4 positive cases). **309 total passing** (was 291 before T51).
+
+### Behavioral verification checklist (post-tonight's nightly run — 2026-07-09 morning)
+
+**VERIFY SYNC HISTORY RECORDS:**
+- [ ] `SELECT * FROM zohoSyncHistory ORDER BY id DESC LIMIT 1`
+- [ ] New row present with `completedAt` NOT NULL (was always NULL before T51)
+- [ ] `invoiceSyncedCount` and `invoiceFailedCount` populated (not NULL)
+- [ ] `status` reflects actual outcome (not always 'failed' due to INSERT error)
+
+**VERIFY PER-RECORD FAILURE LOGGING:**
+- [ ] `SELECT COUNT(*) FROM contactSyncFailures WHERE syncRunId = <last run id>`
+  → Should return ~2,435 (matches aggregate failedContacts count)
+- [ ] `SELECT failureReason, COUNT(*) FROM contactSyncFailures WHERE syncRunId = <last run id> GROUP BY failureReason`
+  → Shows distribution (mostly 'buildingId_null')
+- [ ] `SELECT * FROM contactSyncFailures WHERE syncRunId = <last run id> LIMIT 5`
+  → Confirms payload structure with contactName, customerMafKeys, etc.
+
+**T52 PREPARATION — extract CUSTOMERMAF diagnostic data:**
+- [ ] `SELECT DISTINCT JSON_EXTRACT(failurePayload, '$.customerMafKeys') FROM contactSyncFailures WHERE syncRunId = <last run id> LIMIT 20`
+  → Post findings so T52 has real data on which Zoho API keys contain 'maf'
+- [ ] `SELECT JSON_EXTRACT(failurePayload, '$.customFieldsPresent'), COUNT(*) FROM contactSyncFailures WHERE syncRunId = <last run id> GROUP BY 1`
+  → Reveals what fraction of failed contacts have custom_fields populated
+
+### T52 carry-forward
+
+| Priority | Item |
+|---|---|
+| **CRITICAL** | Morning verification: confirm zohoSyncHistory row written with completedAt + invoiceSyncedCount |
+| **CRITICAL** | Morning verification: confirm contactSyncFailures ~2,435 rows for the run |
+| **HIGH** | Extract CUSTOMERMAF key diagnostic from contactSyncFailures.failurePayload |
+| **HIGH** | Fix CUSTOMERMAF field extraction in syncZohoContacts() using real key names from T51 data |
+| **HIGH** | Rate limit handling in sync code (delay between pages, retry on 429) |
+| MEDIUM | Backfill decision: once contact sync fixed, decide whether to re-sync the 2,435 failed contacts |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| MEDIUM | Phantom worker row deletion (workers 9683, 9722) |
+| LOW | `loginAttempts` periodic cleanup job |
+| LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
+
