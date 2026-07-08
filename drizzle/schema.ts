@@ -684,3 +684,27 @@ export const loginAttempts = mysqlTable("loginAttempts", {
 });
 export type LoginAttempt = typeof loginAttempts.$inferSelect;
 export type InsertLoginAttempt = typeof loginAttempts.$inferInsert;
+
+// ─── Contact Sync Failures (T51 — Rule #95 closure) ───────────────────────────
+// Per-record failure log for syncZohoContacts(). Each rejected contact inserts
+// one row per sync run. Enables T52+ diagnostic against real failure data.
+// failurePayload captures diagnostic keys (contact name, MAF key names, custom
+// fields structure) needed to identify the correct CUSTOMERMAF field key.
+export const contactSyncFailures = mysqlTable(
+  'contactSyncFailures',
+  {
+    id:             int('id').autoincrement().primaryKey(),
+    contactId:      varchar('contactId', { length: 50 }).notNull(),
+    syncRunId:      int('syncRunId'),
+    failureReason:  varchar('failureReason', { length: 255 }).notNull(),
+    failurePayload: text('failurePayload'),
+    occurredAt:     timestamp('occurredAt').defaultNow().notNull(),
+  },
+  table => ({
+    contactIdx:  index('idx_contact').on(table.contactId),
+    syncRunIdx:  index('idx_sync_run').on(table.syncRunId),
+    occurredIdx: index('idx_occurred').on(table.occurredAt),
+  })
+);
+export type ContactSyncFailure = typeof contactSyncFailures.$inferSelect;
+export type InsertContactSyncFailure = typeof contactSyncFailures.$inferInsert;

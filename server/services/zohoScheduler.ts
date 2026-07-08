@@ -99,6 +99,7 @@ async function executeSyncJob(jobId: number, jobName: string) {
 
   const startTime = Date.now();
   let syncResult;
+  let syncRunId: number | null = null;
 
   try {
     // Update job status to in_progress
@@ -112,8 +113,23 @@ async function executeSyncJob(jobId: number, jobName: string) {
 
     console.log(`[Zoho Scheduler] Starting scheduled sync job: ${jobName}`);
 
+    // T51: Pre-create zohoSyncHistory row (in_progress) so syncRunId is available
+    // for per-record failure logging inside syncZohoContacts().
+    // Rule #96: schema migrations and observability paths must be verified in the
+    // same tranche that touches them.
+    try {
+      const [inserted] = await db.insert(zohoSyncHistory).values({
+        syncType: "scheduled",
+        status: "in_progress",
+      });
+      syncRunId = (inserted as any)?.insertId ?? null;
+      console.log(`[Zoho Scheduler] Created sync history row id=${syncRunId}`);
+    } catch (histErr) {
+      console.warn('[Zoho Scheduler] Could not pre-create sync history row:', histErr);
+    }
+
     // Execute the sync
-    syncResult = await syncZohoContacts();
+    syncResult = await syncZohoContacts(syncRunId);
     // T28 Path A: wire payments sync after contacts sync.
     // Payments reference invoices semantically; contacts must be current first.
     console.log('[Zoho Scheduler] Starting payments sync...');
@@ -145,20 +161,40 @@ async function executeSyncJob(jobId: number, jobName: string) {
 
     const durationMs = Date.now() - startTime;
 
-    // Log sync history
-    await db.insert(zohoSyncHistory).values({
-      syncType: "scheduled",
-      status: syncResult.success ? "success" : "failed",
-      totalContacts: syncResult.synced + syncResult.errors,
-      syncedContacts: syncResult.synced,
-      failedContacts: syncResult.errors,
-      fieldManagerCount: syncResult.fieldManagerCount || 0,
-      customermafCount: syncResult.customermafCount || 0,
-      invoiceSyncedCount,
-      invoiceFailedCount,
-      durationMs,
-      errorMessage: syncResult.success ? null : "Sync completed with errors",
-    });
+    // T51: Update the pre-created history row (or insert if pre-create failed)
+    if (syncRunId != null) {
+      await db.update(zohoSyncHistory)
+        .set({
+          status: syncResult.success ? "success" : "failed",
+          completedAt: new Date(),
+          totalContacts: syncResult.synced + syncResult.errors,
+          syncedContacts: syncResult.synced,
+          failedContacts: syncResult.errors,
+          fieldManagerCount: syncResult.fieldManagerCount || 0,
+          customermafCount: syncResult.customermafCount || 0,
+          invoiceSyncedCount,
+          invoiceFailedCount,
+          durationMs,
+          errorMessage: syncResult.success ? null : "Sync completed with errors",
+        })
+        .where(eq(zohoSyncHistory.id, syncRunId));
+    } else {
+      // Fallback: pre-create failed, insert a new row
+      await db.insert(zohoSyncHistory).values({
+        syncType: "scheduled",
+        status: syncResult.success ? "success" : "failed",
+        completedAt: new Date(),
+        totalContacts: syncResult.synced + syncResult.errors,
+        syncedContacts: syncResult.synced,
+        failedContacts: syncResult.errors,
+        fieldManagerCount: syncResult.fieldManagerCount || 0,
+        customermafCount: syncResult.customermafCount || 0,
+        invoiceSyncedCount,
+        invoiceFailedCount,
+        durationMs,
+        errorMessage: syncResult.success ? null : "Sync completed with errors",
+      });
+    }
 
     // Update job with success status
     await db
@@ -182,14 +218,26 @@ async function executeSyncJob(jobId: number, jobName: string) {
 
     console.error(`[Zoho Scheduler] Sync job failed:`, error.message);
 
-    // Log sync history with error
-    await db.insert(zohoSyncHistory).values({
-      syncType: "scheduled",
-      status: "failed",
-      durationMs,
-      errorMessage: error.message,
-      errorStack: error.stack,
-    });
+    // T51: Update pre-created history row on error (or insert if pre-create failed)
+    if (syncRunId != null) {
+      await db.update(zohoSyncHistory)
+        .set({
+          status: "failed",
+          completedAt: new Date(),
+          durationMs,
+          errorMessage: error.message,
+          errorStack: error.stack,
+        })
+        .where(eq(zohoSyncHistory.id, syncRunId));
+    } else {
+      await db.insert(zohoSyncHistory).values({
+        syncType: "scheduled",
+        status: "failed",
+        durationMs,
+        errorMessage: error.message,
+        errorStack: error.stack,
+      });
+    }
 
     // Update job with error status
     await db

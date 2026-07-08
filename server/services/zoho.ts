@@ -435,7 +435,7 @@ function extractCoordinates(contact: ZohoContact): { latitude: number | null; lo
  * Sync contacts from Zoho to local database
  * Prioritizes custom Latitude/Longitude fields over address geocoding
  */
-export async function syncZohoContacts() {
+export async function syncZohoContacts(syncRunId?: number | null) {
   try {
     // First, clear customers with numeric-only building IDs
     try {
@@ -454,8 +454,8 @@ export async function syncZohoContacts() {
     const contacts = await fetchZohoContacts();
     const { upsertCustomerFromZoho } = await import("../fieldWorkerDb");
     const { getDb } = await import("../db");
-    const { workers, customers } = await import("../../drizzle/schema");
-    const { eq } = await import("drizzle-orm");
+    const { workers, customers, contactSyncFailures } = await import("../../drizzle/schema");
+    const { eq, count } = await import("drizzle-orm");
     
     let syncedCount = 0;
     let errorCount = 0;
@@ -536,6 +536,30 @@ export async function syncZohoContacts() {
         // Skip customers without valid alphanumeric building IDs
         if (!buildingId) {
           errorCount++;
+          // T51 Rule #95: per-record failure logging
+          try {
+            const dbLog = await getDb();
+            if (dbLog) {
+              await dbLog.insert(contactSyncFailures).values({
+                contactId: String(contact.contact_id),
+                syncRunId: syncRunId ?? null,
+                failureReason: 'buildingId_null',
+                failurePayload: JSON.stringify({
+                  contactName: contact.contact_name,
+                  customerMafKeys: Object.keys(contact).filter(k =>
+                    k.toLowerCase().includes('maf')
+                  ),
+                  cfMafPresent: !!(contactAny.cf_maf),
+                  customFieldsPresent: !!(contact.custom_fields),
+                  customFieldsSample: Array.isArray(contact.custom_fields)
+                    ? contact.custom_fields.slice(0, 5)
+                    : null,
+                }),
+              });
+            }
+          } catch (logErr) {
+            console.warn('[Zoho] Failed to log contact sync failure:', logErr);
+          }
           continue;
         }
         
@@ -652,6 +676,47 @@ export async function syncZohoContacts() {
       } catch (error) {
         console.error(`Error syncing contact ${contact.contact_id}:`, error);
         errorCount++;
+        // T51 Rule #95: log catch-all errors too
+        try {
+          const dbLog = await getDb();
+          if (dbLog) {
+            await dbLog.insert(contactSyncFailures).values({
+              contactId: String(contact.contact_id),
+              syncRunId: syncRunId ?? null,
+              failureReason: 'unexpected_error',
+              failurePayload: JSON.stringify({
+                message: (error as any)?.message ?? String(error),
+              }),
+            });
+          }
+        } catch (logErr) {
+          console.warn('[Zoho] Failed to log contact sync error:', logErr);
+        }
+      }
+    }
+
+    // T51 Rule #95 (g): failure count reconciliation
+    if (syncRunId != null) {
+      try {
+        const dbCheck = await getDb();
+        if (dbCheck) {
+          const [loggedRow] = await dbCheck
+            .select({ count: count() })
+            .from(contactSyncFailures)
+            .where(eq(contactSyncFailures.syncRunId, syncRunId));
+          const loggedCount = Number(loggedRow?.count ?? 0);
+          if (loggedCount !== errorCount) {
+            console.warn(
+              `[syncZohoContacts] Failure count mismatch: aggregate=${errorCount}, logged=${loggedCount}`
+            );
+          } else {
+            console.log(
+              `[syncZohoContacts] Failure count reconciled: ${loggedCount} rows logged for syncRunId=${syncRunId}`
+            );
+          }
+        }
+      } catch (reconcileErr) {
+        console.warn('[syncZohoContacts] Failure count reconciliation error:', reconcileErr);
       }
     }
 
