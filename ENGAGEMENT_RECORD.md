@@ -5044,3 +5044,64 @@ The nightly invoice sync was disabled in T49 Phase 1 via `ZOHO_INVOICE_SYNC_ENAB
 | LOW | `loginAttempts` periodic cleanup job (rows older than 24h) |
 | LOW | `adminUsers` table + `adminAuthDb.ts` cleanup |
 | LOW | `SUPERADMIN_WORKER_IDS` / `ADMIN_WORKER_IDS` dead code removal |
+
+---
+
+## T50 — Contact Sync Failure Investigation
+
+**Date:** 2026-07-08  
+**Status:** Investigation complete. No code changes in T50. T51 fix scope defined.
+
+### Root cause confirmed
+
+**PRIMARY:** The `syncZohoContacts()` function skips any contact whose name does not contain a parseable MAF code matching `^[A-Z]{2,}-\d{3}$`. The building ID extraction relies on parsing the contact name string (e.g., "1050043 OYSISW02 413" → "DIC-413"). The 2,435 failed contacts have names that do not follow this pattern.
+
+The `contact.customermaf` field IS present in Zoho's API response but is stored under a different key than the code expects. The three extraction methods in the code (lines 508-534 of `zoho.ts`) all miss it, leaving `buildingId = null` and triggering the skip at line 537.
+
+**SECONDARY 1:** The T48 schema migration (`invoiceSyncedCount`, `invoiceFailedCount` columns on `zohoSyncHistory`) was never applied to production. Every nightly sync run since T48 has failed to write its history record. The sync itself completes, but the history INSERT throws a column-not-found error.
+
+**SECONDARY 2:** No per-record failure logging. Failed contacts are counted but not identified. There is no way to know which specific contacts fail without a Zoho API diagnostic (which hits the rate limit).
+
+### Rate limit finding
+
+The nightly sync consumes ~91% of the daily Zoho API quota (11,000 calls). The diagnostic investigation in T50 triggered the rate limit (code 45). No rate limit handling exists in the sync code (no delay between pages, no retry on 429).
+
+### Invoice coverage gap
+
+| Metric | Value |
+|---|---|
+| Failed contacts (no customer record in DB) | 2,435 |
+| Estimated contacts with invoice activity | ~1,765 |
+| Estimated missing invoices | ~10,363 |
+| Estimated missing revenue | ~₦288M |
+| Confirmed NULL FM invoices in DB | 160 (₦1.1M) |
+
+The 2,435 failed contacts are a complete blind spot — their invoices are not in FieldScheduler at all.
+
+### Invoice structure clarification
+
+Two distinct invoice populations exist in the DB:
+- **Population A (32,896 invoices, 99.4%):** Linked via `customerId` (FK to local customers table). Synced via T48/T49 `syncAllInvoices()` path.
+- **Population B (201 invoices, 0.6%):** Linked via `zohoCustomerId` only. Pre-T48 sync path.
+
+### Pattern #68 — Silent Partial-Failure Sync
+
+When a sync consistently reports partial success without surfacing which records failed or why, the failure becomes normalized. Operators see the warning, develop tolerance, and stop investigating. Detailed failure logging at the record level is prerequisite for any partial-failure sync.
+
+**Rule #95 — Per-Record Failure Logging:**  
+Sync functions with partial failure modes MUST log per-record failure detail (identifier, reason, API response snippet) to a persistent store (DB table or structured log). Aggregate counts in sync history are insufficient for diagnosis. Without per-record logging, investigation becomes forensic archaeology against ephemeral PM2 logs.
+
+### T51 fix scope
+
+| Fix | Priority |
+|---|---|
+| Apply T48 schema migration to production (`invoiceSyncedCount`, `invoiceFailedCount` columns) | CRITICAL |
+| Add per-record failure logging to `syncZohoContacts()` — failed contact ID + reason to structured log | HIGH |
+| Fix building ID extraction — investigate correct Zoho API key for CUSTOMERMAF field (requires next-day rate limit reset) | HIGH |
+| Add rate limit handling (delay between pages, retry on 429) | MEDIUM |
+| Investigate the 2,435 failed contacts directly (fetch their Zoho records, classify by failure type) | HIGH |
+
+### T52 carry-forward (separate tranche)
+
+Once T51 fixes the contact sync, a controlled backfill of invoices for newly-synced contacts will be needed (similar to T48's controlled sync).
+
