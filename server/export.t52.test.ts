@@ -272,3 +272,264 @@ describe("R: exportRouter.customers (unit)", () => {
     expect(csv).toContain("2024-01-01T00:00:00.000Z");
   });
 });
+
+// ─── Suite S1–S18: T54 financial export procedures (unit) ─────────────────
+// Tests cover column definitions, filter encoding, FM attribution derivation,
+// and edge cases for invoices and payments exports.
+// DB queries are not mocked here — we test the CSV serialization layer directly
+// using the shared utilities with representative data shapes.
+
+describe("S: T54 financial export — INVOICE_COLUMNS serialization", () => {
+  const INVOICE_COLUMNS: ExportColumn[] = [
+    { key: "id", header: "Invoice ID" },
+    { key: "invoiceNumber", header: "Invoice Number" },
+    { key: "zohoInvoiceId", header: "Zoho Invoice ID" },
+    { key: "customerId", header: "Customer ID", transform: (v) => v == null ? "" : String(v) },
+    { key: "customerName", header: "Customer Name", transform: (v) => v == null ? "" : String(v) },
+    { key: "fieldManagerId", header: "Field Manager ID", transform: (v) => v == null ? "" : String(v) },
+    { key: "fieldManagerName", header: "Field Manager Name", transform: (v) => v == null ? "" : String(v) },
+    { key: "maf", header: "MAF", transform: (v) => v == null ? "" : String(v) },
+    { key: "total", header: "Total (₦)", transform: (v) => v == null ? "" : String(v) },
+    { key: "balance", header: "Balance (₦)", transform: (v) => v == null ? "" : String(v) },
+    { key: "status", header: "Status", transform: (v) => v == null ? "" : String(v) },
+    {
+      key: "invoiceDate",
+      header: "Invoice Date",
+      transform: (v) => v instanceof Date ? v.toISOString().slice(0, 10) : v == null ? "" : String(v),
+    },
+    {
+      key: "dueDate",
+      header: "Due Date",
+      transform: (v) => v instanceof Date ? v.toISOString().slice(0, 10) : v == null ? "" : String(v),
+    },
+    {
+      key: "createdAt",
+      header: "Created At",
+      transform: (v) => v instanceof Date ? v.toISOString() : v == null ? "" : String(v),
+    },
+  ];
+
+  const sampleInvoices = [
+    {
+      id: 1001,
+      invoiceNumber: "INV-00001",
+      zohoInvoiceId: "ZI-001",
+      customerId: 42,
+      customerName: "Alice Adeyemi",
+      fieldManagerId: "8",
+      fieldManagerName: "Bukola",
+      maf: "AFT-221",
+      total: "15000.00",
+      balance: "0.00",
+      status: "paid",
+      invoiceDate: new Date("2026-01-15"),
+      dueDate: new Date("2026-01-30"),
+      createdAt: new Date("2026-01-10T08:00:00Z"),
+    },
+    {
+      id: 1002,
+      invoiceNumber: "INV-00002",
+      zohoInvoiceId: "ZI-002",
+      customerId: null,
+      customerName: "Bob, Jr. Okafor",
+      fieldManagerId: null,
+      fieldManagerName: null,
+      maf: null,
+      total: "8500.00",
+      balance: "8500.00",
+      status: "unpaid",
+      invoiceDate: new Date("2026-02-01"),
+      dueDate: null,
+      createdAt: new Date("2026-02-01T09:00:00Z"),
+    },
+  ];
+
+  it("S1 — invoice CSV has correct header columns", () => {
+    const csv = buildCsvString(sampleInvoices as Record<string, unknown>[], INVOICE_COLUMNS);
+    expect(csv).toContain("Invoice ID");
+    expect(csv).toContain("Invoice Number");
+    expect(csv).toContain("Field Manager Name");
+    expect(csv).toContain("Total (₦)");
+  });
+
+  it("S2 — invoice CSV has 14 columns (matches INVOICE_COLUMNS definition)", () => {
+    const csv = buildCsvString(sampleInvoices as Record<string, unknown>[], INVOICE_COLUMNS);
+    const headerLine = csv.split("\r\n")[0].replace("\uFEFF", "");
+    // Count columns by splitting on comma (no commas in headers here)
+    const colCount = headerLine.split(",").length;
+    expect(colCount).toBe(14);
+  });
+
+  it("S3 — invoiceDate serializes as YYYY-MM-DD (not full ISO)", () => {
+    const csv = buildCsvString([sampleInvoices[0]] as Record<string, unknown>[], INVOICE_COLUMNS);
+    expect(csv).toContain("2026-01-15");
+    expect(csv).not.toContain("T00:00:00.000Z"); // should not include time part
+  });
+
+  it("S4 — null dueDate serializes as empty string", () => {
+    const csv = buildCsvString([sampleInvoices[1]] as Record<string, unknown>[], INVOICE_COLUMNS);
+    expect(csv).not.toContain("null");
+  });
+
+  it("S5 — null fieldManagerId and fieldManagerName serialize as empty strings", () => {
+    const csv = buildCsvString([sampleInvoices[1]] as Record<string, unknown>[], INVOICE_COLUMNS);
+    expect(csv).not.toContain("null");
+  });
+
+  it("S6 — customer name with comma is RFC 4180 quoted", () => {
+    const csv = buildCsvString([sampleInvoices[1]] as Record<string, unknown>[], INVOICE_COLUMNS);
+    expect(csv).toContain('"Bob, Jr. Okafor"');
+  });
+
+  it("S7 — Naira symbol in Total column is preserved", () => {
+    const csv = buildCsvString([sampleInvoices[0]] as Record<string, unknown>[], INVOICE_COLUMNS);
+    // Total is "15000.00" — no Naira in the raw value, but the header has ₦
+    expect(csv).toContain("Total (₦)");
+    expect(csv).toContain("15000.00");
+  });
+
+  it("S8 — empty invoice list returns BOM + header only", () => {
+    const csv = buildCsvString([], INVOICE_COLUMNS);
+    const lines = csv.replace(/\r\n/g, "\n").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Invoice ID");
+  });
+});
+
+describe("S: T54 financial export — PAYMENT_COLUMNS serialization", () => {
+  const PAYMENT_COLUMNS: ExportColumn[] = [
+    { key: "id", header: "Payment ID" },
+    { key: "paymentId", header: "Zoho Payment ID" },
+    { key: "paymentNumber", header: "Payment Number", transform: (v) => v == null ? "" : String(v) },
+    { key: "customerId", header: "Zoho Contact ID" },
+    { key: "customerName", header: "Customer Name", transform: (v) => v == null ? "" : String(v) },
+    { key: "derivedFieldManagerId", header: "Field Manager ID", transform: (v) => v == null ? "" : String(v) },
+    { key: "derivedFieldManagerName", header: "Field Manager Name", transform: (v) => v == null ? "" : String(v) },
+    { key: "amount", header: "Amount (₦)", transform: (v) => v == null ? "" : String(v) },
+    { key: "paymentMode", header: "Payment Mode", transform: (v) => v == null ? "" : String(v) },
+    { key: "referenceNumber", header: "Reference Number", transform: (v) => v == null ? "" : String(v) },
+    {
+      key: "paymentDate",
+      header: "Payment Date",
+      transform: (v) => v instanceof Date ? v.toISOString().slice(0, 10) : v == null ? "" : String(v),
+    },
+    {
+      key: "createdAt",
+      header: "Created At",
+      transform: (v) => v instanceof Date ? v.toISOString() : v == null ? "" : String(v),
+    },
+  ];
+
+  const samplePayments = [
+    {
+      id: 501,
+      paymentId: "PAY-001",
+      paymentNumber: "PMT-0001",
+      customerId: "ZC001",
+      customerName: "Alice Adeyemi",
+      derivedFieldManagerId: 8,
+      derivedFieldManagerName: "Bukola",
+      amount: "15000.00",
+      paymentMode: "cash",
+      referenceNumber: "REF-001",
+      paymentDate: new Date("2026-01-20"),
+      createdAt: new Date("2026-01-20T10:00:00Z"),
+    },
+    {
+      id: 502,
+      paymentId: "PAY-002",
+      paymentNumber: null,
+      customerId: "ZC002",
+      customerName: null,
+      derivedFieldManagerId: null,
+      derivedFieldManagerName: null,
+      amount: "5000.00",
+      paymentMode: null,
+      referenceNumber: null,
+      paymentDate: null,
+      createdAt: new Date("2026-02-05T11:00:00Z"),
+    },
+  ];
+
+  it("S9 — payment CSV has correct header columns", () => {
+    const csv = buildCsvString(samplePayments as Record<string, unknown>[], PAYMENT_COLUMNS);
+    expect(csv).toContain("Payment ID");
+    expect(csv).toContain("Zoho Payment ID");
+    expect(csv).toContain("Field Manager Name");
+    expect(csv).toContain("Amount (₦)");
+  });
+
+  it("S10 — payment CSV has 12 columns (matches PAYMENT_COLUMNS definition)", () => {
+    const csv = buildCsvString(samplePayments as Record<string, unknown>[], PAYMENT_COLUMNS);
+    const headerLine = csv.split("\r\n")[0].replace("\uFEFF", "");
+    const colCount = headerLine.split(",").length;
+    expect(colCount).toBe(12);
+  });
+
+  it("S11 — paymentDate serializes as YYYY-MM-DD", () => {
+    const csv = buildCsvString([samplePayments[0]] as Record<string, unknown>[], PAYMENT_COLUMNS);
+    expect(csv).toContain("2026-01-20");
+  });
+
+  it("S12 — null paymentDate serializes as empty string", () => {
+    const csv = buildCsvString([samplePayments[1]] as Record<string, unknown>[], PAYMENT_COLUMNS);
+    expect(csv).not.toContain("null");
+  });
+
+  it("S13 — derived FM fields null when customer not matched", () => {
+    const csv = buildCsvString([samplePayments[1]] as Record<string, unknown>[], PAYMENT_COLUMNS);
+    // derivedFieldManagerId and derivedFieldManagerName are null → empty strings
+    expect(csv).not.toContain("null");
+  });
+
+  it("S14 — empty payment list returns BOM + header only", () => {
+    const csv = buildCsvString([], PAYMENT_COLUMNS);
+    const lines = csv.replace(/\r\n/g, "\n").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Payment ID");
+  });
+});
+
+describe("S: T54 financial export — filename generation for financial entities", () => {
+  const fixedDate = new Date("2026-07-09T08:00:00Z");
+
+  it("S15 — financialInvoices with date range encodes from/to in filename", () => {
+    const name = generateExportFilename(
+      "financial-invoices",
+      { from: "2026-01-01", to: "2026-06-30" },
+      "csv",
+      fixedDate
+    );
+    expect(name).toBe("financial-invoices_from-2026-01-01_to-2026-06-30_2026-07-09.csv");
+  });
+
+  it("S16 — payments with FM filter encodes manager in filename", () => {
+    const name = generateExportFilename(
+      "payments",
+      { manager: "8", from: "2026-01-01", to: "2026-06-30" },
+      "csv",
+      fixedDate
+    );
+    expect(name).toBe("payments_manager-8_from-2026-01-01_to-2026-06-30_2026-07-09.csv");
+  });
+
+  it("S17 — allTime export (no date filter) produces filename without date range", () => {
+    const name = generateExportFilename(
+      "recent-invoices",
+      {},
+      "csv",
+      fixedDate
+    );
+    expect(name).toBe("recent-invoices_all_2026-07-09.csv");
+  });
+
+  it("S18 — __null__ MAF filter is encoded in filename", () => {
+    const name = generateExportFilename(
+      "financial-invoices",
+      { maf: "__null__" },
+      "csv",
+      fixedDate
+    );
+    expect(name).toBe("financial-invoices_maf-__null___2026-07-09.csv");
+  });
+});

@@ -30,6 +30,11 @@ import AppHeader from './AppHeader';
 import { INVOICE_STATUS } from '@shared/constants/invoice-status';
 import { formatCurrency } from '@/utils/currency';
 import type { FinancialMetrics, FieldManagerMetrics, MafMetrics } from '@shared/types/financial';
+import {
+  useFinancialInvoicesExport,
+  useRecentInvoicesExport,
+  usePaymentsExport,
+} from '../hooks/useExport';
 
 const NULL_MAF_DISPLAY = '(No MAF set)';
 
@@ -50,6 +55,20 @@ export function FinancialDashboard() {
 
   const fmParam = selectedFieldManager !== 'all' ? selectedFieldManager : undefined;
   const mafParam = selectedMAF !== 'all' ? (selectedMAF === '__null__' ? null : selectedMAF) : undefined;
+
+  // T54: Financial export hooks
+  const { downloadCsv: downloadAllInvoices, isExporting: isExportingAllInvoices } = useFinancialInvoicesExport();
+  const { downloadCsv: downloadRecentInvoices, isExporting: isExportingRecentInvoices } = useRecentInvoicesExport();
+  const { downloadCsv: downloadPayments, isExporting: isExportingPayments } = usePaymentsExport();
+
+  // Shared filter object passed to all three export hooks
+  const exportFilters = {
+    startDate: allTime ? undefined : dateRange.start,
+    endDate: allTime ? undefined : dateRange.end,
+    fieldManagerId: fmParam,
+    maf: mafParam === null ? '__null__' : mafParam,
+    allTime,
+  };
 
   // Fetch overall metrics — wired to date + FM + MAF filters (T45 Root Cause B + C fix)
   const { data: metrics, isLoading: metricsLoading } = trpc.financial.getMetrics.useQuery({
@@ -292,8 +311,54 @@ export function FinancialDashboard() {
 
         {/* Recent Invoices */}
         <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b border-gray-200">
+          <div className="p-6 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-semibold">Recent Invoices</h3>
+            <div className="flex gap-2">
+              <button
+                onClick={() => downloadRecentInvoices(exportFilters)}
+                disabled={isExportingRecentInvoices}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExportingRecentInvoices ? (
+                  <>
+                    <svg className="animate-spin h-3.5 w-3.5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Preparing...
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download CSV
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => downloadAllInvoices(exportFilters)}
+                disabled={isExportingAllInvoices}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExportingAllInvoices ? (
+                  <>
+                    <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Preparing...
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download All Invoices CSV
+                  </>
+                )}
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -345,8 +410,30 @@ export function FinancialDashboard() {
 
         {/* Recent Payments */}
         <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b border-gray-200">
+          <div className="p-6 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-semibold">Recent Payments</h3>
+            <button
+              onClick={() => downloadPayments(exportFilters)}
+              disabled={isExportingPayments}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isExportingPayments ? (
+                <>
+                  <svg className="animate-spin h-3.5 w-3.5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Preparing...
+                </>
+              ) : (
+                <>
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download CSV
+                </>
+              )}
+            </button>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
