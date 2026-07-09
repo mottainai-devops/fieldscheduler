@@ -5245,3 +5245,66 @@ When a schema change is added to `drizzle/schema.ts`, the corresponding `ALTER T
 | MEDIUM | CSV export: add Download CSV to Invoices page (second consumer of exportRouter) |
 | LOW | `loginAttempts` periodic cleanup job |
 | LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
+
+---
+
+## T54 — Financial CSV Export Rollout
+
+**Date:** 2026-07-09
+**Commit:** `ac7e5620`
+**Tests:** 349 passing (was 331, +18 suite S)
+
+### What was built
+
+**3 new server procedures in `exportRouter.ts`:**
+
+| Procedure | Entity | Method | Columns |
+|---|---|---|---|
+| `trpc.export.financialInvoices` | All invoices (batched 500/page) | `fieldManagerProcedure` | 14 (incl. FM name join) |
+| `trpc.export.recentInvoices` | Recent invoices (single-pass) | `fieldManagerProcedure` | 14 |
+| `trpc.export.payments` | Payments (derived FM via customer join) | `fieldManagerProcedure` | 12 |
+
+All three: role-scoped, filter-encoded filenames, `allTime` flag support.
+
+**3 new client hooks added to `useExport.ts`:**
+- `useFinancialInvoicesExport()` — batched all-invoices download
+- `useRecentInvoicesExport()` — recent invoices download
+- `usePaymentsExport()` — payments download
+- Shared `FinancialExportFilters` type added
+- `triggerDownload()` utility shared across all 4 hooks
+
+**FinancialDashboard.tsx wiring:**
+- Recent Invoices section: "Download CSV" (recent) + "Download All Invoices CSV" (batched, blue primary button)
+- Recent Payments section: "Download CSV"
+- All three: spinner + "Preparing..." loading state, disabled during export
+
+**Bugs fixed during T54:**
+- Removed dead `sql.raw()` call in `fetchInvoicesForExport` batch loop
+- Fixed variable ordering in FinancialDashboard (`fmParam`/`mafParam` declared before `exportFilters`)
+
+### Rule #98 — Financial export filter conventions differ from customer export
+
+The financial export procedures use `allTime: boolean` (not absence of dates) to signal all-time queries. The `maf` filter uses `'__null__'` string (not empty string) to mean "invoices with no MAF set." Client hooks must pass `mafParam === null ? '__null__' : mafParam` — never pass raw `null` to the mutation input.
+
+### Post-deploy verification (completed 2026-07-09)
+
+- ✓ Build succeeded in 33.01s (no TypeScript errors in T54 files)
+- ✓ PM2 restarted cleanly — `online`, scheduler picked up `nextRunAt = 2026-07-10T00:00:00Z` (43,483s timeout)
+- ✓ No new errors in error log from T54 code
+- ✓ Static file 404s in error log are pre-existing, unrelated to T54
+
+### T55 carry-forward
+
+| Priority | Item |
+|---|---|
+| **HIGH** | Verify nightly sync run (2026-07-10T00:00:00Z) — first T51-active run |
+| **HIGH** | Query `contactSyncFailures` after run — extract CUSTOMERMAF Zoho API key names |
+| **HIGH** | T53 Option B: fix stale `nextRunAt` handling in `scheduleJobExecution` (permanent fix) |
+| HIGH | T53: Fix CUSTOMERMAF extraction in `syncZohoContacts` using failure payload data |
+| MEDIUM | T53: Rename "T16 Test Sync Job" → "Nightly Contact & Invoice Sync" |
+| MEDIUM | T53: Fix `scheduleType` DB value "hourly" → "daily" |
+| MEDIUM | Rate limit handling in sync (delay between pages, retry on 429) |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) |
+| LOW | Phantom worker row deletion (workers 9683, 9722) |
+| LOW | `loginAttempts` periodic cleanup job |
+| LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
