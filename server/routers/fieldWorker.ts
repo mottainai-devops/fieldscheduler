@@ -980,4 +980,95 @@ export const fieldWorkerRouter = router({
         startingPointLabel: resolvedStartLabel,
       };
     }),
+
+  /**
+   * T56b correction: getTrackedWorkers — role-scoped live GPS query.
+   *
+   * Admin/superadmin: all workers with role IN ('field_manager', 'supervisor')
+   *   WHERE currentLatitude IS NOT NULL.
+   *
+   * Field manager: themselves (if GPS populated) UNION supervisors whose route
+   *   customers belong to any MAF owned by this FM (MAF-based scoping).
+   *
+   * Returns 0 rows until T56c ships the GPS pipeline (expected — empty state
+   * is handled gracefully in the frontend).
+   */
+  // T56b correction: fieldManagerProcedure — tracking visible to all admin-tier roles
+  getTrackedWorkers: fieldManagerProcedure.query(async ({ ctx }) => {
+    const { getDb } = await import("../db");
+    const db = await getDb();
+    if (!db) return [];
+
+    const { sql: drizzleSql, and: drizzleAnd, inArray: drizzleInArray } = await import("drizzle-orm");
+    const { workers: workersTable } = await import("../../drizzle/schema");
+
+    const role = ctx.user.role;
+    const isAdmin = role === 'superadmin' || role === 'admin';
+
+    if (isAdmin) {
+      // Admin view: all FMs and supervisors with GPS populated
+      const rows = await db
+        .select({
+          id: workersTable.id,
+          name: workersTable.name,
+          role: workersTable.role,
+          currentLatitude: workersTable.currentLatitude,
+          currentLongitude: workersTable.currentLongitude,
+          lastLocationUpdate: workersTable.lastLocationUpdate,
+        })
+        .from(workersTable)
+        .where(
+          drizzleAnd(
+            drizzleInArray(workersTable.role, ['field_manager', 'supervisor']),
+            drizzleSql`${workersTable.currentLatitude} IS NOT NULL`
+          )
+        );
+      return rows;
+    }
+
+    // Field manager view: themselves + MAF-scoped supervisors
+    const fieldManagerId = ctx.user.fieldManagerId;
+    if (!fieldManagerId) {
+      // Supervisor or unscoped role — return empty (supervisors have no sidebar entry)
+      return [];
+    }
+
+    // MAF-based scoping: supervisors whose route customers belong to this FM's MAFs
+    const scopedRows = await db.execute(
+      drizzleSql`
+        WITH fm_mafs AS (
+          SELECT DISTINCT maf FROM customers
+          WHERE fieldManager = ${fieldManagerId}
+            AND maf IS NOT NULL
+        )
+        SELECT DISTINCT w.id, w.name, w.role,
+               w.currentLatitude, w.currentLongitude, w.lastLocationUpdate
+        FROM workers w
+        JOIN routes r ON r.supervisorId = w.id
+        JOIN routeCustomers rc ON rc.routeId = r.id
+        JOIN customers c ON c.id = rc.customerId
+        WHERE c.maf IN (SELECT maf FROM fm_mafs)
+          AND w.role = 'supervisor'
+          AND w.currentLatitude IS NOT NULL
+
+        UNION
+
+        SELECT id, name, role, currentLatitude, currentLongitude, lastLocationUpdate
+        FROM workers
+        WHERE id = ${fieldManagerId}
+          AND currentLatitude IS NOT NULL
+      `
+    );
+
+    // Drizzle execute returns rows array (mysql2 format: [rows, fields])
+    const rows = Array.isArray(scopedRows) ? scopedRows[0] as any[] : [];
+    return rows.map((r: any) => ({
+      id: r.id as number,
+      name: r.name as string,
+      role: r.role as string,
+      currentLatitude: r.currentLatitude as string | null,
+      currentLongitude: r.currentLongitude as string | null,
+      lastLocationUpdate: r.lastLocationUpdate ? new Date(r.lastLocationUpdate) : null,
+    }));
+  }),
 });

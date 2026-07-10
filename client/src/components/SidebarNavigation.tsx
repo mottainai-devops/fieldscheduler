@@ -116,11 +116,11 @@ const navigationGroups: NavGroup[] = [
     title: "Logistics & Tracking",
     icon: Truck,
     items: [
-      // T56b Fix 3: admin-only until GPS pipeline is live (T56a). Page is 100% simulation;
-      // showing it to field managers is misleading. Reverts to fieldManager once T56a ships.
-      { label: "Real-Time Tracking", href: "/real-time-tracking", icon: MapPin, minRole: "admin" },
-      // T56b Fix 3: same rationale as Real-Time Tracking above.
-      { label: "Tracking", href: "/tracking", icon: MapPin, minRole: "admin" },
+      // T56b correction: reverted to fieldManager — page now shows live DB data (role-scoped).
+      // FM sees themselves + MAF-scoped supervisors; admin sees all tracked workers.
+      { label: "Real-Time Tracking", href: "/real-time-tracking", icon: MapPin, minRole: "fieldManager" },
+      // T56b correction: same revert as Real-Time Tracking above.
+      { label: "Tracking", href: "/tracking", icon: MapPin, minRole: "fieldManager" },
       // T27 Item 1: restrict to admin (was unrestricted — alert config is admin-tier)
       { label: "Geofencing Alerts", href: "/geofencing-alerts", icon: MapPin, minRole: "admin" },
     ],

@@ -6,9 +6,16 @@
  *   Fix 2: Navigate button contrast — tested via code inspection (Flutter, no JS test runner)
  *   Fix 3: Sidebar role filtering + App.tsx route gate for Real-Time Tracking and Tracking
  *
- * T1–T8:  defaultDateRange() utility
- * T9–T16: Sidebar meetsMinRole logic for Real-Time Tracking / Tracking (admin-only)
- * T17–T22: App.tsx route gate presence (static code assertions)
+ * T56b correction (applied after original T56b):
+ *   - Real-Time Tracking and Tracking reverted from minRole: "admin" → minRole: "fieldManager"
+ *   - Simulation removed; page now queries live DB via getTrackedWorkers (role-scoped)
+ *   - getTrackedWorkers: admin sees all FMs+supervisors; FM sees MAF-scoped subset
+ *   - Empty state handled gracefully (no GPS data until T56c ships)
+ *
+ * T1–T8:   defaultDateRange() utility
+ * T9–T16:  Sidebar meetsMinRole logic for Real-Time Tracking / Tracking (fieldManager after correction)
+ * T17–T22: App.tsx route gate presence (static code assertions, updated for fieldManager)
+ * T23–T32: getTrackedWorkers procedure + RealTimeTracking.tsx correction assertions
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -105,63 +112,66 @@ describe("T56b Suite T — defaultDateRange() utility", () => {
   });
 });
 
-// ─── Suite T9–T16: Sidebar role filtering for Tracking pages ─────────────────
+// ─── Suite T9–T16: Sidebar role filtering for Tracking pages (T56b correction) ─
 
-describe("T56b Suite T — Sidebar role filtering for Real-Time Tracking / Tracking", () => {
-  it("T9: field_manager cannot see Real-Time Tracking (minRole: admin)", () => {
-    expect(meetsMinRole("field_manager", "admin")).toBe(false);
+describe("T56b Suite T — Sidebar role filtering for Real-Time Tracking / Tracking (corrected: fieldManager)", () => {
+  it("T9: field_manager CAN see Real-Time Tracking (minRole: fieldManager)", () => {
+    // T56b correction: reverted from admin to fieldManager
+    expect(meetsMinRole("field_manager", "fieldManager")).toBe(true);
   });
 
-  it("T10: supervisor cannot see Real-Time Tracking (minRole: admin)", () => {
-    expect(meetsMinRole("supervisor", "admin")).toBe(false);
+  it("T10: supervisor CANNOT see Real-Time Tracking (minRole: fieldManager)", () => {
+    // Supervisors are below fieldManager tier
+    expect(meetsMinRole("supervisor", "fieldManager")).toBe(false);
   });
 
-  it("T11: admin can see Real-Time Tracking (minRole: admin)", () => {
-    expect(meetsMinRole("admin", "admin")).toBe(true);
+  it("T11: admin CAN see Real-Time Tracking (minRole: fieldManager)", () => {
+    expect(meetsMinRole("admin", "fieldManager")).toBe(true);
   });
 
-  it("T12: superadmin can see Real-Time Tracking (minRole: admin)", () => {
-    expect(meetsMinRole("superadmin", "admin")).toBe(true);
+  it("T12: superadmin CAN see Real-Time Tracking (minRole: fieldManager)", () => {
+    expect(meetsMinRole("superadmin", "fieldManager")).toBe(true);
   });
 
-  it("T13: field_manager cannot see Tracking (minRole: admin)", () => {
-    expect(meetsMinRole("field_manager", "admin")).toBe(false);
+  it("T13: field_manager CAN see Tracking (minRole: fieldManager)", () => {
+    // T56b correction: reverted from admin to fieldManager
+    expect(meetsMinRole("field_manager", "fieldManager")).toBe(true);
   });
 
-  it("T14: SidebarNavigation.tsx sets Real-Time Tracking to minRole: admin", () => {
+  it("T14: SidebarNavigation.tsx sets Real-Time Tracking to minRole: fieldManager", () => {
     const filePath = path.resolve(
       __dirname,
       "../client/src/components/SidebarNavigation.tsx"
     );
     const content = readFileSync(filePath, "utf-8");
-    // Must contain the admin restriction for Real-Time Tracking
+    // T56b correction: must contain fieldManager (not admin) for Real-Time Tracking
     expect(content).toMatch(
-      /Real-Time Tracking.*minRole.*admin|minRole.*admin.*Real-Time Tracking/s
+      /Real-Time Tracking.*minRole.*fieldManager|minRole.*fieldManager.*Real-Time Tracking/s
     );
   });
 
-  it("T15: SidebarNavigation.tsx sets Tracking to minRole: admin", () => {
+  it("T15: SidebarNavigation.tsx sets Tracking to minRole: fieldManager", () => {
     const filePath = path.resolve(
       __dirname,
       "../client/src/components/SidebarNavigation.tsx"
     );
     const content = readFileSync(filePath, "utf-8");
-    // Tracking entry must have admin restriction
+    // T56b correction: Tracking entry must have fieldManager restriction
     const trackingLine = content
       .split("\n")
       .find((l) => l.includes('"Tracking"') && l.includes("href"));
     expect(trackingLine).toBeDefined();
-    expect(trackingLine).toContain('minRole: "admin"');
+    expect(trackingLine).toContain('minRole: "fieldManager"');
   });
 
-  it("T16: undefined user role cannot see admin-only pages", () => {
-    expect(meetsMinRole(undefined, "admin")).toBe(false);
+  it("T16: undefined user role cannot see fieldManager-only pages", () => {
+    expect(meetsMinRole(undefined, "fieldManager")).toBe(false);
   });
 });
 
-// ─── Suite T17–T22: App.tsx route gate ───────────────────────────────────────
+// ─── Suite T17–T22: App.tsx route gate (T56b correction) ─────────────────────
 
-describe("T56b Suite T — App.tsx route gate for Tracking pages", () => {
+describe("T56b Suite T — App.tsx route gate for Tracking pages (corrected: requireFieldManager)", () => {
   let appContent: string;
 
   beforeEach(() => {
@@ -169,15 +179,15 @@ describe("T56b Suite T — App.tsx route gate for Tracking pages", () => {
     appContent = readFileSync(filePath, "utf-8");
   });
 
-  it("T17: /tracking route has requireAdmin prop", () => {
+  it("T17: /tracking route has requireFieldManager prop (T56b correction)", () => {
     const trackingLine = appContent
       .split("\n")
       .find((l) => l.includes('"/tracking"') && l.includes("WorkerTracking"));
     expect(trackingLine).toBeDefined();
-    expect(trackingLine).toContain("requireAdmin");
+    expect(trackingLine).toContain("requireFieldManager");
   });
 
-  it("T18: /real-time-tracking route has requireAdmin prop", () => {
+  it("T18: /real-time-tracking route has requireFieldManager prop (T56b correction)", () => {
     const rtLine = appContent
       .split("\n")
       .find(
@@ -186,17 +196,17 @@ describe("T56b Suite T — App.tsx route gate for Tracking pages", () => {
           l.includes("RealTimeTracking")
       );
     expect(rtLine).toBeDefined();
-    expect(rtLine).toContain("requireAdmin");
+    expect(rtLine).toContain("requireFieldManager");
   });
 
-  it("T19: /tracking does NOT have requireFieldManager prop (would be too permissive)", () => {
+  it("T19: /tracking does NOT have requireAdmin prop (T56b correction)", () => {
     const trackingLine = appContent
       .split("\n")
       .find((l) => l.includes('"/tracking"') && l.includes("WorkerTracking"));
-    expect(trackingLine).not.toContain("requireFieldManager");
+    expect(trackingLine).not.toContain("requireAdmin");
   });
 
-  it("T20: /real-time-tracking does NOT have requireFieldManager prop", () => {
+  it("T20: /real-time-tracking does NOT have requireAdmin prop (T56b correction)", () => {
     const rtLine = appContent
       .split("\n")
       .find(
@@ -204,7 +214,7 @@ describe("T56b Suite T — App.tsx route gate for Tracking pages", () => {
           l.includes('"/real-time-tracking"') &&
           l.includes("RealTimeTracking")
       );
-    expect(rtLine).not.toContain("requireFieldManager");
+    expect(rtLine).not.toContain("requireAdmin");
   });
 
   it("T21: FieldManagerDashboard uses defaultDateRange import", () => {
@@ -223,5 +233,78 @@ describe("T56b Suite T — App.tsx route gate for Tracking pages", () => {
     );
     const content = readFileSync(filePath, "utf-8");
     expect(content).toContain("import { defaultDateRange } from '@/utils/dateRange'");
+  });
+});
+
+// ─── Suite T23–T32: getTrackedWorkers procedure + RealTimeTracking page ───────
+
+describe("T56b correction — getTrackedWorkers procedure and RealTimeTracking.tsx", () => {
+  let routerContent: string;
+  let pageContent: string;
+
+  beforeEach(() => {
+    routerContent = readFileSync(
+      path.resolve(__dirname, "routers/fieldWorker.ts"),
+      "utf-8"
+    );
+    pageContent = readFileSync(
+      path.resolve(__dirname, "../client/src/pages/RealTimeTracking.tsx"),
+      "utf-8"
+    );
+  });
+
+  it("T23: fieldWorker router exports getTrackedWorkers procedure", () => {
+    expect(routerContent).toContain("getTrackedWorkers:");
+  });
+
+  it("T24: getTrackedWorkers uses fieldManagerProcedure (not adminProcedure)", () => {
+    // Find the procedure declaration line
+    const lines = routerContent.split("\n");
+    const procIdx = lines.findIndex((l) => l.includes("getTrackedWorkers:"));
+    expect(procIdx).toBeGreaterThan(-1);
+    // The procedure line should reference fieldManagerProcedure
+    const procLine = lines[procIdx];
+    expect(procLine).toContain("fieldManagerProcedure");
+  });
+
+  it("T25: getTrackedWorkers admin path queries field_manager and supervisor roles", () => {
+    expect(routerContent).toContain("field_manager");
+    expect(routerContent).toContain("supervisor");
+    expect(routerContent).toContain("currentLatitude");
+  });
+
+  it("T26: getTrackedWorkers FM path uses MAF-based CTE (WITH fm_mafs)", () => {
+    expect(routerContent).toContain("WITH fm_mafs");
+    expect(routerContent).toContain("fieldManager = ${fieldManagerId}");
+  });
+
+  it("T27: getTrackedWorkers FM path includes UNION with FM themselves", () => {
+    expect(routerContent).toContain("UNION");
+    expect(routerContent).toContain("WHERE id = ${fieldManagerId}");
+  });
+
+  it("T28: RealTimeTracking.tsx does NOT contain simulation data (Bukola/Halleluyah/Juwon/Aishat)", () => {
+    expect(pageContent).not.toContain("Bukola");
+    expect(pageContent).not.toContain("Halleluyah");
+    expect(pageContent).not.toContain("Juwon");
+    expect(pageContent).not.toContain("Aishat");
+  });
+
+  it("T29: RealTimeTracking.tsx does NOT contain isSimulating state", () => {
+    expect(pageContent).not.toContain("isSimulating");
+  });
+
+  it("T30: RealTimeTracking.tsx uses trpc.fieldWorker.getTrackedWorkers.useQuery", () => {
+    expect(pageContent).toContain("getTrackedWorkers.useQuery");
+  });
+
+  it("T31: RealTimeTracking.tsx contains empty state message for no GPS data", () => {
+    // Must contain a meaningful empty state message
+    expect(pageContent).toContain("No workers currently tracked");
+  });
+
+  it("T32: RealTimeTracking.tsx uses TrackedWorker interface (not FieldManagerTracking)", () => {
+    expect(pageContent).toContain("TrackedWorker");
+    expect(pageContent).not.toContain("FieldManagerTracking");
   });
 });
