@@ -30,6 +30,7 @@ import AppHeader from './AppHeader';
 import { INVOICE_STATUS } from '@shared/constants/invoice-status';
 import { formatCurrency } from '@/utils/currency';
 import type { FinancialMetrics, FieldManagerMetrics, MafMetrics } from '@shared/types/financial';
+import { defaultDateRange } from '@/utils/dateRange';
 import {
   useFinancialInvoicesExport,
   useRecentInvoicesExport,
@@ -40,10 +41,7 @@ const NULL_MAF_DISPLAY = '(No MAF set)';
 
 export function FinancialDashboard() {
   const { user } = useAuth();
-  const [dateRange, setDateRange] = useState<{ start: string; end: string }>({
-    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-  });
+  const [dateRange, setDateRange] = useState<{ start: string; end: string }>(defaultDateRange);
   const [selectedFieldManager, setSelectedFieldManager] = useState<string>('all');
   const [selectedMAF, setSelectedMAF] = useState<string>('all');
   // When true, omit date filter from queries (all-time view)

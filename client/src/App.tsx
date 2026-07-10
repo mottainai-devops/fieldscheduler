@@ -117,7 +117,7 @@ function Router() {
       <LayoutRoute path={"/create-route"} component={CreateRoute} requireFieldManager />
       {/* [DEPRECATED T10] <LayoutRoute path={"/area-route-creation"} component={AreaRouteCreation} requireAdmin /> */}
       <LayoutRoute path={"/cluster-management"} component={ClusterManagement} />
-      <LayoutRoute path={"/tracking"} component={WorkerTracking} />
+      <LayoutRoute path={"/tracking"} component={WorkerTracking} requireAdmin /> {/* T56b: admin-only until GPS pipeline is live (T56a) */}
       {/* T14 Item 4: fieldManager tier — analytics accessible to all admin-tier roles */}
       <LayoutRoute path={"/analytics"} component={Analytics} requireFieldManager />
       {/* T14 Item 4: superadmin only — Zoho integration is system-level */}
@@ -134,7 +134,7 @@ function Router() {
       {/* T17 Item 3: TagBasedRouteCreation removed — page never created routes in production (setTimeout simulation, no tRPC call) */}
       {/* T14 Item 4: superadmin only — field manager admin is system-level */}
       <LayoutRoute path={"/field-manager-admin"} component={FieldManagerAdminDashboard} requireSuperadmin />
-      <LayoutRoute path={"/real-time-tracking"} component={RealTimeTracking} />
+      <LayoutRoute path={"/real-time-tracking"} component={RealTimeTracking} requireAdmin /> {/* T56b: admin-only until GPS pipeline is live (T56a) */}
       <LayoutRoute path={"/performance-dashboard"} component={PerformanceDashboard} />
       <LayoutRoute path={"/geofencing-alerts"} component={GeofencingAlerts} />
       <LayoutRoute path={"/route-optimization"} component={RouteOptimization} />

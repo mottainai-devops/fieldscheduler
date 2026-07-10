@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { NULL_MAF_DISPLAY_LABEL } from '@shared/constants/maf';
 import { formatCurrencyRounded as formatCurrency } from '@/utils/currency';
+import { defaultDateRange } from '@/utils/dateRange';
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────────
 // T32 (Rule #66): formatCurrency = formatCurrencyRounded from @/utils/currency (0 decimal places)
@@ -155,14 +156,12 @@ export default function FieldManagerDashboard() {
   const isAdminOrAbove = meUser?.role === "admin" || meUser?.role === "superadmin";
   // Redirect is handled in the render path below — see early return after hooks
 
-  // Date range state for revenue panel AND MAF breakdown — defaults to current month
-  const now = new Date();
-  const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  const defaultEnd = now.toISOString().slice(0, 10);
-  const [startDate, setStartDate] = useState(defaultStart);
-  const [endDate, setEndDate] = useState(defaultEnd);
+  // Date range state for revenue panel AND MAF breakdown — rolling 30-day default (Rule #99)
+  const { start: _defaultStart, end: _defaultEnd } = defaultDateRange();
+  const [startDate, setStartDate] = useState(_defaultStart);
+  const [endDate, setEndDate] = useState(_defaultEnd);
   // revenueRange drives both getMyRevenue and getMyMAFBreakdown (Decision i — T31)
-  const [revenueRange, setRevenueRange] = useState({ startDate: defaultStart, endDate: defaultEnd });
+  const [revenueRange, setRevenueRange] = useState({ startDate: _defaultStart, endDate: _defaultEnd });
 
   // ── tRPC queries ──────────────────────────────────────────────────────────
   const {
