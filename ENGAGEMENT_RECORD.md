@@ -5472,3 +5472,63 @@ All four procedures use `fieldManagerProcedure` (requires authentication). A fie
 | MEDIUM | Field manager identity migration (Variant C, Rule #82) | T49 carry-forward |
 | LOW | Phantom worker row deletion (workers 9683, 9722) | T49 carry-forward |
 | LOW | `loginAttempts` periodic cleanup job | T49 carry-forward |
+
+---
+
+## T56b — Three UI Fixes: Date Range Default, Navigate Button Contrast, Tracking Admin-Only Gate
+
+**Date:** 2026-07-10
+**Commit:** `e44ede34`
+**Tests:** 22 new (Suite T, T1–T22). Total: **371 passing** (was 349).
+
+### Fixes delivered
+
+**Fix 1 — defaultDateRange() shared utility (Rule #99)**
+
+Extracted `client/src/utils/dateRange.ts` — `defaultDateRange()` returns rolling 30-day window (`{ start: YYYY-MM-DD, end: YYYY-MM-DD }`).
+
+- `FieldManagerDashboard.tsx`: was using current-month-start (broken on days 1–9 of month). Now uses `defaultDateRange()`.
+- `FinancialDashboard.tsx`: was using inline rolling-30 calculation. Now uses `defaultDateRange()`.
+- Both dashboards now show identical date ranges by default.
+
+**Fix 2 — Navigate button contrast (Flutter)**
+
+`route_detail_screen.dart` Navigate button:
+- `foregroundColor`: `AppTheme.primaryColor` (dark navy `#1565C0`) → `AppTheme.textPrimary` (near-white `#E8EDF2`)
+- `borderSide`: matched to `textPrimary`
+- Contrast ratio: ~1.4:1 → ~12:1 (WCAG AA compliant)
+
+**Fix 3 — Real-Time Tracking + Tracking restricted to admin-only**
+
+Both pages are 100% simulation (GPS pipeline not yet live — T56a scope). Showing them to field managers was misleading.
+
+- `SidebarNavigation.tsx`: `minRole: "fieldManager"` → `minRole: "admin"` for both entries
+- `App.tsx`: added `requireAdmin` prop to `/tracking` and `/real-time-tracking` `LayoutRoute` entries
+- Reverts to `"fieldManager"` once T56a GPS pipeline ships
+
+### Rules formalized
+
+**Rule #99:** Date range defaults must use `defaultDateRange()` from `client/src/utils/dateRange.ts`. Never compute rolling-30 inline in a component. Never use current-month-start as a default.
+
+**Rule #100:** Simulation-only pages (pages that display mock/fake data with no live backend) must not be visible to field-tier users. Restrict to `minRole: "admin"` until the real data pipeline ships. Add a comment in the code referencing the T-number that will remove the restriction.
+
+### Investigation findings
+
+**Aishat identity check:** No record found in workers table. The name appeared in PM2 logs as a Zoho contact name, not a worker record. Not a phantom — never created.
+
+**Scheduler state post-deploy:** PM2 restart reset the scheduler. Next run: `2026-07-11T00:00:00 UTC`. This is the first run with T51 active.
+
+### T57 carry-forward
+
+| Priority | Item |
+|---|---|
+| **HIGH** | T53 Option B: fix stale `nextRunAt` in `scheduleJobExecution` |
+| **HIGH** | T53: Fix CUSTOMERMAF extraction (pending tonight's nightly sync data) |
+| **HIGH** | T56a: GPS pipeline — `workerAuth.sendLocation` mutation, mobile send, web poll |
+| MEDIUM | Rename "T16 Test Sync Job" → "Nightly Contact & Invoice Sync" |
+| MEDIUM | Fix `scheduleType` DB value from "hourly" → "daily" |
+| MEDIUM | Rate limit handling in sync |
+| LOW | Phantom worker row deletion (workers 9683, 9722) |
+| LOW | `loginAttempts` periodic cleanup job |
+| LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
+
