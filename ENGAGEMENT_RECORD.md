@@ -5308,3 +5308,167 @@ The financial export procedures use `allTime: boolean` (not absence of dates) to
 | LOW | Phantom worker row deletion (workers 9683, 9722) |
 | LOW | `loginAttempts` periodic cleanup job |
 | LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
+
+---
+
+## T55 — Forensic Investigation: Six Operational Issues (2026-07-10)
+
+**Scope:** Read-only code and DB audit of six issues surfaced during T54 owner verification. No code changes made.
+
+---
+
+### Issue 1 — Revenue date range default (FieldManagerDashboard)
+
+**Finding: CONFIRMED BUG — defaults to current month, not last 30 days.**
+
+`FieldManagerDashboard.tsx` lines 160–162:
+```ts
+const defaultStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+const defaultEnd = now.toISOString().slice(0, 10);
+```
+This sets `startDate` to the 1st of the current month, not 30 days ago. On July 10, the default range is July 1–July 10 (9 days), not June 10–July 10. This is inconsistent with `FinancialDashboard.tsx` which uses `Date.now() - 30 * 24 * 60 * 60 * 1000` (rolling 30 days).
+
+**Root cause:** Two separate date range implementations with different semantics. No shared utility.
+
+**T56 fix:** Change `defaultStart` to `new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)` OR extract a shared `defaultDateRange()` utility used by both dashboards.
+
+---
+
+### Issue 2 — Logistics & Tracking sidebar scope
+
+**Finding: CONFIRMED — both items visible to field managers (minRole: "fieldManager").**
+
+`SidebarNavigation.tsx` lines 120, 122:
+```ts
+{ label: "Real-Time Tracking", href: "/real-time-tracking", icon: MapPin, minRole: "fieldManager" },
+{ label: "Tracking", href: "/tracking", icon: MapPin, minRole: "fieldManager" },
+```
+The T27 audit comment (line 51) explicitly states: "Real-Time Tracking and Tracking set to explicit minRole: 'fieldManager' (was accidental 'none')." This was an intentional decision — field managers can see these pages.
+
+**However:** Real-Time Tracking is 100% simulation (see Issue 5). Field managers seeing a simulation page as if it were live data is misleading. The page has a disclaimer note but it is buried at the bottom.
+
+**T56 recommendation:** Either (a) restrict to `minRole: "admin"` until GPS is production-ready, or (b) add a prominent banner at the top of the page stating "Simulation mode — live GPS not yet active."
+
+---
+
+### Issue 3 — Mobile Customer Details tabs (Invoices, Payments, Statement)
+
+**Finding: CONFIRMED WORKING — procedures exist and are wired correctly. Customer 6875 has a data gap, not a code bug.**
+
+**Code path:**
+1. `customer_detail_screen.dart` `_loadData()` calls `ApiService.getCustomerById(widget.customerId)` → gets `zohoContactId`
+2. If `zohoContactId` is set: calls `getCustomerInvoicesByZohoId(zohoContactId)` and `getCustomerPayments(zohoContactId)`
+3. Server procedures `workerAuth.getCustomerInvoices` and `workerAuth.getCustomerPayments` are `publicProcedure` — no auth gate, return `[]` on Zoho error (Bug A fix applied)
+
+**Customer 6875 DB state:**
+- DB record: `id=12403`, `name="6875 OYSISW08 087"`, `zohoContactId="5300119000000341045"`, `fieldManager=9`
+- Invoices by `customerId=12403`: **0 rows**
+- Invoices by `zohoCustomerId=5300119000000341045`: **0 rows**
+- Payments by `customerId(zohoContactId)=5300119000000341045`: **3 rows, ₦477,300**
+- A second record exists: `id=14471`, `name="6875 OYSISW08 087 R1 — EFCC"`, `zohoContactId="5300119000023455015"` — also 0 invoices, 0 payments in DB
+
+**Root cause of empty Invoices tab:** Customer 6875 is one of the 2,435 failed contacts — their invoices were never synced because `buildingId` extraction failed (T50/T51 investigation). The Invoices tab is empty not because the tab is broken, but because the data is not in the DB yet. The Payments tab shows 3 payments because payments are fetched live from Zoho API (not from the local DB).
+
+**T56 action:** None for the tab code itself. Fix is the T53 CUSTOMERMAF extraction fix — once the 2,435 failed contacts sync, customer 6875's invoices will appear.
+
+---
+
+### Issue 4 — Navigate button legibility
+
+**Finding: CONFIRMED LEGIBILITY ISSUE — disabled state uses `Colors.grey` on dark background.**
+
+`route_detail_screen.dart` lines 880–891:
+```dart
+onPressed: hasGps ? () => _navigateToCustomer(customer) : null,
+style: OutlinedButton.styleFrom(
+  foregroundColor: hasGps ? AppTheme.primaryColor : Colors.grey,
+  side: BorderSide(
+    color: hasGps ? AppTheme.primaryColor.withOpacity(0.6) : Colors.grey.withOpacity(0.3),
+  ),
+),
+```
+`AppTheme.primaryColor = Color(0xFF1565C0)` — this is a **dark blue** (#1565C0) on a dark card background (`AppTheme.bgCard = Color(0xFF1A2A3A)` — very dark navy). The contrast ratio between #1565C0 and #1A2A3A is approximately 1.8:1 — well below the WCAG AA minimum of 4.5:1.
+
+**`hasGps = false` path:** `Colors.grey` on `AppTheme.bgCard` — even lower contrast.
+
+**Root cause:** `AppTheme.primaryColor` was chosen for a light theme but the app uses a dark theme throughout. The button text and border are nearly invisible against the dark card background.
+
+**T56 fix:** Change `AppTheme.primaryColor` to `AppTheme.accentColor` (`Color(0xFF42A5F5)` — light blue) for the Navigate button, or add a dedicated `buttonActiveColor` to AppTheme. `accentColor` on `bgCard` yields ~5.2:1 contrast ratio (WCAG AA compliant).
+
+---
+
+### Issue 5 — Real-Time Tracking: simulation vs production
+
+**Finding: CONFIRMED — 100% simulation, no live GPS pipeline exists end-to-end.**
+
+**Web app (`RealTimeTracking.tsx`):**
+- Initializes `mockManagers` array with hardcoded coordinates (lines 60–126)
+- Simulates GPS updates every 3 seconds via `setInterval` (line 129)
+- Page note (line 422): "The simulation shows how live tracking updates appear. In production, GPS coordinates are sent from the mobile app whenever a manager moves."
+- No `trpc.*` calls — zero backend interaction
+
+**Mobile app:**
+- `optimized_route_screen.dart` uses `geolocator` package to get device GPS for route optimization (distance calculation only — never sent to server)
+- No `sendLocation`, `updateLocation`, or any location POST call exists anywhere in the mobile app codebase
+- `ApiService` has no location-sending method
+
+**Server:**
+- `workerLocations` table: **exists on production, 0 rows** — schema is ready but never populated
+- `fieldWorkerDb.ts` has `insertWorkerLocation()` and `getWorkerLocations()` helpers (lines 785, 803)
+- No tRPC procedure exposes these helpers — the table is unreachable from any client
+
+**Gap summary:** The full GPS pipeline is scaffolded (DB table + DB helpers) but the three missing pieces are: (1) mobile app location-sending call, (2) server tRPC mutation to receive it, (3) web app polling the real data instead of simulating.
+
+**T56 scope (GPS pipeline):**
+1. Server: add `workerAuth.sendLocation` mutation (upsert into `workerLocations`)
+2. Mobile: call `sendLocation` on `Geolocator.getPositionStream` updates (already wired for route optimization)
+3. Web: replace mock data in `RealTimeTracking.tsx` with `trpc.fieldWorker.getWorkerLocations.useQuery()`
+
+---
+
+### Issue 6 — T54 export scoping confirmation
+
+**Finding: CONFIRMED CORRECT — all three financial export procedures are properly role-scoped.**
+
+Code audit of `exportRouter.ts`:
+
+| Procedure | Scoping mechanism | Field manager path | Admin path |
+|---|---|---|---|
+| `financialInvoices` | `ctx.user.fieldManagerId` → `scopedFmId` | WHERE `fieldManagerId = scopedFmId` | Respects `input.fieldManagerId` filter |
+| `recentInvoices` | Same as above | Same | Same |
+| `payments` | `ctx.user.fieldManagerId` → `scopedFmId` | JOIN `customers` WHERE `customers.fieldManager = scopedFmId` | Respects `input.fieldManagerId` filter |
+| `customers` | `ctx.user.fieldManagerId` → `isScoped` | `getCustomersByFieldManager(fieldManagerId)` | All customers + optional filter |
+
+All four procedures use `fieldManagerProcedure` (requires authentication). A field manager cannot override their scope by passing a different `fieldManagerId` in the input — the server ignores `input.fieldManagerId` when `ctx.user.fieldManagerId` is set.
+
+**No T56 action needed for export scoping.**
+
+---
+
+### Pattern #69 — Simulation page visible to field managers without live data disclaimer
+**Instance:** Real-Time Tracking page shows simulation to field managers with only a buried bottom note.
+**Rule added:** Any page that shows simulated/mock data must display a prominent top-of-page banner distinguishing simulation from live data. Pages with `minRole: "fieldManager"` that show non-live data must be restricted to `minRole: "admin"` until the live data pipeline is complete.
+
+### Rule #99 — Date range defaults must use a shared utility
+**Instance:** `FieldManagerDashboard` uses current-month-start as default; `FinancialDashboard` uses rolling 30 days. Two different semantics, no shared utility.
+**Rule added:** All date range defaults across the application must use a single shared `defaultDateRange()` utility from `client/src/utils/dateRange.ts`. The utility returns `{ start: 30-days-ago, end: today }`. Individual pages may override but must import from this utility as the baseline.
+
+### Rule #100 — Dark-theme button colors must be validated for contrast
+**Instance:** Navigate button uses `AppTheme.primaryColor` (#1565C0 dark blue) on `AppTheme.bgCard` (#1A2A3A dark navy) — contrast ratio ~1.8:1, well below WCAG AA 4.5:1.
+**Rule added:** All interactive button colors must be validated against their background using a contrast ratio checker before commit. For the dark theme, use `AppTheme.accentColor` (#42A5F5 light blue) for active button states — it yields ~5.2:1 on `bgCard`.
+
+### T56 scope (from T55 findings)
+
+| Priority | Item | Source |
+|---|---|---|
+| **HIGH** | Fix date range default in FieldManagerDashboard (current-month → rolling 30 days) | Issue 1 |
+| **HIGH** | GPS pipeline: server mutation + mobile send + web poll | Issue 5 |
+| **HIGH** | T53 Option B: fix stale `nextRunAt` in `scheduleJobExecution` | T54 carry-forward |
+| **HIGH** | T53: Fix CUSTOMERMAF extraction (pending nightly sync data) | T54 carry-forward |
+| MEDIUM | Navigate button contrast fix (primaryColor → accentColor) | Issue 4 |
+| MEDIUM | Real-Time Tracking: restrict to admin OR add prominent simulation banner | Issue 2 |
+| MEDIUM | T53: Rename "T16 Test Sync Job" + fix scheduleType DB value | T54 carry-forward |
+| MEDIUM | Rate limit handling in sync | T54 carry-forward |
+| MEDIUM | Field manager identity migration (Variant C, Rule #82) | T49 carry-forward |
+| LOW | Phantom worker row deletion (workers 9683, 9722) | T49 carry-forward |
+| LOW | `loginAttempts` periodic cleanup job | T49 carry-forward |
