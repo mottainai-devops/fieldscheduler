@@ -5532,3 +5532,70 @@ Both pages are 100% simulation (GPS pipeline not yet live — T56a scope). Showi
 | LOW | `loginAttempts` periodic cleanup job |
 | LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
 
+
+---
+
+## T56b correction — Revert Tracking Pages to fieldManager + Replace Simulation with Live Query
+**Date:** 2026-07-10
+**Commit:** `94b528c4`
+**Tests:** 10 new (Suite T, T23–T32; T9–T20 updated). Total: **381 passing** (was 371).
+
+### What changed from T56b
+
+T56b Fix 3 incorrectly restricted Real-Time Tracking and Tracking to `minRole: "admin"`.
+The correct access level is `minRole: "fieldManager"` — field managers need to see their own team's locations.
+Simultaneously, the simulation (hardcoded Bukola/Halleluyah/Juwon/Aishat data) was removed and replaced
+with a live DB query so the page is production-ready as soon as T56c ships the GPS pipeline.
+
+### Corrections applied
+
+**Step (a) — SidebarNavigation.tsx**
+- Real-Time Tracking: `minRole: "admin"` → `minRole: "fieldManager"`
+- Tracking: `minRole: "admin"` → `minRole: "fieldManager"`
+
+**Step (b) — App.tsx**
+- `/real-time-tracking` `LayoutRoute`: `requireAdmin` → `requireFieldManager`
+- `/tracking` `LayoutRoute`: `requireAdmin` → `requireFieldManager`
+
+**Step (c/d/e) — RealTimeTracking.tsx rewrite**
+- Removed simulation state (`isSimulating`, `simulationInterval`, `Start/Stop Simulation` button)
+- Removed hardcoded worker data (Bukola, Halleluyah, Juwon, Aishat)
+- Renamed `FieldManagerTracking` interface → `TrackedWorker`
+- Added `trpc.fieldWorker.getTrackedWorkers.useQuery` (30-second poll interval)
+- Added empty state: "No workers currently tracked" with explanation text
+- Added role badges (Field Manager / Supervisor) distinguishing the two entity types
+- Page title changed from "Real-Time Field Manager Tracking" → "Team Locations"
+- Map markers colour-coded by role (blue = FM, purple = supervisor)
+
+**Step (f) — server/routers/fieldWorker.ts: getTrackedWorkers procedure**
+- Gate: `fieldManagerProcedure` (accessible to field_manager, admin, superadmin)
+- Admin/superadmin path: Drizzle ORM query — all workers with `role IN ('field_manager', 'supervisor')` AND `currentLatitude IS NOT NULL`
+- Field manager path: raw SQL CTE (`WITH fm_mafs`) — supervisors whose route customers share a MAF with this FM, UNION the FM themselves
+- Returns `[]` until T56c GPS pipeline ships (expected — empty state handled gracefully)
+
+### Rules updated
+
+**Rule #100 (revised):** Simulation-only pages must not be visible to field-tier users until the real data pipeline ships. However, once a live query exists (even if it returns 0 rows), the page should be accessible to `fieldManager` tier. The empty state must explain why no data appears and reference the upcoming pipeline.
+
+### T56c carry-forward (GPS pipeline — HIGH priority)
+
+The `getTrackedWorkers` procedure is ready. The missing piece is the GPS write path:
+1. `workerAuth.sendLocation` tRPC mutation — writes `currentLatitude`, `currentLongitude`, `lastLocationUpdate` to `workers` table
+2. Mobile app (Flutter) — calls `sendLocation` on GPS update event
+3. Web poll — already implemented (30s `refetchInterval` in `getTrackedWorkers.useQuery`)
+
+Once T56c ships, the page will populate automatically with no further frontend changes.
+
+### T57 carry-forward (unchanged from T56b)
+
+| Priority | Item |
+|---|---|
+| **HIGH** | T53 Option B: fix stale `nextRunAt` in `scheduleJobExecution` |
+| **HIGH** | T53: Fix CUSTOMERMAF extraction (pending tonight's nightly sync data) |
+| **HIGH** | T56c: GPS pipeline — `workerAuth.sendLocation` mutation, mobile send |
+| MEDIUM | Rename "T16 Test Sync Job" → "Nightly Contact & Invoice Sync" |
+| MEDIUM | Fix `scheduleType` DB value from "hourly" → "daily" |
+| MEDIUM | Rate limit handling in sync |
+| LOW | Phantom worker row deletion (workers 9683, 9722) |
+| LOW | `loginAttempts` periodic cleanup job |
+| LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
