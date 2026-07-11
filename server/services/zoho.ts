@@ -71,6 +71,14 @@ loadTokensFromDatabase().catch(e => console.error('[Zoho] Error loading tokens:'
 const ZOHO_AUTH_URL = "https://accounts.zoho.com/oauth/v2";
 const ZOHO_API_URL = "https://www.zohoapis.com/books/v3";
 
+/** T57: sleep helper for inter-page delays */
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/** T57: detect Zoho 429 rate-limit responses (matches T48 pattern) */
+function isZohoRateLimitError(error: any): boolean {
+  return error?.response?.status === 429;
+}
+
 /**
  * Retry utility with exponential backoff
  */
@@ -308,27 +316,40 @@ export async function fetchZohoContacts(): Promise<ZohoContact[]> {
 
     while (hasMorePages) {
       console.log(`Fetching page ${page}...`);
-      
-      const response = await axios.get(`${ZOHO_API_URL}/contacts`, {
-        headers: {
-          Authorization: `Zoho-oauthtoken ${accessToken}`,
-        },
-        params: {
-          organization_id: ZOHO_ORGANIZATION_ID,
-          page,
-          per_page: perPage,
-        },
-      });
+
+      // T57: inter-page delay to reduce API quota consumption
+      if (page > 1) await sleep(500);
+
+      // T57: 429 retry with exponential backoff (max 3 retries)
+      let response: any;
+      let rateLimitRetries = 0;
+      while (true) {
+        try {
+          response = await axios.get(`${ZOHO_API_URL}/contacts`, {
+            headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+            params: { organization_id: ZOHO_ORGANIZATION_ID, page, per_page: perPage },
+          });
+          break;
+        } catch (reqErr: any) {
+          if (isZohoRateLimitError(reqErr) && rateLimitRetries < 3) {
+            const backoff = Math.pow(2, rateLimitRetries) * 1000;
+            console.warn(`[Zoho] 429 on contacts page ${page}, retry ${rateLimitRetries + 1}/3 after ${backoff}ms`);
+            await sleep(backoff);
+            rateLimitRetries++;
+          } else {
+            throw reqErr;
+          }
+        }
+      }
 
       const contacts = response.data.contacts || [];
-      
+
       // Log first contact structure for debugging
       if (page === 1 && contacts.length > 0) {
         console.log('[Zoho] First contact structure:', JSON.stringify(contacts[0], null, 2));
       }
-      
+
       allContacts = allContacts.concat(contacts);
-      
       console.log(`Page ${page}: Fetched ${contacts.length} contacts. Total so far: ${allContacts.length}`);
 
       // Check if there are more pages
@@ -458,7 +479,8 @@ export async function syncZohoContacts(syncRunId?: number | null) {
     const { eq, count } = await import("drizzle-orm");
     
     let syncedCount = 0;
-    let errorCount = 0;
+    let errorCount = 0;     // true failures (unexpected_error)
+    let infoCount = 0;      // T57: informational events (no_maf_assigned)
     let fieldManagerCount = 0;
     let customermafCount = 0;
     const fieldManagerMap = new Map<string, number>();
@@ -533,23 +555,24 @@ export async function syncZohoContacts(syncRunId?: number | null) {
           }
         }
         
-        // Skip customers without valid alphanumeric building IDs
+        // T57: Accept contacts without a valid MAF — store with buildingId=null.
+        // Log as informational event (no_maf_assigned) for triage; do NOT skip.
         if (!buildingId) {
-          errorCount++;
-          // T51 Rule #95: per-record failure logging
+          infoCount++;
           try {
             const dbLog = await getDb();
             if (dbLog) {
               await dbLog.insert(contactSyncFailures).values({
                 contactId: String(contact.contact_id),
                 syncRunId: syncRunId ?? null,
-                failureReason: 'buildingId_null',
+                failureReason: 'no_maf_assigned',
                 failurePayload: JSON.stringify({
                   contactName: contact.contact_name,
                   customerMafKeys: Object.keys(contact).filter(k =>
                     k.toLowerCase().includes('maf')
                   ),
                   cfMafPresent: !!(contactAny.cf_maf),
+                  cfMafValue: contactAny.cf_maf ?? null,
                   customFieldsPresent: !!(contact.custom_fields),
                   customFieldsSample: Array.isArray(contact.custom_fields)
                     ? contact.custom_fields.slice(0, 5)
@@ -558,9 +581,9 @@ export async function syncZohoContacts(syncRunId?: number | null) {
               });
             }
           } catch (logErr) {
-            console.warn('[Zoho] Failed to log contact sync failure:', logErr);
+            console.warn('[Zoho] Failed to log no_maf_assigned event:', logErr);
           }
-          continue;
+          // NOTE: no continue — fall through and sync with buildingId=null
         }
         
         // Log first few for debugging
@@ -695,7 +718,8 @@ export async function syncZohoContacts(syncRunId?: number | null) {
       }
     }
 
-    // T51 Rule #95 (g): failure count reconciliation
+    // T51 Rule #95 (g) / T57: event count reconciliation
+    // loggedCount = errorCount (unexpected_error) + infoCount (no_maf_assigned)
     if (syncRunId != null) {
       try {
         const dbCheck = await getDb();
@@ -705,18 +729,19 @@ export async function syncZohoContacts(syncRunId?: number | null) {
             .from(contactSyncFailures)
             .where(eq(contactSyncFailures.syncRunId, syncRunId));
           const loggedCount = Number(loggedRow?.count ?? 0);
-          if (loggedCount !== errorCount) {
+          const expectedCount = errorCount + infoCount;
+          if (loggedCount !== expectedCount) {
             console.warn(
-              `[syncZohoContacts] Failure count mismatch: aggregate=${errorCount}, logged=${loggedCount}`
+              `[syncZohoContacts] Event count mismatch: aggregate=${expectedCount} (errors=${errorCount}, info=${infoCount}), logged=${loggedCount}`
             );
           } else {
             console.log(
-              `[syncZohoContacts] Failure count reconciled: ${loggedCount} rows logged for syncRunId=${syncRunId}`
+              `[syncZohoContacts] Event count reconciled: ${loggedCount} rows logged (errors=${errorCount}, no_maf=${infoCount}) for syncRunId=${syncRunId}`
             );
           }
         }
       } catch (reconcileErr) {
-        console.warn('[syncZohoContacts] Failure count reconciliation error:', reconcileErr);
+        console.warn('[syncZohoContacts] Event count reconciliation error:', reconcileErr);
       }
     }
 
@@ -724,6 +749,7 @@ export async function syncZohoContacts(syncRunId?: number | null) {
       success: errorCount === 0,
       synced: syncedCount,
       errors: errorCount,
+      noMafAssigned: infoCount,  // T57: informational count (accepted with null MAF)
       fieldManagerCount,
       customermafCount,
       contacts: processedContacts,
@@ -734,6 +760,7 @@ export async function syncZohoContacts(syncRunId?: number | null) {
       success: false,
       synced: 0,
       errors: 1,
+      noMafAssigned: 0,
       fieldManagerCount: 0,
       customermafCount: 0,
       contacts: [],
@@ -862,17 +889,30 @@ export async function getCustomerInvoices(zohoContactId: string): Promise<any[]>
     let hasMorePages = true;
 
     while (hasMorePages) {
-      const response = await axios.get(`${ZOHO_API_URL}/invoices`, {
-        headers: {
-          Authorization: `Zoho-oauthtoken ${accessToken}`,
-        },
-        params: {
-          customer_id: zohoContactId,
-          organization_id: ZOHO_ORGANIZATION_ID,
-          per_page: 200,
-          page,
-        },
-      });
+      // T57: inter-page delay to reduce API quota consumption
+      if (page > 1) await sleep(300);
+
+      // T57: 429 retry with exponential backoff (max 3 retries)
+      let response: any;
+      let rateLimitRetries = 0;
+      while (true) {
+        try {
+          response = await axios.get(`${ZOHO_API_URL}/invoices`, {
+            headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+            params: { customer_id: zohoContactId, organization_id: ZOHO_ORGANIZATION_ID, per_page: 200, page },
+          });
+          break;
+        } catch (reqErr: any) {
+          if (isZohoRateLimitError(reqErr) && rateLimitRetries < 3) {
+            const backoff = Math.pow(2, rateLimitRetries) * 1000;
+            console.warn(`[Zoho] 429 on invoices for ${zohoContactId} page ${page}, retry ${rateLimitRetries + 1}/3 after ${backoff}ms`);
+            await sleep(backoff);
+            rateLimitRetries++;
+          } else {
+            throw reqErr;
+          }
+        }
+      }
 
       const pageInvoices = response.data.invoices || [];
       allInvoices.push(...pageInvoices);

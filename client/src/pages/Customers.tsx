@@ -18,6 +18,7 @@ export default function Customers() {
   const [selectedCustomerType, setSelectedCustomerType] = useState("");
   const [selectedRouteStatus, setSelectedRouteStatus] = useState("");
   const [selectedRoutingReason, setSelectedRoutingReason] = useState("");
+  const [showUnmappedOnly, setShowUnmappedOnly] = useState(false); // T57: unmapped filter chip
 
   // Read filter parameters from URL on mount (e.g., from Dashboard chip navigation)
   useEffect(() => {
@@ -110,9 +111,12 @@ export default function Customers() {
         }
       }
 
+      // T57: unmapped filter chip
+      if (showUnmappedOnly && customer.maf) return false;
+
       return true;
     });
-  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason]);
+  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason, showUnmappedOnly]);
 
   // Get field manager name
   const getFieldManagerName = (managerId: number | null) => {
@@ -128,11 +132,13 @@ export default function Customers() {
     const routeAssigned = customers.filter(c => c.routeAssignmentStatus === "assigned").length;
     const untreated = customers.filter(c => c.routeAssignmentStatus === "untreated").length;
     
+    const unmappedCount = customers.filter(c => !c.maf).length; // T57
     return {
       mafTags: uniqueMAFs.size,
       managers: managersCount,
       routeAssigned,
-      untreated
+      untreated,
+      unmapped: unmappedCount,
     };
   }, [customers]);
 
@@ -149,7 +155,7 @@ export default function Customers() {
       <div className="p-6">
 
       {/* Quick Stats */}
-      <div className="mb-6 flex gap-4">
+      <div className="mb-6 flex flex-wrap gap-4 items-center">
         <div className="bg-slate-700/30 border border-slate-600 rounded-lg px-4 py-2">
           <span className="text-slate-400 text-sm">{stats.mafTags} MAF Tags</span>
         </div>
@@ -162,6 +168,20 @@ export default function Customers() {
         <div className="bg-yellow-600/20 border border-yellow-600 rounded-lg px-4 py-2">
           <span className="text-yellow-400 text-sm">{stats.untreated} Untreated</span>
         </div>
+        {/* T57: Unmapped counter + filter chip */}
+        {stats.unmapped > 0 && (
+          <button
+            onClick={() => setShowUnmappedOnly(prev => !prev)}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors border ${
+              showUnmappedOnly
+                ? 'bg-orange-500/30 border-orange-400 text-orange-300'
+                : 'bg-orange-600/20 border-orange-600 text-orange-400 hover:bg-orange-600/30'
+            }`}
+            title={showUnmappedOnly ? 'Click to show all customers' : 'Click to show only unmapped customers'}
+          >
+            {stats.unmapped} Unmapped{showUnmappedOnly ? ' ✕' : ''}
+          </button>
+        )}
       </div>
 
       {/* Search */}
@@ -316,12 +336,20 @@ export default function Customers() {
               <div className="p-4 bg-slate-700/30 border border-slate-600 rounded-lg hover:bg-slate-700/50 transition-colors cursor-pointer">
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="font-medium text-white">{customer.name}</h3>
-                  <span className={`text-xs px-2 py-1 rounded ${
-                    customer.maf ? "bg-blue-600/20 text-blue-400" :
-                    "bg-gray-600/20 text-gray-400"
-                  }`}>
-                    {customer.maf || "No MAF"}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {/* T57: Unmapped badge */}
+                    {!customer.maf && (
+                      <span className="text-xs px-2 py-1 rounded bg-orange-600/20 text-orange-400 border border-orange-600/40">
+                        Unmapped
+                      </span>
+                    )}
+                    <span className={`text-xs px-2 py-1 rounded ${
+                      customer.maf ? "bg-blue-600/20 text-blue-400" :
+                      "bg-gray-600/20 text-gray-400"
+                    }`}>
+                      {customer.maf || "No MAF"}
+                    </span>
+                  </div>
                 </div>
                 
                 <p className="text-sm text-slate-400 mb-2">{customer.address}</p>

@@ -265,9 +265,27 @@ function scheduleJobExecution(job: ScheduledJob) {
   const delayMs = nextRun.getTime() - now.getTime();
 
   if (delayMs < 0) {
+    // T57: Permanent stall fix (Option B) — advance stale nextRunAt instead of silently dropping.
+    // Handles PM2 restarts, extended downtime, and missed windows.
     console.warn(
-      `[Zoho Scheduler] Job ${job.jobName} next run time is in the past`
+      `[Zoho Scheduler] Job ${job.jobName} nextRunAt is in the past (${nextRun.toISOString()}). Advancing to next valid window.`
     );
+    const advanced = calculateNextRunTime(
+      job.scheduleType,
+      job.scheduleTime,
+      job.scheduleDay
+    );
+    // Persist the advanced nextRunAt so it survives the next restart
+    getDb().then(db => {
+      if (db) {
+        db.update(zohoSyncJobs)
+          .set({ nextRunAt: advanced })
+          .where(eq(zohoSyncJobs.id, job.id))
+          .catch((err: any) => console.error('[Zoho Scheduler] Failed to persist advanced nextRunAt:', err));
+      }
+    }).catch(() => {});
+    // Reschedule with the corrected time
+    scheduleJobExecution({ ...job, nextRunAt: advanced });
     return;
   }
 
