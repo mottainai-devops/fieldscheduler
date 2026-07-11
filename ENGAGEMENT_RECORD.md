@@ -5599,3 +5599,99 @@ Once T56c ships, the page will populate automatically with no further frontend c
 | LOW | Phantom worker row deletion (workers 9683, 9722) |
 | LOW | `loginAttempts` periodic cleanup job |
 | LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
+
+---
+
+## T57 — Accept MAF-less Contacts, Rate Limiting, Scheduler Stall Fix, Unmapped UI
+
+**Date:** 2026-07-11
+**Commit:** `1242267b`
+**Status:** CLOSED
+
+### Problem Statement
+
+Pre-flight Q1/Q2/Q3 queries (run 2026-07-11) revealed that 2,435 contacts were failing every nightly sync with `failureReason='buildingId_null'`. Root cause analysis:
+
+| Population | Count | Root Cause |
+|---|---|---|
+| `cf_maf = "OutsideIBSW"` | 87 | MAF field present but value is a zone label, not a code. Regex correctly rejects. |
+| No MAF field at all | 2,348 | Contacts were never assigned a MAF in Zoho Books. |
+
+**Decision:** Accept MAF-less contacts with `buildingId=null` (Option B). The sync code was not broken — it was correctly enforcing a policy that no longer serves the business. Contacts without a MAF are legitimate and should be importable.
+
+### Changes Delivered
+
+**Server — `server/services/zoho.ts`**
+
+- Removed `continue` from the `buildingId` gate. Contacts with no valid MAF now fall through and sync with `buildingId=null`, `maf=null`.
+- `failureReason` renamed from `'buildingId_null'` → `'no_maf_assigned'` (informational event, not a failure).
+- Added `infoCount` counter (separate from `errorCount`) to track `no_maf_assigned` events.
+- Added `cfMafValue` field to `no_maf_assigned` payload (captures `"OutsideIBSW"` etc. for triage).
+- Event count reconciliation updated: `loggedCount === errorCount + infoCount`.
+- `noMafAssigned` field added to `syncZohoContacts` return value.
+- Added `sleep()` helper and `isZohoRateLimitError()` sentinel.
+- `fetchZohoContacts`: 500ms inter-page delay + 429 retry with exponential backoff (max 3).
+- `getCustomerInvoices`: 300ms inter-page delay + 429 retry with exponential backoff (max 3).
+
+**Server — `server/services/zohoScheduler.ts`**
+
+- Permanent stall fix (Option B): when `delayMs < 0`, advance `nextRunAt` via `calculateNextRunTime()`, persist to DB, and reschedule — instead of silently returning. Handles PM2 restarts and extended downtime.
+
+**Database (production, applied directly)**
+
+- `zohoSyncJobs.jobName`: `"T16 Test Sync Job"` → `"Nightly Contact & Invoice Sync"`
+- `zohoSyncJobs.scheduleType`: `"hourly"` → `"daily"`
+- `zohoSyncJobs.nextRunAt`: confirmed `2026-07-12T00:00:00.000Z`
+
+**Client — `client/src/pages/Customers.tsx`**
+
+- **Unmapped badge:** orange `Unmapped` pill on customer cards where `maf=null`.
+- **Quick Stats chip:** `N Unmapped` (orange) — doubles as a filter toggle (`showUnmappedOnly`).
+- **Filter logic:** `showUnmappedOnly=true` filters out all customers with a `maf` value.
+
+### Tests
+
+| File | Suite | Tests | Description |
+|---|---|---|---|
+| `server/contactSync.t57.test.ts` | R1–R15 | 15 | MAF gate, no_maf_assigned logging, rate limit detection, scheduler stall |
+| `server/customersUI.t57.test.ts` | S1–S11 | 11 | Unmapped badge, Quick Stats counter, filter chip |
+
+**Total: 407 tests passing** (was 381 before T57).
+
+### Production Verification (2026-07-11T17:24Z)
+
+- PM2 restart log confirms: `"Scheduling job Nightly Contact & Invoice Sync to run in 23668s at 2026-07-12T00:00:00.000Z"`
+- Scheduler stall fix active: `nextRunAt` was in the future at restart — no stall triggered (expected)
+- Rate limit evidence in error log: previous run (id=12) hit Zoho's 11,000-call limit on invoice sync — T57 delays will reduce pressure from run 13 onward
+
+### Post-Nightly Verification (scheduled 2026-07-12T00:00:00Z)
+
+After run 13 completes, verify:
+
+```sql
+-- Expected: syncedContacts ~10,216 (7,781 + 2,435 previously failing)
+-- Expected: failedContacts = 0 (or very low — only genuine unexpected_error)
+SELECT id, status, syncedContacts, failedContacts, completedAt
+FROM zohoSyncHistory ORDER BY id DESC LIMIT 3;
+
+-- Expected: no rows with failureReason='buildingId_null'
+-- Expected: ~2,435 rows with failureReason='no_maf_assigned'
+SELECT failureReason, COUNT(*) as cnt
+FROM contactSyncFailures
+WHERE syncRunId = (SELECT MAX(id) FROM zohoSyncHistory)
+GROUP BY failureReason;
+
+-- Expected: ~2,435 customers with maf=NULL
+SELECT COUNT(*) FROM customers WHERE maf IS NULL;
+```
+
+### T58 Carry-Forward
+
+| Priority | Item |
+|---|---|
+| **HIGH** | T56c: GPS pipeline — `workerAuth.sendLocation` mutation, mobile send |
+| **HIGH** | Zoho invoice rate limit: run 12 hit 11,000-call limit at 33,097 invoices. Consider incremental sync or per-customer throttle. |
+| MEDIUM | OutsideIBSW contacts (87): will sync with `maf=null` until a valid MAF code is assigned in Zoho. |
+| LOW | Phantom worker row deletion (workers 9683, 9722) |
+| LOW | `loginAttempts` periodic cleanup job |
+| LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
