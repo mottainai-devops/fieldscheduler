@@ -170,6 +170,7 @@ async function executeSyncJob(jobId: number, jobName: string) {
           totalContacts: syncResult.synced + syncResult.errors,
           syncedContacts: syncResult.synced,
           failedContacts: syncResult.errors,
+          excludedContacts: syncResult.excludedContacts || 0,  // T58
           fieldManagerCount: syncResult.fieldManagerCount || 0,
           customermafCount: syncResult.customermafCount || 0,
           invoiceSyncedCount,
@@ -187,6 +188,7 @@ async function executeSyncJob(jobId: number, jobName: string) {
         totalContacts: syncResult.synced + syncResult.errors,
         syncedContacts: syncResult.synced,
         failedContacts: syncResult.errors,
+        excludedContacts: syncResult.excludedContacts || 0,  // T58
         fieldManagerCount: syncResult.fieldManagerCount || 0,
         customermafCount: syncResult.customermafCount || 0,
         invoiceSyncedCount,

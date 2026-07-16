@@ -80,6 +80,26 @@ function isZohoRateLimitError(error: any): boolean {
 }
 
 /**
+ * T58: Exclusion pattern matcher.
+ * Reads EXCLUDED_CONTACT_NAME_PATTERNS (comma-separated, default "LASIKA").
+ * Returns true if the contact name matches any pattern (case-insensitive substring).
+ * An empty / unset config means exclude nothing.
+ */
+function buildExclusionPatterns(): string[] {
+  const raw = process.env.EXCLUDED_CONTACT_NAME_PATTERNS ?? 'LASIKA';
+  return raw
+    .split(',')
+    .map(p => p.trim().toUpperCase())
+    .filter(p => p.length > 0);
+}
+
+function isContactExcluded(contactName: string, patterns: string[]): boolean {
+  if (patterns.length === 0) return false;
+  const upper = contactName.toUpperCase();
+  return patterns.some(p => upper.includes(p));
+}
+
+/**
  * Retry utility with exponential backoff
  */
 async function retryWithBackoff<T>(
@@ -481,9 +501,16 @@ export async function syncZohoContacts(syncRunId?: number | null) {
     let syncedCount = 0;
     let errorCount = 0;     // true failures (unexpected_error)
     let infoCount = 0;      // T57: informational events (no_maf_assigned)
+    let excludedCount = 0;  // T58: contacts skipped by EXCLUDED_CONTACT_NAME_PATTERNS
     let fieldManagerCount = 0;
     let customermafCount = 0;
     const fieldManagerMap = new Map<string, number>();
+
+    // T58: Build exclusion pattern list once before the loop
+    const exclusionPatterns = buildExclusionPatterns();
+    if (exclusionPatterns.length > 0) {
+      console.log(`[Zoho] T58 exclusion patterns active: ${exclusionPatterns.map(p => `"${p}"`).join(', ')}`);
+    }
 
     // Rule #64 / T34 Part 1 — Normalize field manager names before map key comparison.
     // Dots, spaces, and case variations in Zoho strings vs DB-stored names cause
@@ -514,7 +541,23 @@ export async function syncZohoContacts(syncRunId?: number | null) {
 
     const processedContacts = [];
 
+    // T58: Per-pattern match counter for summary log lines
+    const patternMatchCounts = new Map<string, number>(exclusionPatterns.map(p => [p, 0]));
+
     for (const contact of contacts) {
+      // T58: Exclusion check — skip contacts matching EXCLUDED_CONTACT_NAME_PATTERNS.
+      // Matched contacts are NOT written, NOT updated, NOT deleted from customers.
+      // Their financials (invoices/payments keyed on zohoContactId) are also not imported
+      // because the invoice sync only processes contacts that exist in customers table.
+      const contactName = contact.contact_name ?? '';
+      if (isContactExcluded(contactName, exclusionPatterns)) {
+        excludedCount++;
+        const matchedPattern = exclusionPatterns.find(p => contactName.toUpperCase().includes(p))!;
+        patternMatchCounts.set(matchedPattern, (patternMatchCounts.get(matchedPattern) ?? 0) + 1);
+        console.debug(`[Zoho] Excluded contact: "${contactName}" (pattern: "${matchedPattern}")`);
+        continue;
+      }
+
       try {
         const { latitude, longitude, fieldManager } = extractCoordinates(contact);
         if (fieldManager) fieldManagerCount++;
@@ -745,11 +788,21 @@ export async function syncZohoContacts(syncRunId?: number | null) {
       }
     }
 
+    // T58: Log exclusion summary
+    if (excludedCount > 0) {
+      const breakdown = Array.from(patternMatchCounts.entries())
+        .filter(([, n]) => n > 0)
+        .map(([p, n]) => `${p}:${n}`)
+        .join(', ');
+      console.log(`[Zoho] T58 exclusion summary: ${excludedCount} contacts excluded (${breakdown})`);
+    }
+
     return {
       success: errorCount === 0,
       synced: syncedCount,
       errors: errorCount,
       noMafAssigned: infoCount,  // T57: informational count (accepted with null MAF)
+      excludedContacts: excludedCount,  // T58: contacts skipped by exclusion patterns
       fieldManagerCount,
       customermafCount,
       contacts: processedContacts,
@@ -761,6 +814,7 @@ export async function syncZohoContacts(syncRunId?: number | null) {
       synced: 0,
       errors: 1,
       noMafAssigned: 0,
+      excludedContacts: 0,
       fieldManagerCount: 0,
       customermafCount: 0,
       contacts: [],

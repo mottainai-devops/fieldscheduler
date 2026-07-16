@@ -404,6 +404,8 @@ export const zohoSyncHistory = mysqlTable("zohoSyncHistory", {
   failedContacts: int("failedContacts").default(0),
   fieldManagerCount: int("fieldManagerCount").default(0),
   customermafCount: int("customermafCount").default(0),
+  // T58: excluded contacts (skipped by EXCLUDED_CONTACT_NAME_PATTERNS)
+  excludedContacts: int("excludedContacts").default(0),
   // T48 Fix 4: invoice sync tracking columns
   invoiceSyncedCount: int("invoiceSyncedCount").default(0),
   invoiceFailedCount: int("invoiceFailedCount").default(0),
