@@ -5695,3 +5695,54 @@ SELECT COUNT(*) FROM customers WHERE maf IS NULL;
 | LOW | Phantom worker row deletion (workers 9683, 9722) |
 | LOW | `loginAttempts` periodic cleanup job |
 | LOW | `adminUsers` / `adminAuthDb.ts` cleanup |
+
+---
+
+## T58 — Phase 2: Contact Exclusion Rule + Investigation Artefacts
+**Commit:** `bc8ddbc0`
+**Deployed:** 2026-07-16T17:10Z
+**Tests:** 424 passing (407 → 424, +17 T58 tests)
+
+### Runbook results
+
+**Section 1 — LASIKA invoice investigation**
+- LASIKA contacts: 1,432 total
+- LASIKA contacts with at least one invoice: **0**
+- LASIKA contacts with at least one payment: **0**
+- Financial exposure: **nil** — safe to exclude from sync
+
+**Section 2 — Non-LASIKA T57 cohort**
+- Count confirmed: **846** records
+- Vintage breakdown: free_text 739, vintage_C_coded 97, vintage_B 10
+- Top zone codes: OYSISW02 (78), OYSISW12 (21), OYSISW08 (6)
+- Excel export generated: `T58_NonLASIKA_Review_846.xlsx` (delivered to user)
+
+**Section 3 — Exclusion rule implementation**
+
+| File | Change |
+|---|---|
+| `server/services/zoho.ts` | `buildExclusionPatterns()` + `isContactExcluded()` helpers added |
+| `server/services/zoho.ts` | Exclusion check at top of contact loop; `excludedCount` + `patternMatchCounts` tracking |
+| `server/services/zoho.ts` | Exclusion summary log line before return |
+| `server/services/zoho.ts` | `excludedContacts` in both return shapes |
+| `drizzle/schema.ts` | `excludedContacts INT DEFAULT 0` column added to `zohoSyncHistory` |
+| `server/services/zohoScheduler.ts` | `excludedContacts` written to both history update paths |
+| `server/contactSync.t58.test.ts` | 17 new tests (T1–T17) |
+
+**Default behaviour:** `EXCLUDED_CONTACT_NAME_PATTERNS` env var defaults to `"LASIKA"` if absent.
+**Production DB migration:** `ALTER TABLE zohoSyncHistory ADD COLUMN excludedContacts INT DEFAULT 0` — applied successfully.
+
+### Expected run 14 outcome (2026-07-17T00:00:00Z)
+```
+syncedContacts:   ~8,784  (10,216 − 1,432 LASIKA)
+failedContacts:   0
+excludedContacts: ~1,432
+status:           success
+```
+
+### T58 carry-forward
+- **846-record review** (Excel delivered): user to triage each record with keep/delete/needs-enumeration/duplicate-of decision
+- **T58b** (ArcGIS phone fallback in platform backend): MEDIUM priority
+- **T58c** (unitCode backfill job): MEDIUM priority
+- **T58d** (Zoho cf_arcgis_building_id population): LOW — data task
+- **T58e** (Zoho contact name standardisation): LOW — data task
