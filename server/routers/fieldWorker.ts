@@ -194,13 +194,16 @@ export const fieldWorkerRouter = router({
     //   user/supervisor → fieldManagerId=null → sees ALL customers (fallback)
     // fieldManagerId is only set for field_manager-role workers in adminAuth.login,
     // so the simple presence check correctly distinguishes scoped vs unscoped.
+    //
+    // T60: uses invoice-summary variants to append earliestDueDate,
+    // outstandingBalance, and hasOverdueInvoice for due-date / overdue filters.
     const isScoped = !!ctx.user.fieldManagerId;
     if (isScoped) {
       console.log(`[getCustomers] Scoping to fieldManagerId=${ctx.user.fieldManagerId} for user ${ctx.user.email} (role=${ctx.user.role})`);
-      return await fieldWorkerDb.getCustomersByFieldManager(ctx.user.fieldManagerId);
+      return await fieldWorkerDb.getCustomersByFieldManagerWithInvoiceSummary(ctx.user.fieldManagerId);
     }
     console.log(`[getCustomers] Returning all customers for user ${ctx.user.email} (role=${ctx.user.role}, fieldManagerId=${ctx.user.fieldManagerId})`);
-    return await fieldWorkerDb.getAllCustomers();
+    return await fieldWorkerDb.getAllCustomersWithInvoiceSummary();
   }),
 
   // T14 Item 3: fieldManagerProcedure — customer reads accessible to all admin-tier roles

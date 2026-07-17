@@ -5,6 +5,7 @@ import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTING_REASONS } from '@shared/const';
 import { useCustomerExport } from "@/hooks/useExport";
+import { isDueWithinDays, isOverdue, DUE_DATE_PRESETS, type CustomerInvoiceSummary } from '@shared/utils/invoiceFilters';
 
 export default function Customers() {
   const { isAdmin, isFieldManager, fieldManagerId } = useAuth();
@@ -19,6 +20,9 @@ export default function Customers() {
   const [selectedRouteStatus, setSelectedRouteStatus] = useState("");
   const [selectedRoutingReason, setSelectedRoutingReason] = useState("");
   const [showUnmappedOnly, setShowUnmappedOnly] = useState(false); // T57: unmapped filter chip
+  // T60: due-date and overdue filters
+  const [dueDateWithinDays, setDueDateWithinDays] = useState<number | null>(null);
+  const [showOverdueOnly, setShowOverdueOnly] = useState(false);
 
   // Read filter parameters from URL on mount (e.g., from Dashboard chip navigation)
   useEffect(() => {
@@ -114,9 +118,19 @@ export default function Customers() {
       // T57: unmapped filter chip
       if (showUnmappedOnly && customer.maf) return false;
 
+      // T60: due-date filter (shared predicate — Rule #99)
+      if (dueDateWithinDays !== null) {
+        if (!isDueWithinDays(customer as unknown as CustomerInvoiceSummary, dueDateWithinDays)) return false;
+      }
+
+      // T60: overdue toggle (shared predicate — Rule #99)
+      if (showOverdueOnly) {
+        if (!isOverdue(customer as unknown as CustomerInvoiceSummary)) return false;
+      }
+
       return true;
     });
-  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason, showUnmappedOnly]);
+  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason, showUnmappedOnly, dueDateWithinDays, showOverdueOnly]);
 
   // Get field manager name
   const getFieldManagerName = (managerId: number | null) => {
@@ -283,6 +297,54 @@ export default function Customers() {
             ))}
           </select>
         </div>
+
+        {/* 6. Due-date filter (T60) — Rule #99: shared predicate, Rule #100: WCAG AA */}
+        <div>
+          <label className="block text-sm text-slate-400 mb-2">Filter by Invoice Due Date</label>
+          <select
+            value={dueDateWithinDays !== null ? String(dueDateWithinDays) : ""}
+            onChange={(e) => setDueDateWithinDays(e.target.value === "" ? null : Number(e.target.value))}
+            className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">Any due date</option>
+            {DUE_DATE_PRESETS.map((preset) => (
+              <option key={preset.days} value={String(preset.days)}>{preset.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* 7. Overdue toggle (T60) — Rule #99: shared predicate, Rule #100: WCAG AA */}
+      <div className="flex items-center gap-3 mb-4">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showOverdueOnly}
+          onClick={() => setShowOverdueOnly(prev => !prev)}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+            showOverdueOnly ? 'bg-red-600' : 'bg-slate-500'
+          }`}
+          aria-label="Show overdue invoices only"
+        >
+          <span
+            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${
+              showOverdueOnly ? 'translate-x-4' : 'translate-x-1'
+            }`}
+          />
+        </button>
+        <label
+          className={`text-sm cursor-pointer select-none ${
+            showOverdueOnly ? 'text-red-400' : 'text-slate-300'
+          }`}
+          onClick={() => setShowOverdueOnly(prev => !prev)}
+        >
+          Overdue invoices only
+          {showOverdueOnly && (
+            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 border border-red-700">
+              Active
+            </span>
+          )}
+        </label>
       </div>
 
       {/* Customer Locations — T52: Download CSV */}

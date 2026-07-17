@@ -1,9 +1,10 @@
 import { eq, desc, and, sql, or, inArray, like, max } from "drizzle-orm";
 import { getDb } from "./db";
-import { workers, vehicles, customers, routes, routeCustomers, workerLocations, calendarAuditLog } from "../drizzle/schema";
+import { workers, vehicles, customers, routes, routeCustomers, workerLocations, calendarAuditLog, invoices } from "../drizzle/schema";
 import { hashPin } from "./utils/pinHashing";
 import { RoutingReasonValue } from '../shared/const';
 import { EDITABLE_ROUTE_STATUSES, DELETABLE_ROUTE_STATUSES, routeStatusGateMessage, routeDeleteGateMessage } from '../shared/constants/routes';
+import { OUTSTANDING_STATUSES } from '../shared/constants/invoice-status';
 
 // Worker operations
 export async function getAllWorkers() {
@@ -1317,4 +1318,156 @@ export async function reorderRouteCustomers(
   }
 
   return await getRouteCustomers(routeId);
+}
+
+// ─── T60: Customer + invoice summary queries ─────────────────────────────────
+//
+// These functions augment the standard customer row with three invoice summary
+// fields used by the due-date and overdue filters (shared/utils/invoiceFilters.ts):
+//
+//   earliestDueDate   — earliest dueDate among outstanding invoices (YYYY-MM-DD string)
+//   outstandingBalance — sum of balance across outstanding invoices (string decimal)
+//   hasOverdueInvoice  — true if any outstanding invoice has dueDate < today (UTC)
+//
+// "Outstanding" is defined by OUTSTANDING_STATUSES (overdue, sent, draft) — Rule #63.
+// Invoices with customerId IS NULL (orphan invoices) are excluded by the JOIN.
+//
+// Pattern #29 / Rule 34: two-step approach retained for lastRoutingReason.
+// The invoice summary is computed in a single aggregation step and merged in JS.
+
+/**
+ * Returns all customers with invoice summary fields appended.
+ * Used by Customers.tsx and CreateRoute.tsx (via getCustomers tRPC procedure).
+ */
+export async function getAllCustomersWithInvoiceSummary() {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Step 1: base customer rows + lastRoutingReason (existing two-step pattern)
+  const rows = await db.select().from(customers).orderBy(desc(customers.createdAt));
+  const reasonRows = await db
+    .select({
+      customerId: routeCustomers.customerId,
+      routingReason: routeCustomers.routingReason,
+      scheduledDate: routes.scheduledDate,
+      routeCreatedAt: routes.createdAt,
+    })
+    .from(routeCustomers)
+    .innerJoin(routes, eq(routeCustomers.routeId, routes.id))
+    .orderBy(desc(routes.scheduledDate), desc(routes.createdAt));
+  const reasonMap = new Map<number, string | null>();
+  for (const r of reasonRows) {
+    if (!reasonMap.has(r.customerId)) {
+      reasonMap.set(r.customerId, r.routingReason ?? null);
+    }
+  }
+
+  // Step 2: invoice summary aggregation — one row per customer
+  // Uses sql<string> for decimal aggregation (Drizzle decimal → string)
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD UTC
+  const invoiceSummaryRows = await db
+    .select({
+      customerId: invoices.customerId,
+      earliestDueDate: sql<string | null>`MIN(CASE WHEN ${invoices.status} IN (${sql.raw(OUTSTANDING_STATUSES.map(s => `'${s}'`).join(', '))}) THEN ${invoices.dueDate} END)`,
+      outstandingBalance: sql<string | null>`SUM(CASE WHEN ${invoices.status} IN (${sql.raw(OUTSTANDING_STATUSES.map(s => `'${s}'`).join(', '))}) THEN ${invoices.balance} ELSE 0 END)`,
+      hasOverdueInvoice: sql<number>`MAX(CASE WHEN ${invoices.status} IN (${sql.raw(OUTSTANDING_STATUSES.map(s => `'${s}'`).join(', '))}) AND ${invoices.dueDate} < ${today} THEN 1 ELSE 0 END)`,
+    })
+    .from(invoices)
+    .where(sql`${invoices.customerId} IS NOT NULL`)
+    .groupBy(invoices.customerId);
+
+  // Build lookup map: customerId → invoice summary
+  const invoiceMap = new Map<number, {
+    earliestDueDate: string | null;
+    outstandingBalance: string | null;
+    hasOverdueInvoice: boolean;
+  }>();
+  for (const row of invoiceSummaryRows) {
+    if (row.customerId !== null) {
+      invoiceMap.set(row.customerId, {
+        earliestDueDate: row.earliestDueDate ?? null,
+        outstandingBalance: row.outstandingBalance ?? null,
+        hasOverdueInvoice: row.hasOverdueInvoice === 1,
+      });
+    }
+  }
+
+  // Merge
+  return rows.map(c => ({
+    ...c,
+    lastRoutingReason: reasonMap.get(c.id) ?? null,
+    earliestDueDate: invoiceMap.get(c.id)?.earliestDueDate ?? null,
+    outstandingBalance: invoiceMap.get(c.id)?.outstandingBalance ?? null,
+    hasOverdueInvoice: invoiceMap.get(c.id)?.hasOverdueInvoice ?? false,
+  }));
+}
+
+/**
+ * Scoped variant: returns customers for a specific field manager,
+ * with invoice summary fields appended.
+ */
+export async function getCustomersByFieldManagerWithInvoiceSummary(fieldManagerId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Step 1: scoped customer rows + lastRoutingReason
+  const rows = await db.select().from(customers)
+    .where(eq(customers.fieldManager, fieldManagerId))
+    .orderBy(desc(customers.createdAt));
+  if (rows.length === 0) return [];
+
+  const customerIds = rows.map(c => c.id);
+  const reasonRows = await db
+    .select({
+      customerId: routeCustomers.customerId,
+      routingReason: routeCustomers.routingReason,
+      scheduledDate: routes.scheduledDate,
+      routeCreatedAt: routes.createdAt,
+    })
+    .from(routeCustomers)
+    .innerJoin(routes, eq(routeCustomers.routeId, routes.id))
+    .where(inArray(routeCustomers.customerId, customerIds))
+    .orderBy(desc(routes.scheduledDate), desc(routes.createdAt));
+  const reasonMap = new Map<number, string | null>();
+  for (const r of reasonRows) {
+    if (!reasonMap.has(r.customerId)) {
+      reasonMap.set(r.customerId, r.routingReason ?? null);
+    }
+  }
+
+  // Step 2: invoice summary for this FM's customers only
+  const today = new Date().toISOString().split('T')[0];
+  const invoiceSummaryRows = await db
+    .select({
+      customerId: invoices.customerId,
+      earliestDueDate: sql<string | null>`MIN(CASE WHEN ${invoices.status} IN (${sql.raw(OUTSTANDING_STATUSES.map(s => `'${s}'`).join(', '))}) THEN ${invoices.dueDate} END)`,
+      outstandingBalance: sql<string | null>`SUM(CASE WHEN ${invoices.status} IN (${sql.raw(OUTSTANDING_STATUSES.map(s => `'${s}'`).join(', '))}) THEN ${invoices.balance} ELSE 0 END)`,
+      hasOverdueInvoice: sql<number>`MAX(CASE WHEN ${invoices.status} IN (${sql.raw(OUTSTANDING_STATUSES.map(s => `'${s}'`).join(', '))}) AND ${invoices.dueDate} < ${today} THEN 1 ELSE 0 END)`,
+    })
+    .from(invoices)
+    .where(inArray(invoices.customerId, customerIds))
+    .groupBy(invoices.customerId);
+
+  const invoiceMap = new Map<number, {
+    earliestDueDate: string | null;
+    outstandingBalance: string | null;
+    hasOverdueInvoice: boolean;
+  }>();
+  for (const row of invoiceSummaryRows) {
+    if (row.customerId !== null) {
+      invoiceMap.set(row.customerId, {
+        earliestDueDate: row.earliestDueDate ?? null,
+        outstandingBalance: row.outstandingBalance ?? null,
+        hasOverdueInvoice: row.hasOverdueInvoice === 1,
+      });
+    }
+  }
+
+  return rows.map(c => ({
+    ...c,
+    lastRoutingReason: reasonMap.get(c.id) ?? null,
+    earliestDueDate: invoiceMap.get(c.id)?.earliestDueDate ?? null,
+    outstandingBalance: invoiceMap.get(c.id)?.outstandingBalance ?? null,
+    hasOverdueInvoice: invoiceMap.get(c.id)?.hasOverdueInvoice ?? false,
+  }));
 }

@@ -15,6 +15,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChevronsUpDown, Check } from "lucide-react";
 import { ROUTING_REASONS, type RoutingReasonValue, ROUTING_REASON_OTHER_MIN_CHARS } from '@shared/const';
+import { isDueWithinDays, isOverdue, DUE_DATE_PRESETS, type CustomerInvoiceSummary } from '@shared/utils/invoiceFilters';
 
 // ---- safe list guards (injected) ----
 const asArray = <T,>(v: T[] | T | undefined | null | false): T[] => Array.isArray(v) ? v : (v != null && v !== false ? [v as T] : []);
@@ -40,6 +41,9 @@ export default function CreateRoute() {
   const [selectedCustomerType, setSelectedCustomerType] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRouteStatus, setSelectedRouteStatus] = useState<string>("");
+  // T60: due-date and overdue filters
+  const [dueDateWithinDays, setDueDateWithinDays] = useState<number | null>(null); // null = no filter
+  const [showOverdueOnly, setShowOverdueOnly] = useState(false);
   const [showAdvancedClustering, setShowAdvancedClustering] = useState(false);
   const [minClusterSize, setMinClusterSize] = useState(3);
   const [maxClusterRadius, setMaxClusterRadius] = useState(15);
@@ -98,8 +102,16 @@ export default function CreateRoute() {
     if (searchQuery) {
       result = result.filter((c: any) => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
     }
+    // T60: due-date filter (shared predicate from shared/utils/invoiceFilters.ts)
+    if (dueDateWithinDays !== null) {
+      result = result.filter((c: any) => isDueWithinDays(c as CustomerInvoiceSummary, dueDateWithinDays));
+    }
+    // T60: overdue toggle
+    if (showOverdueOnly) {
+      result = result.filter((c: any) => isOverdue(c as CustomerInvoiceSummary));
+    }
     return result;
-  }, [customers, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, searchQuery]);
+  }, [customers, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, searchQuery, dueDateWithinDays, showOverdueOnly]);
 
   const filteredCustomerIds = useMemo(() => filteredCustomers.map((c: any) => c.id), [filteredCustomers]);
 
@@ -248,7 +260,7 @@ export default function CreateRoute() {
       ).sort()
     : Array.from(new Set(asArray(customers).map(c => c.maf).filter(Boolean))).sort();
   
-  const hasActiveFilters = selectedFieldManager || selectedMAF || selectedCustomerType || selectedRouteStatus || searchQuery;
+  const hasActiveFilters = selectedFieldManager || selectedMAF || selectedCustomerType || selectedRouteStatus || searchQuery || dueDateWithinDays !== null || showOverdueOnly;
   
   const clearFilters = () => {
     setSelectedFieldManager("");
@@ -256,6 +268,8 @@ export default function CreateRoute() {
     setSelectedCustomerType("");
     setSelectedRouteStatus("");
     setSearchQuery("");
+    setDueDateWithinDays(null);
+    setShowOverdueOnly(false);
   };
   
 
@@ -648,9 +662,69 @@ export default function CreateRoute() {
                           </SelectContent>
                         </Select>
                       </div>
+
+                      {/* 5. Due-date filter (T60) — Rule #99: shared predicate from invoiceFilters.ts */}
+                      {/* Rule #100: WCAG AA contrast — slate-300 labels on slate-700/30 bg, white text in controls */}
+                      <div className="space-y-2">
+                        <Label className="text-slate-300 text-xs">Filter by Invoice Due Date</Label>
+                        <Select
+                          value={dueDateWithinDays !== null ? String(dueDateWithinDays) : "all"}
+                          onValueChange={(v) => setDueDateWithinDays(v === "all" ? null : Number(v))}
+                        >
+                          <SelectTrigger className="bg-slate-600 border-slate-500 text-white">
+                            <SelectValue placeholder="Any due date" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-700 border-slate-600">
+                            <SelectItem value="all" className="text-white">Any due date</SelectItem>
+                            {DUE_DATE_PRESETS.map((preset) => (
+                              <SelectItem
+                                key={preset.days}
+                                value={String(preset.days)}
+                                className="text-white"
+                              >
+                                {preset.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
 
-                    
+                    {/* 6. Overdue toggle (T60) — Rule #99: shared predicate, Rule #100: WCAG AA */}
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={showOverdueOnly}
+                        onClick={() => setShowOverdueOnly(prev => !prev)}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+                          showOverdueOnly
+                            ? 'bg-red-600'
+                            : 'bg-slate-500'
+                        }`}
+                        aria-label="Show overdue invoices only"
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${
+                            showOverdueOnly ? 'translate-x-4' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                      <Label
+                        className={`text-xs cursor-pointer select-none ${
+                          showOverdueOnly ? 'text-red-400' : 'text-slate-300'
+                        }`}
+                        onClick={() => setShowOverdueOnly(prev => !prev)}
+                      >
+                        Overdue invoices only
+                        {showOverdueOnly && (
+                          <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 border border-red-700">
+                            Active
+                          </span>
+                        )}
+                      </Label>
+                    </div>
+
                     {/* Filter Stats */}
                     <div className="text-xs text-slate-400">
                       Showing {filteredCustomers.length} of {asArray(customers).length} customers
@@ -732,6 +806,18 @@ export default function CreateRoute() {
                             
                             <span className="text-xs text-slate-500">{customer.serviceType}</span>
                           </div>
+
+                          {/* T60: invoice due-date / overdue indicators */}
+                          {(customer as any).hasOverdueInvoice && (
+                            <p className="text-xs text-red-400 mt-1 font-medium">
+                              Overdue invoice
+                            </p>
+                          )}
+                          {!(customer as any).hasOverdueInvoice && (customer as any).earliestDueDate && (
+                            <p className="text-xs text-amber-400 mt-1">
+                              Due {(customer as any).earliestDueDate}
+                            </p>
+                          )}
                           
                           {getFieldManagerName(customer.fieldManager) && (
                             <p className="text-sm text-purple-400 mt-2">
@@ -820,7 +906,68 @@ export default function CreateRoute() {
                             </SelectContent>
                           </Select>
                         </div>
+
+                        {/* 5. Due-date filter (T60) — Rule #99: shared predicate */}
+                        <div className="space-y-2">
+                          <Label className="text-slate-300 text-xs">Filter by Invoice Due Date</Label>
+                          <Select
+                            value={dueDateWithinDays !== null ? String(dueDateWithinDays) : "all"}
+                            onValueChange={(v) => setDueDateWithinDays(v === "all" ? null : Number(v))}
+                          >
+                            <SelectTrigger className="bg-slate-600 border-slate-500 text-white">
+                              <SelectValue placeholder="Any due date" />
+                            </SelectTrigger>
+                            <SelectContent className="bg-slate-700 border-slate-600">
+                              <SelectItem value="all" className="text-white">Any due date</SelectItem>
+                              {DUE_DATE_PRESETS.map((preset) => (
+                                <SelectItem
+                                  key={preset.days}
+                                  value={String(preset.days)}
+                                  className="text-white"
+                                >
+                                  {preset.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
+
+                      {/* 6. Overdue toggle (T60) — Rule #99, Rule #100: WCAG AA */}
+                      <div className="flex items-center gap-3 pt-1">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={showOverdueOnly}
+                          onClick={() => setShowOverdueOnly(prev => !prev)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+                            showOverdueOnly
+                              ? 'bg-red-600'
+                              : 'bg-slate-500'
+                          }`}
+                          aria-label="Show overdue invoices only"
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-sm transition-transform ${
+                              showOverdueOnly ? 'translate-x-4' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                        <Label
+                          className={`text-xs cursor-pointer select-none ${
+                            showOverdueOnly ? 'text-red-400' : 'text-slate-300'
+                          }`}
+                          onClick={() => setShowOverdueOnly(prev => !prev)}
+                        >
+                          Overdue invoices only
+                          {showOverdueOnly && (
+                            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300 border border-red-700">
+                              Active
+                            </span>
+                          )}
+                        </Label>
+                      </div>
+
                       <div className="text-xs text-slate-400 mt-3">
                         Filtered: {filteredCustomers.length} of {asArray(customers).length} customers
                       </div>
