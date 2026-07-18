@@ -5756,3 +5756,120 @@ status:           success
 **Root cause: fetch-depth variance.** The sync re-fetches and upserts all invoices for all customers every run via `ON DUPLICATE KEY UPDATE`. The Zoho API enforces an 11,000-call/day rate limit; the sync stops when the limit is hit. The point at which the limit fires varies run-to-run depending on API call volume from other Zoho integrations sharing the same org quota. id=18 was rate-limited earlier in the customer list (18,053 upserts); id=19 was allowed further (27,645 upserts) before hitting the ceiling.
 
 **Implication for T59 (incremental sync design):** A ±9,592 swing in nightly upsert count is expected and normal under the current full-resync architecture. Any T59 redesign (true incremental sync using Zoho `modified_time` filter) would eliminate this variance and reduce API call volume to only changed invoices per run. This observation is premise evidence for that tranche.
+
+---
+
+# T58 Close-Out — APPROVED (owner corrections incorporated, 2026-07-18)
+
+**Tranche:** T58 — LASIKA exclusion + T57 import audit + data cleanup
+**Status:** Verified complete (Checkpoint 2 / sync id=19 clean, 2026-07-18)
+**Commit:** bc8ddbc0 (exclusion rule). Tests: 407 → 444 across tranche.
+
+---
+
+## 1. Summary
+
+Urban Spirit Company (independent company on the platform, "LASIKA" zone
+coding) leaked 1,432 contacts into Mottainai's Zoho Books tenant during its
+interim setup state (own Zoho tenant + Paystack webhook not yet live). The
+nightly sync imported all 1,432 into FieldScheduler. T58 delivered:
+
+1. **Config-driven exclusion rule** in the contact sync
+   (`EXCLUDED_CONTACT_NAME_PATTERNS`, default `LASIKA`), with
+   `excludedContacts` counter in sync status. Verified live: id=18 and id=19
+   both show excludedContacts=1,432, failedContacts=0.
+2. **Transactional cleanup:** 1,432 LASIKA customers + 1 zero-value linked
+   invoice (id=22591, INV-000310) deleted 2026-07-17. Gates hit exactly
+   (1 + 1,432). Financial dashboard delta: ₦0.00 on all three aggregates,
+   as predicted. mysqldump taken and verified by scratch restore before
+   deletion.
+3. **T57 import audit:** the 2,275-record batch classified. 1,429 LASIKA
+   (deleted) + 846 non-LASIKA (owner triage in progress, status quo held,
+   non-blocking).
+
+## 2. Verification chain
+
+| Gate | Event | Result |
+|---|---|---|
+| Checkpoint 1 | id=18 nightly (post-exclusion, pre-cleanup) | 8,784 / 0 / 1,432 / success; LASIKA rows untouched |
+| Cleanup | 2026-07-17 daytime transaction | ROW_COUNTs exact; ₦0.00 delta; duration 210ms |
+| Checkpoint 2 | id=19 nightly (post-cleanup) | All 8 checks clean; orphans=201 (pre-existing, proven unrelated); INV-000310 absent |
+
+## 3. Findings of record
+
+- **Root cause is onboarding/isolation-related:** during Urban Spirit's
+  interim setup, its contacts were present in Mottainai's Zoho Books
+  tenant and the nightly sync had no exclusion mechanism to distinguish
+  them. The exclusion rule is containment; the durable fix is completing
+  Urban Spirit's own setup.
+  **Expiry condition:** when Urban Spirit's tenant goes live, the LASIKA
+  pattern should be removable from the exclusion list.
+- **2,435 reconciliation closed:** handoff's "2,435 unmapped batch" =
+  1,432 LASIKA + 846 T57-new non-LASIKA + 157 pre-existing non-LASIKA
+  (all no-MAF at sync time). Confirmed by query, zero remainder.
+- **₦720.8M reconciliation closed:** ₦623,639,171.06 (canonical
+  outstanding: overdue+sent+draft) + ₦97,203,887.50 (void balances) =
+  ₦720,843,058.56 exactly. Canonical definition = OUTSTANDING_STATUS_LIST.
+- **₦280M FS-vs-Zoho gap, partial progress:** ₦36.7M quantified as
+  balance-vs-face-value difference; remainder likely void treatment +
+  date ranges. Item remains open, downgraded in mystery.
+- **201 orphan invoices** (customerId NULL from birth, 2025-11-15 race
+  condition) discovered during cleanup verification. Handled under T60
+  (re-link executed 2026-07-18, verification in progress there).
+- **Monitoring gap:** MAF-gate rejections (contactSyncFailures) surface in
+  no zohoSyncHistory counter; table grows ~1,000 rows/night. Fix
+  (gateRejectedContacts counter + prune job) approved, queued in T60.
+- **invoiceFailedCount events (id=12, id=16):** both identified — transient
+  Zoho socket hang-ups, self-healed next run. Closed.
+
+## 4. Renumbering (effective this entry)
+
+| Old label | New label | Status |
+|---|---|---|
+| T58 (incremental invoice sync) | **T59** | Queue top. Premise strengthened: nightly full re-sync volume unstable (18,053 → 27,645 swing on id=19, under diagnosis) |
+| T58b (ArcGIS phone fallback) | **T59b** | Unchanged. Marcellina/Reddington duplicate pairs (found in LASIKA set) stand as live evidence for the pattern |
+| T58c (unitCode backfill) | **T59c** | Unchanged |
+| T58d (owner: MAF assignment, "3,786 unmapped") | **T59d** | **Rescope under verification:** 916 currently identified as genuinely absent; 1,438 show a maf/buildingId divergence whose remediation path remains under T60 investigation |
+| T58e (owner: Zoho contact name standardization) | **T59e** | Unchanged |
+
+## 5. Rule candidates (proposed #102–#107)
+
+- **#102 — Config-list governance.** Behavior-changing config lists (e.g.
+  exclusion patterns) change only with owner approval and a record entry;
+  expiry conditions are noted at creation. A config list that grows or
+  shrinks informally is a silent code change.
+- **#103 — Name the table, not the concept.** Where paired tables cover one
+  concept (invoices/zohoInvoices, failedContacts/contactSyncFailures),
+  every claim states which table answered it. Two T58 near-misses came
+  from answering "invoices?" from the wrong table.
+- **#104 — Before/after checks require a before measurement.** A predicted
+  post-state without a captured pre-state cannot attribute cause (the
+  201-orphan scare: check predicted 0 without ever baselining pre-delete).
+- **#105 — Financial figures carry their definition.** Any ₦ aggregate is
+  reported with its status filter and column (balance vs total). Three
+  "discrepancies" in one week were correct queries answering different
+  questions under one word ("outstanding"). Canonical source:
+  OUTSTANDING_STATUS_LIST.
+- **#106 — Checkpoints verify identified events, keyed by immutable IDs.**
+  "Run N" labels retired; zohoSyncHistory.id is the reference. Correct-
+  looking numbers attached to the wrong event passed 8/8 checks once.
+- **#107 — Historical questions need historical data; claims ship with
+  evidence.** Post-change state cannot answer pre-change questions (three
+  instances corrected via the backup file). Explanatory claims are
+  accompanied by raw query output or code lines; reports are numbered
+  sequentially (R-nnn) so gaps are visible. Summaries alone close nothing.
+
+## 6. Open items at T58 close
+
+**T60:** re-link verification (id=20 + spot-check), invoice-jump diagnosis,
+maf/buildingId investigation and remediation decision (held on premise
+test), debt-range slider, gateRejectedContacts counter + prune job,
+Wale/Alaba behavioral verification of shipped filters.
+
+**Owner-held:** 846-record triage, on owner's timeline.
+
+**T59 / T59d:** subsequent queued work per §4 as applicable.
+
+---
+*Approved by owner 2026-07-18 with corrections incorporated. Developer
+commits to ENGAGEMENT_RECORD.md verbatim.*
