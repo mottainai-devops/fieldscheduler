@@ -5746,3 +5746,13 @@ status:           success
 - **T58c** (unitCode backfill job): MEDIUM priority
 - **T58d** (Zoho cf_arcgis_building_id population): LOW — data task
 - **T58e** (Zoho contact name standardisation): LOW — data task
+
+---
+
+## T59 — Incremental Sync Variance (premise evidence, 2026-07-18)
+
+**Observation:** `invoiceSyncedCount` on id=19 was 27,645 vs 18,053 on id=18 — a swing of +9,592 in a single nightly run. Total invoice rows unchanged at 33,099 (`SELECT COUNT(*) FROM invoices = 33,099`; `newSinceId19 = 0`).
+
+**Root cause: fetch-depth variance.** The sync re-fetches and upserts all invoices for all customers every run via `ON DUPLICATE KEY UPDATE`. The Zoho API enforces an 11,000-call/day rate limit; the sync stops when the limit is hit. The point at which the limit fires varies run-to-run depending on API call volume from other Zoho integrations sharing the same org quota. id=18 was rate-limited earlier in the customer list (18,053 upserts); id=19 was allowed further (27,645 upserts) before hitting the ceiling.
+
+**Implication for T59 (incremental sync design):** A ±9,592 swing in nightly upsert count is expected and normal under the current full-resync architecture. Any T59 redesign (true incremental sync using Zoho `modified_time` filter) would eliminate this variance and reduce API call volume to only changed invoices per run. This observation is premise evidence for that tranche.
