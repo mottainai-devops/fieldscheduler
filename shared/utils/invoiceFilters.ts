@@ -5,11 +5,13 @@
  * returned by `fieldWorkerDb.getAllCustomersWithInvoiceSummary()`.
  * Both CreateRoute.tsx (Step 1) and Customers.tsx import from this
  * file. The T52 export router (exportRouter.ts) must also use these
- * predicates when due-date / overdue filters are added to the export.
+ * predicates when due-date / overdue / debt-range filters are added
+ * to the export.
  *
  * Pattern #58: single source of truth for filter logic.
  * Rule #99:    no forked predicates per surface.
  * Rule #100:   all filter controls must meet WCAG AA contrast.
+ * Rule #105:   per-customer outstanding via OUTSTANDING_STATUS_LIST only.
  *
  * IMPORTANT: All date arithmetic uses UTC midnight to avoid TZ drift.
  * `dueDate` values from the DB are ISO date strings ("YYYY-MM-DD").
@@ -89,6 +91,96 @@ export function isOverdue(
   today?: Date,
 ): boolean {
   return customer.hasOverdueInvoice;
+}
+
+// ─── Debt-range filter ───────────────────────────────────────────────────────
+
+/**
+ * Bucket thresholds for the debt-range histogram (₦).
+ *
+ * Buckets:
+ *   [0, 50000)      → ₦0 – ₦50k
+ *   [50000, 100000) → ₦50k – ₦100k
+ *   [100000, 200000)→ ₦100k – ₦200k
+ *   [200000, 400000)→ ₦200k – ₦400k
+ *   [400000, ∞)     → ₦400k+  (open-ended top bucket)
+ *
+ * The slider max is DEBT_SLIDER_MAX (₦400,000). Customers above this
+ * threshold are captured by the open-ended bucket and included when
+ * the upper handle is at max.
+ */
+export const DEBT_BUCKETS = [0, 50_000, 100_000, 200_000, 400_000] as const;
+
+/** The slider's maximum value in Naira (open-ended bucket threshold). */
+export const DEBT_SLIDER_MAX = 400_000;
+
+/** Labels for each bucket displayed in the histogram tooltip. */
+export const DEBT_BUCKET_LABELS = [
+  "₦0 – ₦50k",
+  "₦50k – ₦100k",
+  "₦100k – ₦200k",
+  "₦200k – ₦400k",
+  "₦400k+",
+] as const;
+
+/**
+ * Debt range type: [minNaira, maxNaira].
+ * maxNaira === DEBT_SLIDER_MAX means "no upper bound" (open-ended top bucket).
+ */
+export type DebtRange = [number, number];
+
+/**
+ * Returns the outstanding balance for a customer as a number (₦).
+ * Returns 0 if outstandingBalance is null, empty, or non-numeric.
+ *
+ * Rule #105: outstandingBalance is computed from OUTSTANDING_STATUS_LIST
+ * (overdue, sent, draft) only — void and paid are excluded at the DB layer.
+ */
+export function getOutstandingBalanceNaira(customer: CustomerInvoiceSummary): number {
+  if (!customer.outstandingBalance) return 0;
+  const n = parseFloat(customer.outstandingBalance);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Returns true if the customer's outstanding balance falls within the
+ * given debt range [minNaira, maxNaira] (both ends inclusive).
+ *
+ * When maxNaira === DEBT_SLIDER_MAX the upper bound is treated as
+ * open-ended: any balance >= minNaira passes (captures ₦400k+ customers).
+ *
+ * Rule #99:  shared predicate — no forked logic per surface.
+ * Rule #105: outstanding balance uses OUTSTANDING_STATUS_LIST only.
+ *
+ * @param customer   Customer row with invoice summary fields.
+ * @param minNaira   Lower bound in Naira (inclusive).
+ * @param maxNaira   Upper bound in Naira (inclusive). Pass DEBT_SLIDER_MAX
+ *                   for the open-ended top bucket.
+ */
+export function isInDebtRange(
+  customer: CustomerInvoiceSummary,
+  minNaira: number,
+  maxNaira: number,
+): boolean {
+  const balance = getOutstandingBalanceNaira(customer);
+  if (maxNaira >= DEBT_SLIDER_MAX) {
+    // Open-ended: any balance >= min passes
+    return balance >= minNaira;
+  }
+  return balance >= minNaira && balance <= maxNaira;
+}
+
+/**
+ * Returns the bucket index (0-based) for a given balance value.
+ * Used to build the histogram distribution array.
+ *
+ * Bucket index corresponds to DEBT_BUCKET_LABELS[index].
+ */
+export function getDebtBucketIndex(balanceNaira: number): number {
+  for (let i = DEBT_BUCKETS.length - 1; i >= 0; i--) {
+    if (balanceNaira >= DEBT_BUCKETS[i]) return i;
+  }
+  return 0;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

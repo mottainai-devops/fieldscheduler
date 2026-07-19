@@ -15,7 +15,9 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ChevronsUpDown, Check } from "lucide-react";
 import { ROUTING_REASONS, type RoutingReasonValue, ROUTING_REASON_OTHER_MIN_CHARS } from '@shared/const';
-import { isDueWithinDays, isOverdue, DUE_DATE_PRESETS, type CustomerInvoiceSummary } from '@shared/utils/invoiceFilters';
+import { isDueWithinDays, isOverdue, isInDebtRange, DUE_DATE_PRESETS, DEBT_BUCKETS, DEBT_BUCKET_LABELS, DEBT_SLIDER_MAX, getOutstandingBalanceNaira, getDebtBucketIndex, type CustomerInvoiceSummary, type DebtRange } from '@shared/utils/invoiceFilters';
+import { Slider } from '@/components/ui/slider';
+import { BarChart, Bar, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 
 // ---- safe list guards (injected) ----
 const asArray = <T,>(v: T[] | T | undefined | null | false): T[] => Array.isArray(v) ? v : (v != null && v !== false ? [v as T] : []);
@@ -44,6 +46,9 @@ export default function CreateRoute() {
   // T60: due-date and overdue filters
   const [dueDateWithinDays, setDueDateWithinDays] = useState<number | null>(null); // null = no filter
   const [showOverdueOnly, setShowOverdueOnly] = useState(false);
+  // T60: debt-range filter (dual-handle slider, Rule #99/#100/#105)
+  const [debtRange, setDebtRange] = useState<DebtRange>([0, DEBT_SLIDER_MAX]);
+  const [debtRangeActive, setDebtRangeActive] = useState(false);
   const [showAdvancedClustering, setShowAdvancedClustering] = useState(false);
   const [minClusterSize, setMinClusterSize] = useState(3);
   const [maxClusterRadius, setMaxClusterRadius] = useState(15);
@@ -110,8 +115,12 @@ export default function CreateRoute() {
     if (showOverdueOnly) {
       result = result.filter((c: any) => isOverdue(c as CustomerInvoiceSummary));
     }
+    // T60: debt-range filter (Rule #99/#105)
+    if (debtRangeActive) {
+      result = result.filter((c: any) => isInDebtRange(c as CustomerInvoiceSummary, debtRange[0], debtRange[1]));
+    }
     return result;
-  }, [customers, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, searchQuery, dueDateWithinDays, showOverdueOnly]);
+  }, [customers, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, searchQuery, dueDateWithinDays, showOverdueOnly, debtRange, debtRangeActive]);
 
   const filteredCustomerIds = useMemo(() => filteredCustomers.map((c: any) => c.id), [filteredCustomers]);
 
@@ -260,7 +269,7 @@ export default function CreateRoute() {
       ).sort()
     : Array.from(new Set(asArray(customers).map(c => c.maf).filter(Boolean))).sort();
   
-  const hasActiveFilters = selectedFieldManager || selectedMAF || selectedCustomerType || selectedRouteStatus || searchQuery || dueDateWithinDays !== null || showOverdueOnly;
+  const hasActiveFilters = selectedFieldManager || selectedMAF || selectedCustomerType || selectedRouteStatus || searchQuery || dueDateWithinDays !== null || showOverdueOnly || debtRangeActive;
   
   const clearFilters = () => {
     setSelectedFieldManager("");
@@ -270,6 +279,8 @@ export default function CreateRoute() {
     setSearchQuery("");
     setDueDateWithinDays(null);
     setShowOverdueOnly(false);
+    setDebtRange([0, DEBT_SLIDER_MAX]);
+    setDebtRangeActive(false);
   };
   
 
@@ -725,6 +736,97 @@ export default function CreateRoute() {
                       </Label>
                     </div>
 
+                    {/* 7. Debt-range filter (T60) — Rule #99/#100/#105: dual-handle slider + histogram */}
+                    {(() => {
+                      // Compute histogram from ALL customers (before debt filter) so the distribution
+                      // is visible even when the filter is active. Rule #105: uses outstandingBalance
+                      // which is already computed from OUTSTANDING_STATUS_LIST at the DB layer.
+                      const baseForHist = (() => {
+                        let r = asArray(customers);
+                        if (selectedFieldManager) r = r.filter((c: any) => c.fieldManager?.toString() === selectedFieldManager);
+                        if (selectedMAF) r = r.filter((c: any) => c.maf === selectedMAF);
+                        if (selectedCustomerType) r = r.filter((c: any) => c.customerType === selectedCustomerType);
+                        if (selectedRouteStatus) r = r.filter((c: any) => c.routeAssignmentStatus === selectedRouteStatus);
+                        if (searchQuery) r = r.filter((c: any) => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
+                        if (dueDateWithinDays !== null) r = r.filter((c: any) => isDueWithinDays(c as CustomerInvoiceSummary, dueDateWithinDays));
+                        if (showOverdueOnly) r = r.filter((c: any) => isOverdue(c as CustomerInvoiceSummary));
+                        return r;
+                      })();
+                      const bucketCounts = DEBT_BUCKETS.map((_, i) => ({
+                        label: DEBT_BUCKET_LABELS[i],
+                        count: baseForHist.filter((c: any) => getDebtBucketIndex(getOutstandingBalanceNaira(c as CustomerInvoiceSummary)) === i).length,
+                      }));
+                      const maxCount = Math.max(...bucketCounts.map(b => b.count), 1);
+                      const formatNaira = (v: number) => v >= 1_000_000 ? `₦${(v/1_000_000).toFixed(1)}M` : v >= 1_000 ? `₦${(v/1_000).toFixed(0)}k` : `₦${v}`;
+                      return (
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-slate-300 text-xs">Filter by Outstanding Debt</Label>
+                            {debtRangeActive && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-300 border border-amber-700">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          {/* Histogram — Rule #100: amber-400 bars (WCAG AA on slate-700/30 bg) */}
+                          <div className="flex items-end gap-0.5 h-10" aria-label="Debt distribution histogram" role="img">
+                            {bucketCounts.map((b, i) => {
+                              const heightPct = maxCount > 0 ? Math.max(4, Math.round((b.count / maxCount) * 100)) : 4;
+                              // Highlight bars within selected range
+                              const bucketMin = DEBT_BUCKETS[i];
+                              const bucketMax = i < DEBT_BUCKETS.length - 1 ? DEBT_BUCKETS[i + 1] - 1 : Infinity;
+                              const inRange = debtRangeActive
+                                ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
+                                : true;
+                              return (
+                                <div
+                                  key={i}
+                                  className="flex-1 flex flex-col items-center justify-end"
+                                  title={`${b.label}: ${b.count} customer${b.count !== 1 ? 's' : ''}`}
+                                >
+                                  <div
+                                    style={{ height: `${heightPct}%` }}
+                                    className={`w-full rounded-t-sm transition-colors ${
+                                      inRange ? 'bg-amber-400' : 'bg-slate-600'
+                                    }`}
+                                    aria-hidden="true"
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* Dual-handle slider — Rule #100: focus-visible ring, WCAG AA */}
+                          <Slider
+                            min={0}
+                            max={DEBT_SLIDER_MAX}
+                            step={1000}
+                            value={debtRange}
+                            onValueChange={(v) => {
+                              setDebtRange(v as DebtRange);
+                              setDebtRangeActive(!(v[0] === 0 && v[1] === DEBT_SLIDER_MAX));
+                            }}
+                            className="w-full"
+                            aria-label="Outstanding debt range"
+                          />
+                          {/* Range labels */}
+                          <div className="flex justify-between text-xs text-slate-400">
+                            <span>{formatNaira(debtRange[0])}</span>
+                            <span>{debtRange[1] >= DEBT_SLIDER_MAX ? '₦400k+' : formatNaira(debtRange[1])}</span>
+                          </div>
+                          {/* Reset button — only shown when filter is active */}
+                          {debtRangeActive && (
+                            <button
+                              type="button"
+                              onClick={() => { setDebtRange([0, DEBT_SLIDER_MAX]); setDebtRangeActive(false); }}
+                              className="text-xs text-amber-400 hover:text-amber-300 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                            >
+                              Reset debt filter
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* Filter Stats */}
                     <div className="text-xs text-slate-400">
                       Showing {filteredCustomers.length} of {asArray(customers).length} customers
@@ -967,6 +1069,89 @@ export default function CreateRoute() {
                           )}
                         </Label>
                       </div>
+
+                      {/* 7. Debt-range filter (T60) — Rule #99/#100/#105: dual-handle slider + histogram */}
+                      {(() => {
+                        const baseForHist = (() => {
+                          let r = asArray(customers);
+                          if (selectedFieldManager) r = r.filter((c: any) => c.fieldManager?.toString() === selectedFieldManager);
+                          if (selectedMAF) r = r.filter((c: any) => c.maf === selectedMAF);
+                          if (selectedCustomerType) r = r.filter((c: any) => c.customerType === selectedCustomerType);
+                          if (selectedRouteStatus) r = r.filter((c: any) => c.routeAssignmentStatus === selectedRouteStatus);
+                          if (searchQuery) r = r.filter((c: any) => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
+                          if (dueDateWithinDays !== null) r = r.filter((c: any) => isDueWithinDays(c as CustomerInvoiceSummary, dueDateWithinDays));
+                          if (showOverdueOnly) r = r.filter((c: any) => isOverdue(c as CustomerInvoiceSummary));
+                          return r;
+                        })();
+                        const bucketCounts = DEBT_BUCKETS.map((_, i) => ({
+                          label: DEBT_BUCKET_LABELS[i],
+                          count: baseForHist.filter((c: any) => getDebtBucketIndex(getOutstandingBalanceNaira(c as CustomerInvoiceSummary)) === i).length,
+                        }));
+                        const maxCount = Math.max(...bucketCounts.map(b => b.count), 1);
+                        const formatNaira = (v: number) => v >= 1_000_000 ? `₦${(v/1_000_000).toFixed(1)}M` : v >= 1_000 ? `₦${(v/1_000).toFixed(0)}k` : `₦${v}`;
+                        return (
+                          <div className="space-y-2 pt-1">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-slate-300 text-xs">Filter by Outstanding Debt</Label>
+                              {debtRangeActive && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-300 border border-amber-700">
+                                  Active
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-end gap-0.5 h-10" aria-label="Debt distribution histogram" role="img">
+                              {bucketCounts.map((b, i) => {
+                                const heightPct = maxCount > 0 ? Math.max(4, Math.round((b.count / maxCount) * 100)) : 4;
+                                const bucketMin = DEBT_BUCKETS[i];
+                                const bucketMax = i < DEBT_BUCKETS.length - 1 ? DEBT_BUCKETS[i + 1] - 1 : Infinity;
+                                const inRange = debtRangeActive
+                                  ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
+                                  : true;
+                                return (
+                                  <div
+                                    key={i}
+                                    className="flex-1 flex flex-col items-center justify-end"
+                                    title={`${b.label}: ${b.count} customer${b.count !== 1 ? 's' : ''}`}
+                                  >
+                                    <div
+                                      style={{ height: `${heightPct}%` }}
+                                      className={`w-full rounded-t-sm transition-colors ${
+                                        inRange ? 'bg-amber-400' : 'bg-slate-600'
+                                      }`}
+                                      aria-hidden="true"
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <Slider
+                              min={0}
+                              max={DEBT_SLIDER_MAX}
+                              step={1000}
+                              value={debtRange}
+                              onValueChange={(v) => {
+                                setDebtRange(v as DebtRange);
+                                setDebtRangeActive(!(v[0] === 0 && v[1] === DEBT_SLIDER_MAX));
+                              }}
+                              className="w-full"
+                              aria-label="Outstanding debt range"
+                            />
+                            <div className="flex justify-between text-xs text-slate-400">
+                              <span>{formatNaira(debtRange[0])}</span>
+                              <span>{debtRange[1] >= DEBT_SLIDER_MAX ? '₦400k+' : formatNaira(debtRange[1])}</span>
+                            </div>
+                            {debtRangeActive && (
+                              <button
+                                type="button"
+                                onClick={() => { setDebtRange([0, DEBT_SLIDER_MAX]); setDebtRangeActive(false); }}
+                                className="text-xs text-amber-400 hover:text-amber-300 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+                              >
+                                Reset debt filter
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <div className="text-xs text-slate-400 mt-3">
                         Filtered: {filteredCustomers.length} of {asArray(customers).length} customers

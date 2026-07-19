@@ -5,7 +5,8 @@ import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTING_REASONS } from '@shared/const';
 import { useCustomerExport } from "@/hooks/useExport";
-import { isDueWithinDays, isOverdue, DUE_DATE_PRESETS, type CustomerInvoiceSummary } from '@shared/utils/invoiceFilters';
+import { isDueWithinDays, isOverdue, isInDebtRange, DUE_DATE_PRESETS, DEBT_BUCKETS, DEBT_BUCKET_LABELS, DEBT_SLIDER_MAX, getOutstandingBalanceNaira, getDebtBucketIndex, type CustomerInvoiceSummary, type DebtRange } from '@shared/utils/invoiceFilters';
+import { Slider } from '@/components/ui/slider';
 
 export default function Customers() {
   const { isAdmin, isFieldManager, fieldManagerId } = useAuth();
@@ -23,6 +24,9 @@ export default function Customers() {
   // T60: due-date and overdue filters
   const [dueDateWithinDays, setDueDateWithinDays] = useState<number | null>(null);
   const [showOverdueOnly, setShowOverdueOnly] = useState(false);
+  // T60: debt-range filter (dual-handle slider, Rule #99/#100/#105)
+  const [debtRange, setDebtRange] = useState<DebtRange>([0, DEBT_SLIDER_MAX]);
+  const [debtRangeActive, setDebtRangeActive] = useState(false);
 
   // Read filter parameters from URL on mount (e.g., from Dashboard chip navigation)
   useEffect(() => {
@@ -128,9 +132,14 @@ export default function Customers() {
         if (!isOverdue(customer as unknown as CustomerInvoiceSummary)) return false;
       }
 
+      // T60: debt-range filter (Rule #99/#105)
+      if (debtRangeActive) {
+        if (!isInDebtRange(customer as unknown as CustomerInvoiceSummary, debtRange[0], debtRange[1])) return false;
+      }
+
       return true;
     });
-  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason, showUnmappedOnly, dueDateWithinDays, showOverdueOnly]);
+  }, [customers, searchTerm, selectedFieldManager, selectedMAF, selectedCustomerType, selectedRouteStatus, selectedRoutingReason, showUnmappedOnly, dueDateWithinDays, showOverdueOnly, debtRange, debtRangeActive]);
 
   // Get field manager name
   const getFieldManagerName = (managerId: number | null) => {
@@ -346,6 +355,107 @@ export default function Customers() {
           )}
         </label>
       </div>
+
+      {/* 7. Debt-range filter (T60) — Rule #99/#100/#105: dual-handle slider + histogram */}
+      {(() => {
+        // Histogram uses customers filtered by all other active filters (not debt),
+        // so the distribution reflects the current narrowed set.
+        const baseForHist = customers.filter((customer) => {
+          if (searchTerm && !customer.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+          if (selectedFieldManager) {
+            if (selectedFieldManager === 'unassigned') { if (customer.fieldManager !== null) return false; }
+            else { if (customer.fieldManager !== parseInt(selectedFieldManager)) return false; }
+          }
+          if (selectedMAF) {
+            if (selectedMAF === 'no_maf') { if (customer.maf !== null) return false; }
+            else { if (customer.maf !== selectedMAF) return false; }
+          }
+          if (selectedCustomerType && customer.customerType !== selectedCustomerType) return false;
+          if (selectedRouteStatus && customer.routeAssignmentStatus !== selectedRouteStatus) return false;
+          if (selectedRoutingReason) {
+            if (selectedRoutingReason === 'never_routed') {
+              if ((customer as any).lastRoutingReason !== null && (customer as any).lastRoutingReason !== undefined) return false;
+            } else {
+              if ((customer as any).lastRoutingReason !== selectedRoutingReason) return false;
+            }
+          }
+          if (showUnmappedOnly && customer.maf) return false;
+          if (dueDateWithinDays !== null && !isDueWithinDays(customer as unknown as CustomerInvoiceSummary, dueDateWithinDays)) return false;
+          if (showOverdueOnly && !isOverdue(customer as unknown as CustomerInvoiceSummary)) return false;
+          return true;
+        });
+        const bucketCounts = DEBT_BUCKETS.map((_, i) => ({
+          label: DEBT_BUCKET_LABELS[i],
+          count: baseForHist.filter((c: any) => getDebtBucketIndex(getOutstandingBalanceNaira(c as CustomerInvoiceSummary)) === i).length,
+        }));
+        const maxCount = Math.max(...bucketCounts.map(b => b.count), 1);
+        const formatNaira = (v: number) => v >= 1_000_000 ? `₦${(v/1_000_000).toFixed(1)}M` : v >= 1_000 ? `₦${(v/1_000).toFixed(0)}k` : `₦${v}`;
+        return (
+          <div className="mb-4 p-4 bg-slate-700/30 border border-slate-600 rounded-lg space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm text-slate-400">Filter by Outstanding Debt</label>
+              {debtRangeActive && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900/50 text-amber-300 border border-amber-700">
+                  Active
+                </span>
+              )}
+            </div>
+            {/* Histogram — Rule #100: amber-400 bars (WCAG AA on slate-700/30 bg) */}
+            <div className="flex items-end gap-0.5 h-10" aria-label="Debt distribution histogram" role="img">
+              {bucketCounts.map((b, i) => {
+                const heightPct = maxCount > 0 ? Math.max(4, Math.round((b.count / maxCount) * 100)) : 4;
+                const bucketMin = DEBT_BUCKETS[i];
+                const bucketMax = i < DEBT_BUCKETS.length - 1 ? DEBT_BUCKETS[i + 1] - 1 : Infinity;
+                const inRange = debtRangeActive
+                  ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
+                  : true;
+                return (
+                  <div
+                    key={i}
+                    className="flex-1 flex flex-col items-center justify-end"
+                    title={`${b.label}: ${b.count} customer${b.count !== 1 ? 's' : ''}`}
+                  >
+                    <div
+                      style={{ height: `${heightPct}%` }}
+                      className={`w-full rounded-t-sm transition-colors ${
+                        inRange ? 'bg-amber-400' : 'bg-slate-600'
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            {/* Dual-handle slider — Rule #100: focus-visible ring, WCAG AA */}
+            <Slider
+              min={0}
+              max={DEBT_SLIDER_MAX}
+              step={1000}
+              value={debtRange}
+              onValueChange={(v) => {
+                setDebtRange(v as DebtRange);
+                setDebtRangeActive(!(v[0] === 0 && v[1] === DEBT_SLIDER_MAX));
+              }}
+              className="w-full"
+              aria-label="Outstanding debt range"
+            />
+            {/* Range labels */}
+            <div className="flex justify-between text-xs text-slate-400">
+              <span>{formatNaira(debtRange[0])}</span>
+              <span>{debtRange[1] >= DEBT_SLIDER_MAX ? '₦400k+' : formatNaira(debtRange[1])}</span>
+            </div>
+            {debtRangeActive && (
+              <button
+                type="button"
+                onClick={() => { setDebtRange([0, DEBT_SLIDER_MAX]); setDebtRangeActive(false); }}
+                className="text-xs text-amber-400 hover:text-amber-300 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+              >
+                Reset debt filter
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Customer Locations — T52: Download CSV */}
       <div className="mb-4 flex items-center justify-between">
