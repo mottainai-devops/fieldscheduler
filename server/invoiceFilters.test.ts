@@ -3,6 +3,9 @@
  *
  * All date arithmetic uses UTC midnight to avoid timezone drift.
  * The `today` parameter is injected in every test for determinism.
+ *
+ * Debt-range tests re-derived for the ₦0–₦20M piecewise scale (R-005 spec).
+ * Kakanfo oracle (₦6,711,512.50) is unchanged — verified 2026-07-19 from production.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -11,7 +14,10 @@ import {
   isInDebtRange,
   DUE_DATE_PRESETS,
   DEBT_BUCKETS,
-  DEBT_SLIDER_MAX,
+  DEBT_SLIDER_MAX_NAIRA,
+  DEBT_SLIDER_UNITS,
+  sliderToNaira,
+  nairaToSlider,
   getOutstandingBalanceNaira,
   getDebtBucketIndex,
   utcMidnight,
@@ -137,64 +143,141 @@ describe("isOverdue", () => {
   });
 });
 
+// ─── sliderToNaira / nairaToSlider ───────────────────────────────────────────
+
+describe("sliderToNaira", () => {
+  it("slider 0 → ₦0", () => {
+    expect(sliderToNaira(0)).toBe(0);
+  });
+
+  it("slider 50 → ₦2,000,000 (segment boundary)", () => {
+    expect(sliderToNaira(50)).toBe(2_000_000);
+  });
+
+  it("slider 100 → ₦20,000,000 (DEBT_SLIDER_MAX_NAIRA)", () => {
+    expect(sliderToNaira(100)).toBe(DEBT_SLIDER_MAX_NAIRA);
+  });
+
+  it("slider 12 → ₦480,000 (segment 1: 12 * 40,000)", () => {
+    expect(sliderToNaira(12)).toBe(480_000);
+  });
+
+  it("slider 75 → ₦11,000,000 (segment 2: 2M + 25 * 360,000)", () => {
+    expect(sliderToNaira(75)).toBe(11_000_000);
+  });
+
+  it("clamps below 0 to 0", () => {
+    expect(sliderToNaira(-5)).toBe(0);
+  });
+
+  it("clamps above 100 to ₦20M", () => {
+    expect(sliderToNaira(110)).toBe(DEBT_SLIDER_MAX_NAIRA);
+  });
+});
+
+describe("nairaToSlider", () => {
+  it("₦0 → slider 0", () => {
+    expect(nairaToSlider(0)).toBe(0);
+  });
+
+  it("₦2,000,000 → slider 50", () => {
+    expect(nairaToSlider(2_000_000)).toBe(50);
+  });
+
+  it("₦20,000,000 → slider 100", () => {
+    expect(nairaToSlider(DEBT_SLIDER_MAX_NAIRA)).toBe(100);
+  });
+
+  it("₦500,000 → slider 12 (500k / 40k = 12.5 → rounds to 13)", () => {
+    // 500,000 / 40,000 = 12.5, Math.round → 13
+    expect(nairaToSlider(500_000)).toBe(13);
+  });
+
+  it("Kakanfo ₦6,711,512.50 → slider in segment 2 (> 50)", () => {
+    const pos = nairaToSlider(6_711_512.5);
+    expect(pos).toBeGreaterThan(50);
+    expect(pos).toBeLessThan(100);
+  });
+
+  it("round-trip: sliderToNaira(nairaToSlider(n)) ≈ n for segment boundaries", () => {
+    // Exact boundaries should round-trip exactly
+    expect(sliderToNaira(nairaToSlider(0))).toBe(0);
+    expect(sliderToNaira(nairaToSlider(2_000_000))).toBe(2_000_000);
+    expect(sliderToNaira(nairaToSlider(20_000_000))).toBe(20_000_000);
+  });
+});
+
 // ─── isInDebtRange ──────────────────────────────────────────────────────────
 
 describe("isInDebtRange", () => {
   // Kakanfo Inn oracle (Rule #105): ₦6,711,512.50 outstanding (12 overdue + 1 sent)
+  // Verified 2026-07-19 from production DB. Oracle unchanged from R-004.
   const kakanfo = makeSummary("2026-07-10", true, "6711512.50");
   const zeroBalance = makeSummary(null, false, "0.00");
   const nullBalance = makeSummary(null, false, null);
-  const midBalance  = makeSummary(null, false, "75000.00"); // ₦75k — bucket [50k,100k)
-  const lowBalance  = makeSummary(null, false, "25000.00"); // ₦25k — bucket [0,50k)
+  const midBalance  = makeSummary(null, false, "750000.00");  // ₦750k
+  const lowBalance  = makeSummary(null, false, "150000.00");  // ₦150k
+  const highBalance = makeSummary(null, false, "15000000.00"); // ₦15M
 
-  it("Kakanfo oracle: in range [0, DEBT_SLIDER_MAX] → true", () => {
-    expect(isInDebtRange(kakanfo, 0, DEBT_SLIDER_MAX)).toBe(true);
+  it("Kakanfo oracle: in range [0, DEBT_SLIDER_MAX_NAIRA] → true (open-ended)", () => {
+    expect(isInDebtRange(kakanfo, 0, DEBT_SLIDER_MAX_NAIRA)).toBe(true);
   });
 
-  it("Kakanfo oracle: in range [0, 100000] → false (balance > 100k)", () => {
-    expect(isInDebtRange(kakanfo, 0, 100_000)).toBe(false);
+  it("Kakanfo oracle: in range [0, 500000] → false (balance > 500k)", () => {
+    expect(isInDebtRange(kakanfo, 0, 500_000)).toBe(false);
   });
 
-  it("Kakanfo oracle: open-ended top bucket [400000, DEBT_SLIDER_MAX] → true", () => {
-    expect(isInDebtRange(kakanfo, 400_000, DEBT_SLIDER_MAX)).toBe(true);
+  it("Kakanfo oracle: open-ended top [2000000, DEBT_SLIDER_MAX_NAIRA] → true", () => {
+    expect(isInDebtRange(kakanfo, 2_000_000, DEBT_SLIDER_MAX_NAIRA)).toBe(true);
   });
 
-  it("Kakanfo oracle: range [0, 400000) does NOT include Kakanfo (balance > 400k)", () => {
-    // When maxNaira < DEBT_SLIDER_MAX, upper bound is strict
-    expect(isInDebtRange(kakanfo, 0, 399_000)).toBe(false);
+  it("Kakanfo oracle: range [0, 6000000] does NOT include Kakanfo (balance > 6M)", () => {
+    expect(isInDebtRange(kakanfo, 0, 6_000_000)).toBe(false);
+  });
+
+  it("Kakanfo oracle: range [6000000, 7000000] includes Kakanfo", () => {
+    expect(isInDebtRange(kakanfo, 6_000_000, 7_000_000)).toBe(true);
   });
 
   it("null outstandingBalance → false for any non-zero min", () => {
-    expect(isInDebtRange(nullBalance, 1, DEBT_SLIDER_MAX)).toBe(false);
+    expect(isInDebtRange(nullBalance, 1, DEBT_SLIDER_MAX_NAIRA)).toBe(false);
   });
 
-  it("null outstandingBalance → true for [0, DEBT_SLIDER_MAX] (balance=0 >= 0)", () => {
+  it("null outstandingBalance → true for [0, DEBT_SLIDER_MAX_NAIRA] (balance=0 >= 0)", () => {
     // null balance is treated as 0 by getOutstandingBalanceNaira
-    expect(isInDebtRange(nullBalance, 0, DEBT_SLIDER_MAX)).toBe(true);
+    expect(isInDebtRange(nullBalance, 0, DEBT_SLIDER_MAX_NAIRA)).toBe(true);
   });
 
-  it("zero balance → true for [0, 50000] range", () => {
-    expect(isInDebtRange(zeroBalance, 0, 50_000)).toBe(true);
+  it("zero balance → true for [0, 200000] range", () => {
+    expect(isInDebtRange(zeroBalance, 0, 200_000)).toBe(true);
   });
 
   it("zero balance → false when min > 0", () => {
-    expect(isInDebtRange(zeroBalance, 1, DEBT_SLIDER_MAX)).toBe(false);
+    expect(isInDebtRange(zeroBalance, 1, DEBT_SLIDER_MAX_NAIRA)).toBe(false);
   });
 
-  it("₦75k balance → true for [50000, 100000]", () => {
-    expect(isInDebtRange(midBalance, 50_000, 100_000)).toBe(true);
+  it("₦750k balance → true for [500000, 1000000]", () => {
+    expect(isInDebtRange(midBalance, 500_000, 1_000_000)).toBe(true);
   });
 
-  it("₦75k balance → false for [0, 50000] (exclusive upper)", () => {
-    expect(isInDebtRange(midBalance, 0, 50_000)).toBe(false);
+  it("₦750k balance → false for [0, 500000]", () => {
+    expect(isInDebtRange(midBalance, 0, 500_000)).toBe(false);
   });
 
-  it("₦25k balance → true for [0, 50000]", () => {
-    expect(isInDebtRange(lowBalance, 0, 50_000)).toBe(true);
+  it("₦150k balance → true for [0, 200000]", () => {
+    expect(isInDebtRange(lowBalance, 0, 200_000)).toBe(true);
   });
 
-  it("₦25k balance → false for [50000, DEBT_SLIDER_MAX]", () => {
-    expect(isInDebtRange(lowBalance, 50_000, DEBT_SLIDER_MAX)).toBe(false);
+  it("₦150k balance → false for [200000, DEBT_SLIDER_MAX_NAIRA]", () => {
+    expect(isInDebtRange(lowBalance, 200_000, DEBT_SLIDER_MAX_NAIRA)).toBe(false);
+  });
+
+  it("₦15M balance → true for [10000000, DEBT_SLIDER_MAX_NAIRA]", () => {
+    expect(isInDebtRange(highBalance, 10_000_000, DEBT_SLIDER_MAX_NAIRA)).toBe(true);
+  });
+
+  it("₦15M balance → false for [0, 10000000]", () => {
+    expect(isInDebtRange(highBalance, 0, 10_000_000)).toBe(false);
   });
 });
 
@@ -219,42 +302,59 @@ describe("getOutstandingBalanceNaira", () => {
 });
 
 // ─── getDebtBucketIndex ──────────────────────────────────────────────────────
+// Buckets re-derived for the ₦0–₦20M scale (10 buckets).
 
 describe("getDebtBucketIndex", () => {
-  it("₦0 → bucket 0 (₦0–₦50k)", () => {
+  it("₦0 → bucket 0 (₦0–₦200k)", () => {
     expect(getDebtBucketIndex(0)).toBe(0);
   });
 
-  it("₦25,000 → bucket 0", () => {
-    expect(getDebtBucketIndex(25_000)).toBe(0);
+  it("₦150,000 → bucket 0 (₦0–₦200k)", () => {
+    expect(getDebtBucketIndex(150_000)).toBe(0);
   });
 
-  it("₦50,000 → bucket 1 (₦50k–₦100k)", () => {
-    expect(getDebtBucketIndex(50_000)).toBe(1);
+  it("₦200,000 → bucket 1 (₦200k–₦500k)", () => {
+    expect(getDebtBucketIndex(200_000)).toBe(1);
   });
 
-  it("₦100,000 → bucket 2 (₦100k–₦200k)", () => {
-    expect(getDebtBucketIndex(100_000)).toBe(2);
+  it("₦500,000 → bucket 2 (₦500k–₦1M)", () => {
+    expect(getDebtBucketIndex(500_000)).toBe(2);
   });
 
-  it("₦200,000 → bucket 3 (₦200k–₦400k)", () => {
-    expect(getDebtBucketIndex(200_000)).toBe(3);
+  it("₦1,000,000 → bucket 3 (₦1M–₦2M)", () => {
+    expect(getDebtBucketIndex(1_000_000)).toBe(3);
   });
 
-  it("₦400,000 → bucket 4 (₦400k+)", () => {
-    expect(getDebtBucketIndex(400_000)).toBe(4);
+  it("₦2,000,000 → bucket 4 (₦2M–₦4M)", () => {
+    expect(getDebtBucketIndex(2_000_000)).toBe(4);
   });
 
-  it("Kakanfo ₦6,711,512.50 → bucket 4 (₦400k+)", () => {
-    expect(getDebtBucketIndex(6_711_512.5)).toBe(4);
+  it("₦4,000,000 → bucket 5 (₦4M–₦6M)", () => {
+    expect(getDebtBucketIndex(4_000_000)).toBe(5);
   });
 
-  it("DEBT_BUCKETS has 5 thresholds", () => {
-    expect(DEBT_BUCKETS.length).toBe(5);
+  it("Kakanfo ₦6,711,512.50 → bucket 6 (₦6M–₦10M)", () => {
+    expect(getDebtBucketIndex(6_711_512.5)).toBe(6);
   });
 
-  it("DEBT_SLIDER_MAX equals the top bucket threshold (400000)", () => {
-    expect(DEBT_SLIDER_MAX).toBe(400_000);
+  it("₦10,000,000 → bucket 7 (₦10M–₦14M)", () => {
+    expect(getDebtBucketIndex(10_000_000)).toBe(7);
+  });
+
+  it("₦18,000,000 → bucket 9 (₦18M+)", () => {
+    expect(getDebtBucketIndex(18_000_000)).toBe(9);
+  });
+
+  it("DEBT_BUCKETS has 10 thresholds", () => {
+    expect(DEBT_BUCKETS.length).toBe(10);
+  });
+
+  it("DEBT_SLIDER_MAX_NAIRA equals 20,000,000", () => {
+    expect(DEBT_SLIDER_MAX_NAIRA).toBe(20_000_000);
+  });
+
+  it("DEBT_SLIDER_UNITS equals 100", () => {
+    expect(DEBT_SLIDER_UNITS).toBe(100);
   });
 });
 

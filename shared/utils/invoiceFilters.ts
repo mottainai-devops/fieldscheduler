@@ -96,36 +96,95 @@ export function isOverdue(
 // ─── Debt-range filter ───────────────────────────────────────────────────────
 
 /**
- * Bucket thresholds for the debt-range histogram (₦).
+ * Piecewise slider scale — ₦0 to ₦20,000,000+
  *
- * Buckets:
- *   [0, 50000)      → ₦0 – ₦50k
- *   [50000, 100000) → ₦50k – ₦100k
- *   [100000, 200000)→ ₦100k – ₦200k
- *   [200000, 400000)→ ₦200k – ₦400k
- *   [400000, ∞)     → ₦400k+  (open-ended top bucket)
+ * The slider uses a piecewise (non-linear) mapping so that ranges like
+ * ₦0–₦500k and ₦10M–₦20M are both comfortably selectable.
  *
- * The slider max is DEBT_SLIDER_MAX (₦400,000). Customers above this
- * threshold are captured by the open-ended bucket and included when
- * the upper handle is at max.
+ * Scale segments:
+ *   Slider 0–50   → ₦0 – ₦2,000,000      (step ₦40,000 per unit)
+ *   Slider 50–100 → ₦2,000,000 – ₦20,000,000  (step ₦360,000 per unit)
+ *
+ * The slider component operates on integer units 0–100.
+ * Displayed values are always exact Naira (converted via sliderToNaira).
+ *
+ * DEBT_SLIDER_MAX_NAIRA is the open-ended threshold: when the upper handle
+ * is at slider position 100 (₦20,000,000), all balances >= lower bound pass.
  */
-export const DEBT_BUCKETS = [0, 50_000, 100_000, 200_000, 400_000] as const;
+export const DEBT_SLIDER_UNITS = 100; // total slider range
+export const DEBT_SLIDER_MAX_NAIRA = 20_000_000; // ₦20M — open-ended top
 
-/** The slider's maximum value in Naira (open-ended bucket threshold). */
-export const DEBT_SLIDER_MAX = 400_000;
+/**
+ * Convert a slider unit position (0–100) to Naira.
+ *
+ * Segment 1: units 0–50  → ₦0 – ₦2,000,000  (linear, ₦40,000/unit)
+ * Segment 2: units 50–100 → ₦2,000,000 – ₦20,000,000 (linear, ₦360,000/unit)
+ */
+export function sliderToNaira(units: number): number {
+  const u = Math.max(0, Math.min(DEBT_SLIDER_UNITS, units));
+  if (u <= 50) {
+    return Math.round(u * 40_000); // ₦0 at 0, ₦2,000,000 at 50
+  }
+  return Math.round(2_000_000 + (u - 50) * 360_000); // ₦2M at 50, ₦20M at 100
+}
+
+/**
+ * Convert a Naira value to the nearest slider unit position (0–100).
+ * Inverse of sliderToNaira.
+ */
+export function nairaToSlider(naira: number): number {
+  const n = Math.max(0, Math.min(DEBT_SLIDER_MAX_NAIRA, naira));
+  if (n <= 2_000_000) {
+    return Math.round(n / 40_000);
+  }
+  return Math.round(50 + (n - 2_000_000) / 360_000);
+}
+
+/**
+ * Histogram buckets for the debt-range distribution display.
+ *
+ * 10 buckets spanning ₦0 – ₦20M+:
+ *   [0, 200k)        → ₦0 – ₦200k
+ *   [200k, 500k)     → ₦200k – ₦500k
+ *   [500k, 1M)       → ₦500k – ₦1M
+ *   [1M, 2M)         → ₦1M – ₦2M
+ *   [2M, 4M)         → ₦2M – ₦4M
+ *   [4M, 6M)         → ₦4M – ₦6M
+ *   [6M, 10M)        → ₦6M – ₦10M
+ *   [10M, 14M)       → ₦10M – ₦14M
+ *   [14M, 18M)       → ₦14M – ₦18M
+ *   [18M, ∞)         → ₦18M+
+ */
+export const DEBT_BUCKETS = [
+  0,
+  200_000,
+  500_000,
+  1_000_000,
+  2_000_000,
+  4_000_000,
+  6_000_000,
+  10_000_000,
+  14_000_000,
+  18_000_000,
+] as const;
 
 /** Labels for each bucket displayed in the histogram tooltip. */
 export const DEBT_BUCKET_LABELS = [
-  "₦0 – ₦50k",
-  "₦50k – ₦100k",
-  "₦100k – ₦200k",
-  "₦200k – ₦400k",
-  "₦400k+",
+  "₦0 – ₦200k",
+  "₦200k – ₦500k",
+  "₦500k – ₦1M",
+  "₦1M – ₦2M",
+  "₦2M – ₦4M",
+  "₦4M – ₦6M",
+  "₦6M – ₦10M",
+  "₦10M – ₦14M",
+  "₦14M – ₦18M",
+  "₦18M+",
 ] as const;
 
 /**
  * Debt range type: [minNaira, maxNaira].
- * maxNaira === DEBT_SLIDER_MAX means "no upper bound" (open-ended top bucket).
+ * maxNaira === DEBT_SLIDER_MAX_NAIRA means "no upper bound" (open-ended top).
  */
 export type DebtRange = [number, number];
 
@@ -134,7 +193,8 @@ export type DebtRange = [number, number];
  * Returns 0 if outstandingBalance is null, empty, or non-numeric.
  *
  * Rule #105: outstandingBalance is computed from OUTSTANDING_STATUS_LIST
- * (overdue, sent, draft) only — void and paid are excluded at the DB layer.
+ * (overdue, sent, draft, partially_paid) only — void and paid are excluded
+ * at the DB layer.
  */
 export function getOutstandingBalanceNaira(customer: CustomerInvoiceSummary): number {
   if (!customer.outstandingBalance) return 0;
@@ -146,15 +206,15 @@ export function getOutstandingBalanceNaira(customer: CustomerInvoiceSummary): nu
  * Returns true if the customer's outstanding balance falls within the
  * given debt range [minNaira, maxNaira] (both ends inclusive).
  *
- * When maxNaira === DEBT_SLIDER_MAX the upper bound is treated as
- * open-ended: any balance >= minNaira passes (captures ₦400k+ customers).
+ * When maxNaira >= DEBT_SLIDER_MAX_NAIRA the upper bound is treated as
+ * open-ended: any balance >= minNaira passes (captures ₦20M+ customers).
  *
  * Rule #99:  shared predicate — no forked logic per surface.
  * Rule #105: outstanding balance uses OUTSTANDING_STATUS_LIST only.
  *
  * @param customer   Customer row with invoice summary fields.
  * @param minNaira   Lower bound in Naira (inclusive).
- * @param maxNaira   Upper bound in Naira (inclusive). Pass DEBT_SLIDER_MAX
+ * @param maxNaira   Upper bound in Naira (inclusive). Pass DEBT_SLIDER_MAX_NAIRA
  *                   for the open-ended top bucket.
  */
 export function isInDebtRange(
@@ -163,7 +223,7 @@ export function isInDebtRange(
   maxNaira: number,
 ): boolean {
   const balance = getOutstandingBalanceNaira(customer);
-  if (maxNaira >= DEBT_SLIDER_MAX) {
+  if (maxNaira >= DEBT_SLIDER_MAX_NAIRA) {
     // Open-ended: any balance >= min passes
     return balance >= minNaira;
   }

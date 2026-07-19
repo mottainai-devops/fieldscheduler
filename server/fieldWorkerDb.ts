@@ -5,6 +5,7 @@ import { hashPin } from "./utils/pinHashing";
 import { RoutingReasonValue } from '../shared/const';
 import { EDITABLE_ROUTE_STATUSES, DELETABLE_ROUTE_STATUSES, routeStatusGateMessage, routeDeleteGateMessage } from '../shared/constants/routes';
 import { OUTSTANDING_STATUSES } from '../shared/constants/invoice-status';
+import { extractMafFromBuildingId } from '../shared/utils/mafUtils';
 
 // Worker operations
 export async function getAllWorkers() {
@@ -314,6 +315,7 @@ export async function upsertCustomerFromZoho(data: {
         latitude: data.latitude,
         longitude: data.longitude,
         buildingId: data.buildingId,
+        maf: extractMafFromBuildingId(data.buildingId),
         arcgisBuildingId: data.arcgisBuildingId,
         unitCode: data.unitCode,
         coordinateSource: data.latitude && data.longitude ? "zoho" : "manual",
@@ -330,6 +332,7 @@ export async function upsertCustomerFromZoho(data: {
       latitude: data.latitude,
       longitude: data.longitude,
       buildingId: data.buildingId,
+      maf: extractMafFromBuildingId(data.buildingId),
       arcgisBuildingId: data.arcgisBuildingId,
       unitCode: data.unitCode,
       coordinateSource: data.latitude && data.longitude ? "zoho" : "manual",

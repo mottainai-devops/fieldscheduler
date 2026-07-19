@@ -5,7 +5,7 @@ import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { ROUTING_REASONS } from '@shared/const';
 import { useCustomerExport } from "@/hooks/useExport";
-import { isDueWithinDays, isOverdue, isInDebtRange, DUE_DATE_PRESETS, DEBT_BUCKETS, DEBT_BUCKET_LABELS, DEBT_SLIDER_MAX, getOutstandingBalanceNaira, getDebtBucketIndex, type CustomerInvoiceSummary, type DebtRange } from '@shared/utils/invoiceFilters';
+import { isDueWithinDays, isOverdue, isInDebtRange, DUE_DATE_PRESETS, DEBT_BUCKETS, DEBT_BUCKET_LABELS, DEBT_SLIDER_MAX_NAIRA, DEBT_SLIDER_UNITS, sliderToNaira, nairaToSlider, getOutstandingBalanceNaira, getDebtBucketIndex, type CustomerInvoiceSummary, type DebtRange } from '@shared/utils/invoiceFilters';
 import { Slider } from '@/components/ui/slider';
 
 export default function Customers() {
@@ -25,7 +25,9 @@ export default function Customers() {
   const [dueDateWithinDays, setDueDateWithinDays] = useState<number | null>(null);
   const [showOverdueOnly, setShowOverdueOnly] = useState(false);
   // T60: debt-range filter (dual-handle slider, Rule #99/#100/#105)
-  const [debtRange, setDebtRange] = useState<DebtRange>([0, DEBT_SLIDER_MAX]);
+  // debtRange stores actual Naira values; debtSliderValue stores 0–DEBT_SLIDER_UNITS positions
+  const [debtRange, setDebtRange] = useState<DebtRange>([0, DEBT_SLIDER_MAX_NAIRA]);
+  const [debtSliderValue, setDebtSliderValue] = useState<[number, number]>([0, DEBT_SLIDER_UNITS]);
   const [debtRangeActive, setDebtRangeActive] = useState(false);
 
   // Read filter parameters from URL on mount (e.g., from Dashboard chip navigation)
@@ -407,7 +409,7 @@ export default function Customers() {
                 const bucketMin = DEBT_BUCKETS[i];
                 const bucketMax = i < DEBT_BUCKETS.length - 1 ? DEBT_BUCKETS[i + 1] - 1 : Infinity;
                 const inRange = debtRangeActive
-                  ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
+                  ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX_NAIRA ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
                   : true;
                 return (
                   <div
@@ -426,28 +428,34 @@ export default function Customers() {
                 );
               })}
             </div>
-            {/* Dual-handle slider — Rule #100: focus-visible ring, WCAG AA */}
+            {/* Dual-handle piecewise slider — Rule #100: focus-visible ring, WCAG AA
+                 Slider operates on 0–DEBT_SLIDER_UNITS; displayed values are exact Naira.
+                 Segment 1: units 0–50 → ₦0–₦2M (₦40k/unit)
+                 Segment 2: units 50–100 → ₦2M–₦20M (₦360k/unit) */}
             <Slider
               min={0}
-              max={DEBT_SLIDER_MAX}
-              step={1000}
-              value={debtRange}
+              max={DEBT_SLIDER_UNITS}
+              step={1}
+              value={debtSliderValue}
               onValueChange={(v) => {
-                setDebtRange(v as DebtRange);
-                setDebtRangeActive(!(v[0] === 0 && v[1] === DEBT_SLIDER_MAX));
+                const lo = sliderToNaira(v[0]);
+                const hi = sliderToNaira(v[1]);
+                setDebtSliderValue(v as [number, number]);
+                setDebtRange([lo, hi] as DebtRange);
+                setDebtRangeActive(!(v[0] === 0 && v[1] === DEBT_SLIDER_UNITS));
               }}
               className="w-full"
               aria-label="Outstanding debt range"
             />
-            {/* Range labels */}
+            {/* Range labels — exact Naira values */}
             <div className="flex justify-between text-xs text-slate-400">
               <span>{formatNaira(debtRange[0])}</span>
-              <span>{debtRange[1] >= DEBT_SLIDER_MAX ? '₦400k+' : formatNaira(debtRange[1])}</span>
+              <span>{debtSliderValue[1] >= DEBT_SLIDER_UNITS ? '₦20M+' : formatNaira(debtRange[1])}</span>
             </div>
             {debtRangeActive && (
               <button
                 type="button"
-                onClick={() => { setDebtRange([0, DEBT_SLIDER_MAX]); setDebtRangeActive(false); }}
+                onClick={() => { setDebtRange([0, DEBT_SLIDER_MAX_NAIRA]); setDebtSliderValue([0, DEBT_SLIDER_UNITS]); setDebtRangeActive(false); }}
                 className="text-xs text-amber-400 hover:text-amber-300 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
               >
                 Reset debt filter
