@@ -779,7 +779,7 @@ export default function CreateRoute() {
                               const bucketMin = DEBT_BUCKETS[i];
                               const bucketMax = i < DEBT_BUCKETS.length - 1 ? DEBT_BUCKETS[i + 1] - 1 : Infinity;
                               const inRange = debtRangeActive
-                                ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
+                                ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX_NAIRA ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
                                 : true;
                               return (
                                 <div
@@ -1114,7 +1114,7 @@ export default function CreateRoute() {
                                 const bucketMin = DEBT_BUCKETS[i];
                                 const bucketMax = i < DEBT_BUCKETS.length - 1 ? DEBT_BUCKETS[i + 1] - 1 : Infinity;
                                 const inRange = debtRangeActive
-                                  ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
+                                  ? (bucketMin <= debtRange[1] && (debtRange[1] >= DEBT_SLIDER_MAX_NAIRA ? true : bucketMax >= debtRange[0]) && bucketMin >= debtRange[0] || (bucketMin < debtRange[0] && bucketMax >= debtRange[0]))
                                   : true;
                                 return (
                                   <div
