@@ -1,7 +1,7 @@
 /**
  * workerAuth router — Mobile App API (Flutter / Survey App)
  *
- * T14 Item 3 NOTE: All procedures in this router are intentionally publicProcedure.
+ * T14 Item 3 NOTE: Most read procedures in this router were historically publicProcedure.
  * The Flutter mobile app authenticates via Survey App Bearer tokens stored in secure
  * device storage, NOT via Manus OAuth session cookies. The protectedProcedure middleware
  * checks for a session cookie and would reject all mobile app requests.
@@ -12,11 +12,11 @@
  *   - Sensitive mutations (createViolation, markCustomerPicked, etc.) validate
  *     the calling worker's identity before writing
  *
- * DO NOT upgrade these to protectedProcedure without first implementing
+ * DO NOT upgrade Flutter procedures to protectedProcedure without first implementing
  * Bearer token support in the tRPC middleware.
  */
 // T20: workerProcedure added — Bearer token authentication for mobile write mutations
-import { publicProcedure, workerProcedure, router, driftLogger } from "../_core/trpc";
+import { publicProcedure, workerProcedure, workerOrAuthenticatedProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
@@ -221,8 +221,10 @@ export const workerAuthRouter = router({
       return { scheduleId: schedRows[0]?.id ?? null };
     }),
 
-  // Get all customers (for building linkage selection)
-  getCustomers: publicProcedure.query(async () => {
+  // Get all customers (for building linkage selection).
+  // T61: Must accept the existing Flutter bearer flow and authenticated React
+  // web-session flow, but never an unauthenticated request.
+  getCustomers: workerOrAuthenticatedProcedure.query(async () => {
     return await fieldWorkerDb.getAllCustomers();
   }),
 

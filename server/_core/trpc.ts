@@ -189,6 +189,31 @@ async function resolveWorkerFromToken(token: string): Promise<{ workerId: number
 }
 
 /**
+ * Resolve access for a read procedure shared by the Flutter worker app
+ * (Survey bearer token) and the authenticated React web client (session user).
+ * A route must opt in explicitly by using workerOrAuthenticatedProcedure.
+ */
+export async function resolveWorkerOrUserContext(
+  ctx: TrpcContext,
+  resolveWorker: (token: string) => Promise<{ workerId: number; surveyAppUserId: string }> = resolveWorkerFromToken,
+): Promise<TrpcContext & { workerId?: number; workerSurveyAppUserId?: string }> {
+  if (ctx.user) return ctx;
+
+  const authHeader = ctx.req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Missing or invalid Authorization header' });
+  }
+
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Empty Bearer token' });
+  }
+
+  const { workerId, surveyAppUserId } = await resolveWorker(token);
+  return { ...ctx, workerId, workerSurveyAppUserId: surveyAppUserId };
+}
+
+/**
  * workerProcedure — T20 mobile app authentication tier.
  *
  * Validates the Survey App Bearer token from the Authorization header.
@@ -217,6 +242,17 @@ export const workerProcedure = t.procedure.use(
         workerSurveyAppUserId: surveyAppUserId,
       },
     });
+  }),
+);
+
+/**
+ * Authenticated shared-read tier for the Flutter bearer-token client and the
+ * React web client that already supplies its authenticated session cookie.
+ */
+export const workerOrAuthenticatedProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const resolvedCtx = await resolveWorkerOrUserContext(opts.ctx);
+    return opts.next({ ctx: resolvedCtx });
   }),
 );
 
