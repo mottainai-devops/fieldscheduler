@@ -109,3 +109,15 @@ jobs:
           echo "$health" | grep -q '"readiness":"armed"'
           echo "Scheduler health verified: armed"
           ENDSSH
+
+      - name: Send approved dead-man TEST alert
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          ALLOW_DEAD_MAN_TEST_ALERT=true node dist/scheduler-dead-man-test.js
+          ENDSSH
