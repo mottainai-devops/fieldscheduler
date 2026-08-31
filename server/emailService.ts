@@ -38,6 +38,30 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
   }
 }
 
+/** Sends the owner-approved dead-man alert for an overdue enabled Zoho sync job. */
+export async function sendSchedulerDeadManAlert(input: {
+  recipient: string;
+  jobName: string;
+  expectedRunAt: Date;
+  lastRunAt: Date | null;
+  lastStatus: string | null;
+  schedulerState: string;
+}): Promise<boolean> {
+  const subject = `Action required: Field Scheduler overdue — ${input.jobName}`;
+  const body = `
+    <h2 style="color:#dc3545;margin:0 0 16px;">Scheduled sync is overdue</h2>
+    <p style="color:#333;line-height:1.6;">An enabled Field Scheduler Zoho sync did not reach its expected run window.</p>
+    <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+      <tr><td style="padding:10px;background:#f8f9fa;border:1px solid #dee2e6;font-weight:bold;width:42%;">Job</td><td style="padding:10px;border:1px solid #dee2e6;">${input.jobName}</td></tr>
+      <tr><td style="padding:10px;background:#f8f9fa;border:1px solid #dee2e6;font-weight:bold;">Expected run</td><td style="padding:10px;border:1px solid #dee2e6;">${input.expectedRunAt.toISOString()}</td></tr>
+      <tr><td style="padding:10px;background:#f8f9fa;border:1px solid #dee2e6;font-weight:bold;">Last run</td><td style="padding:10px;border:1px solid #dee2e6;">${input.lastRunAt?.toISOString() ?? 'none recorded'}</td></tr>
+      <tr><td style="padding:10px;background:#f8f9fa;border:1px solid #dee2e6;font-weight:bold;">Last status</td><td style="padding:10px;border:1px solid #dee2e6;">${input.lastStatus ?? 'unknown'}</td></tr>
+      <tr><td style="padding:10px;background:#f8f9fa;border:1px solid #dee2e6;font-weight:bold;">Scheduler health</td><td style="padding:10px;border:1px solid #dee2e6;">${input.schedulerState}</td></tr>
+    </table>
+    <p style="color:#333;line-height:1.6;"><strong>Action:</strong> inspect scheduler health and the most recent sync history before triggering any manual run.</p>`;
+  return sendEmail(input.recipient, subject, baseTemplate(subject, body));
+}
+
 // ─── Email Templates ──────────────────────────────────────────────────────────
 
 function baseTemplate(title: string, body: string): string {
