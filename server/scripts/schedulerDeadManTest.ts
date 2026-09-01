@@ -1,3 +1,4 @@
+import { assertSmtpConfiguration } from "../_core/runtimeConfig";
 import { sendSchedulerDeadManAlert } from "../emailService";
 
 const recipient = "adeyadewuyi@gmail.com";
@@ -6,6 +7,8 @@ async function main() {
   if (process.env.ALLOW_DEAD_MAN_TEST_ALERT !== "true") {
     throw new Error("Dead-man TEST alert is disabled. Set ALLOW_DEAD_MAN_TEST_ALERT=true for an approved one-time test.");
   }
+
+  assertSmtpConfiguration();
 
   const now = new Date();
   const sent = await sendSchedulerDeadManAlert({
