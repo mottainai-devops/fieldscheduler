@@ -90,3 +90,34 @@ jobs:
           echo "Deployment complete!"
           pm2 list
           ENDSSH
+
+      - name: Verify scheduler armed health
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          pm2 show field-worker-scheduler | grep -q 'status.*online'
+          sleep 5
+          health="$(curl --fail --silent --show-error --max-time 15 -G \
+            --data-urlencode "input={\"json\":{\"timestamp\":$(date +%s%3N)}}" \
+            http://127.0.0.1:3002/api/trpc/system.health)"
+          echo "$health" | grep -q '"ok":true'
+          echo "$health" | grep -q '"readiness":"armed"'
+          echo "Scheduler health verified: armed"
+          ENDSSH
+
+      - name: Send approved dead-man TEST alert
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          ALLOW_DEAD_MAN_TEST_ALERT=true node dist/scheduler-dead-man-test.js
+          ENDSSH

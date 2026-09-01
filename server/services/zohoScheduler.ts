@@ -3,6 +3,7 @@ import { syncAllInvoices, syncAllPayments } from "./zohoFinancialSync";
 import { getDb } from "../db";
 import { zohoSyncHistory, zohoSyncJobs } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { sendSchedulerDeadManAlert } from "../emailService";
 
 interface ScheduledJob {
   id: number;
@@ -15,16 +16,55 @@ interface ScheduledJob {
 }
 
 let activeJobs: Map<number, NodeJS.Timeout> = new Map();
+let startupRetryTimer: NodeJS.Timeout | null = null;
+let deadManTimer: NodeJS.Timeout | null = null;
+let startupRetryAttempt = 0;
+const deadManAlertKeys = new Set<string>();
+
+const DEAD_MAN_ALERT_RECIPIENT = "adeyadewuyi@gmail.com";
+const STARTUP_RETRY_BASE_MS = 15_000;
+const STARTUP_RETRY_MAX_MS = 5 * 60_000;
+const DEAD_MAN_CHECK_MS = 15 * 60_000;
+const DEAD_MAN_GRACE_MS = 2 * 60 * 60_000;
+
+export type SchedulerReadiness = "initializing" | "armed" | "unarmed_database_unavailable";
+export type SchedulerExecutionState = "idle" | "running" | "completed" | "failed";
+
+const schedulerHealth: {
+  readiness: SchedulerReadiness;
+  execution: SchedulerExecutionState;
+  lastLoadAttemptAt: Date | null;
+  lastLoadSuccessAt: Date | null;
+  lastError: string | null;
+  armedJobCount: number;
+} = {
+  readiness: "initializing",
+  execution: "idle",
+  lastLoadAttemptAt: null,
+  lastLoadSuccessAt: null,
+  lastError: null,
+  armedJobCount: 0,
+};
+
+/** Publicly safe scheduler state; excludes customer and token information. */
+export function getSchedulerHealth() {
+  return { ...schedulerHealth };
+}
+
+/** Exported for deterministic retry-backoff regression tests. */
+export function getStartupRetryDelayMs(attempt: number): number {
+  return Math.min(STARTUP_RETRY_BASE_MS * 2 ** Math.max(0, attempt), STARTUP_RETRY_MAX_MS);
+}
 
 /**
  * Calculate next run time based on schedule type
  */
-function calculateNextRunTime(
+export function calculateNextRunTime(
   scheduleType: string,
   scheduleTime?: string,
-  scheduleDay?: string
+  scheduleDay?: string,
+  now: Date = new Date(),
 ): Date {
-  const now = new Date();
   const next = new Date(now);
 
   switch (scheduleType) {
@@ -90,16 +130,20 @@ function calculateNextRunTime(
 /**
  * Execute a sync job
  */
-async function executeSyncJob(jobId: number, jobName: string) {
+async function executeSyncJob(job: ScheduledJob) {
+  const { id: jobId, jobName } = job;
   const db = await getDb();
   if (!db) {
     console.error("[Zoho Scheduler] Database not available");
+    schedulerHealth.readiness = "unarmed_database_unavailable";
+    schedulerHealth.lastError = "Database unavailable while starting scheduled sync";
     return;
   }
 
   const startTime = Date.now();
   let syncResult;
   let syncRunId: number | null = null;
+  schedulerHealth.execution = "running";
 
   try {
     // Update job status to in_progress
@@ -204,14 +248,11 @@ async function executeSyncJob(jobId: number, jobName: string) {
       .set({
         lastStatus: "success",
         lastErrorMessage: null,
-        nextRunAt: calculateNextRunTime(
-          "daily",
-          "00:00",
-          undefined
-        ),
+        nextRunAt: calculateNextRunTime(job.scheduleType, job.scheduleTime, job.scheduleDay),
       })
       .where(eq(zohoSyncJobs.id, jobId));
 
+    schedulerHealth.execution = "completed";
     console.log(
       `[Zoho Scheduler] Sync job completed: ${syncResult.synced} synced, ${syncResult.errors} errors in ${durationMs}ms`
     );
@@ -247,9 +288,10 @@ async function executeSyncJob(jobId: number, jobName: string) {
       .set({
         lastStatus: "failed",
         lastErrorMessage: error.message,
-        nextRunAt: calculateNextRunTime("daily", "00:00", undefined),
+        nextRunAt: calculateNextRunTime(job.scheduleType, job.scheduleTime, job.scheduleDay),
       })
       .where(eq(zohoSyncJobs.id, jobId));
+    schedulerHealth.execution = "failed";
   }
 }
 
@@ -302,10 +344,12 @@ function scheduleJobExecution(job: ScheduledJob) {
 
   // Schedule the job
   const timeout = setTimeout(() => {
-    executeSyncJob(job.id, job.jobName)
+    executeSyncJob(job)
       .then(() => {
         // Reschedule after execution
-        loadAndScheduleJobs();
+        loadAndScheduleJobs().then((loaded) => {
+          if (!loaded) scheduleStartupRetry();
+        });
       })
       .catch((error) => {
         console.error(
@@ -313,7 +357,9 @@ function scheduleJobExecution(job: ScheduledJob) {
           error
         );
         // Try to reschedule anyway
-        loadAndScheduleJobs();
+        loadAndScheduleJobs().then((loaded) => {
+          if (!loaded) scheduleStartupRetry();
+        });
       });
   }, delayMs);
 
@@ -323,11 +369,14 @@ function scheduleJobExecution(job: ScheduledJob) {
 /**
  * Load all jobs from database and schedule them
  */
-export async function loadAndScheduleJobs() {
+export async function loadAndScheduleJobs(): Promise<boolean> {
+  schedulerHealth.lastLoadAttemptAt = new Date();
   const db = await getDb();
   if (!db) {
     console.error("[Zoho Scheduler] Database not available");
-    return;
+    schedulerHealth.readiness = "unarmed_database_unavailable";
+    schedulerHealth.lastError = "Database unavailable while loading scheduled jobs";
+    return false;
   }
 
   try {
@@ -353,9 +402,70 @@ export async function loadAndScheduleJobs() {
         });
       }
     }
+    schedulerHealth.readiness = "armed";
+    schedulerHealth.lastLoadSuccessAt = new Date();
+    schedulerHealth.lastError = null;
+    schedulerHealth.armedJobCount = jobs.filter((job) => job.enabled && job.nextRunAt).length;
+    startupRetryAttempt = 0;
+    if (startupRetryTimer) {
+      clearTimeout(startupRetryTimer);
+      startupRetryTimer = null;
+    }
+    ensureDeadManMonitor();
+    return true;
   } catch (error) {
     console.error("[Zoho Scheduler] Error loading jobs:", error);
+    schedulerHealth.readiness = "unarmed_database_unavailable";
+    schedulerHealth.lastError = error instanceof Error ? error.message : "Unable to load scheduled jobs";
+    return false;
   }
+}
+
+function scheduleStartupRetry() {
+  if (startupRetryTimer) return;
+  const delay = getStartupRetryDelayMs(startupRetryAttempt++);
+  console.warn(`[Zoho Scheduler] Retry job loading in ${Math.round(delay / 1000)}s`);
+  startupRetryTimer = setTimeout(() => {
+    startupRetryTimer = null;
+    loadAndScheduleJobs().then((loaded) => {
+      if (!loaded) scheduleStartupRetry();
+    });
+  }, delay);
+}
+
+async function checkDeadMan() {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    const jobs = await db.select().from(zohoSyncJobs);
+    const now = Date.now();
+    for (const job of jobs) {
+      if (!job.enabled || !job.nextRunAt) continue;
+      if (now <= job.nextRunAt.getTime() + DEAD_MAN_GRACE_MS) continue;
+      const alertKey = `${job.id}:${job.nextRunAt.toISOString()}`;
+      if (deadManAlertKeys.has(alertKey)) continue;
+      deadManAlertKeys.add(alertKey);
+      const sent = await sendSchedulerDeadManAlert({
+        recipient: DEAD_MAN_ALERT_RECIPIENT,
+        jobName: job.jobName,
+        expectedRunAt: job.nextRunAt,
+        lastRunAt: job.lastRunAt ?? null,
+        lastStatus: job.lastStatus ?? null,
+        schedulerState: schedulerHealth.readiness,
+      });
+      console.warn(`[Zoho Scheduler] Dead-man alert ${sent ? "sent" : "failed"} for job ${job.jobName}`);
+    }
+  } catch (error) {
+    console.error("[Zoho Scheduler] Dead-man check failed:", error);
+  }
+}
+
+function ensureDeadManMonitor() {
+  if (deadManTimer) return;
+  deadManTimer = setInterval(() => {
+    void checkDeadMan();
+  }, DEAD_MAN_CHECK_MS);
+  void checkDeadMan();
 }
 
 /**
@@ -507,8 +617,14 @@ export async function getSyncHistory(limit: number = 50) {
  */
 export async function initializeScheduler() {
   console.log("[Zoho Scheduler] Initializing scheduler...");
-  await loadAndScheduleJobs();
-  console.log("[Zoho Scheduler] Scheduler initialized");
+  schedulerHealth.readiness = "initializing";
+  const loaded = await loadAndScheduleJobs();
+  if (!loaded) {
+    scheduleStartupRetry();
+    console.error("[Zoho Scheduler] Scheduler started unarmed; database/job loading retry is scheduled");
+    return;
+  }
+  console.log("[Zoho Scheduler] Scheduler initialized and armed");
 }
 
 /**
@@ -518,6 +634,11 @@ export function shutdownScheduler() {
   console.log("[Zoho Scheduler] Shutting down scheduler...");
   activeJobs.forEach((timeout) => clearTimeout(timeout));
   activeJobs.clear();
+  if (startupRetryTimer) clearTimeout(startupRetryTimer);
+  if (deadManTimer) clearInterval(deadManTimer);
+  startupRetryTimer = null;
+  deadManTimer = null;
+  schedulerHealth.readiness = "initializing";
+  schedulerHealth.armedJobCount = 0;
   console.log("[Zoho Scheduler] Scheduler shut down");
 }
-
