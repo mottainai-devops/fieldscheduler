@@ -44,7 +44,7 @@ console.log('[Zoho] process.env.ZOHO_REFRESH_TOKEN:', process.env.ZOHO_REFRESH_T
 /**
  * Load tokens from database on startup
  */
-async function loadTokensFromDatabase() {
+async function loadTokensFromDatabase(): Promise<void> {
   try {
     const { getDb } = await import("../db");
     const { zohoTokens } = await import("../../drizzle/schema");
@@ -65,8 +65,21 @@ async function loadTokensFromDatabase() {
   }
 }
 
-// Load tokens from database on startup
-loadTokensFromDatabase().catch(e => console.error('[Zoho] Error loading tokens:', e));
+// The server begins this immediately at startup. Standalone operational scripts
+// can make their first API call before this promise resolves, so every token
+// consumer awaits the same single-flight load before attempting a refresh.
+let tokenLoadPromise: Promise<void> | null = null;
+
+export function ensureZohoTokensLoaded(): Promise<void> {
+  if (!tokenLoadPromise) {
+    tokenLoadPromise = loadTokensFromDatabase().catch((error) => {
+      console.error('[Zoho] Error loading tokens:', error);
+    });
+  }
+  return tokenLoadPromise;
+}
+
+void ensureZohoTokensLoaded();
 
 const ZOHO_AUTH_URL = "https://accounts.zoho.com/oauth/v2";
 const ZOHO_API_URL = "https://www.zohoapis.com/books/v3";
@@ -286,6 +299,7 @@ export async function refreshAccessToken(): Promise<string | null> {
  * Get valid access token (refresh if needed)
  */
 export async function getAccessToken(): Promise<string | null> {
+  await ensureZohoTokensLoaded();
   // Check if token is expired or about to expire (5 min buffer)
   if (!ZOHO_ACCESS_TOKEN || Date.now() > TOKEN_EXPIRY - 300000) {
     return await refreshAccessToken();
