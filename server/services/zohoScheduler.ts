@@ -179,6 +179,7 @@ async function executeSyncJob(job: ScheduledJob) {
     console.log('[Zoho Scheduler] Starting payments sync...');
     let invoiceSyncedCount = 0;
     let invoiceFailedCount = 0;
+    let invoiceStatus: "complete" | "rate_limited" | "failed" | "not_initialized" = "not_initialized";
     try {
       const paymentResult = await syncAllPayments();
       console.log(`[Zoho Scheduler] Payments sync complete: ${paymentResult.success} synced, ${paymentResult.failed} failed`);
@@ -195,6 +196,7 @@ async function executeSyncJob(job: ScheduledJob) {
         const invoiceResult = await syncAllInvoices();
         invoiceSyncedCount = invoiceResult.success;
         invoiceFailedCount = invoiceResult.failed;
+        invoiceStatus = invoiceResult.invoiceStatus;
         console.log(`[Zoho Scheduler] Invoice sync complete: ${invoiceResult.success} upserted, ${invoiceResult.failed} failed`);
       } catch (invoiceError) {
         console.error('[Zoho Scheduler] Invoice sync failed (non-fatal):', invoiceError);
@@ -219,6 +221,7 @@ async function executeSyncJob(job: ScheduledJob) {
           customermafCount: syncResult.customermafCount || 0,
           invoiceSyncedCount,
           invoiceFailedCount,
+          invoiceStatus,
           durationMs,
           errorMessage: syncResult.success ? null : "Sync completed with errors",
         })
@@ -235,8 +238,9 @@ async function executeSyncJob(job: ScheduledJob) {
         excludedContacts: syncResult.excludedContacts || 0,  // T58
         fieldManagerCount: syncResult.fieldManagerCount || 0,
         customermafCount: syncResult.customermafCount || 0,
-        invoiceSyncedCount,
-        invoiceFailedCount,
+          invoiceSyncedCount,
+          invoiceFailedCount,
+          invoiceStatus,
         durationMs,
         errorMessage: syncResult.success ? null : "Sync completed with errors",
       });

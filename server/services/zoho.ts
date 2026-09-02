@@ -990,6 +990,41 @@ export async function getCustomerInvoices(zohoContactId: string): Promise<any[]>
 }
 
 /**
+ * Component C: global invoice reader for the official documented
+ * `last_modified_time` filter. This replaces the pre-C per-customer full scan
+ * after the controlled baseline initializes the durable checkpoint.
+ */
+export async function getInvoicesModifiedSince(lastModifiedAfter: Date): Promise<any[]> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error("No valid access token available");
+
+  const last_modified_time = lastModifiedAfter.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+  const allInvoices: any[] = [];
+  let page = 1;
+  let hasMorePages = true;
+
+  while (hasMorePages) {
+    try {
+      const response = await axios.get(`${ZOHO_API_URL}/invoices`, {
+        headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+        params: { organization_id: ZOHO_ORGANIZATION_ID, last_modified_time, per_page: 200, page },
+      });
+      allInvoices.push(...(response.data.invoices || []));
+      hasMorePages = Boolean(response.data.page_context?.has_more_page);
+      page++;
+      if (hasMorePages) await sleep(300);
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) return getInvoicesModifiedSince(lastModifiedAfter);
+      }
+      throw error;
+    }
+  }
+  return allInvoices;
+}
+
+/**
  * Get customer payment history from Zoho Books
  */
 export async function getCustomerPayments(zohoContactId: string): Promise<any[]> {
@@ -1158,4 +1193,3 @@ function generateStatementHTML(data: any): string {
     </html>
   `;
 }
-

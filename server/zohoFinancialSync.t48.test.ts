@@ -539,23 +539,24 @@ describe('T48 — syncAllInvoices() rewrite', () => {
       expect(src).toContain('code: 45');
     });
 
-    it('O7: syncAllInvoices stops cleanly when rate limit is hit (no further customers processed)', async () => {
+    it('O7: Component C classifies a global incremental rate limit without advancing the checkpoint', async () => {
       const fs = await import('fs');
       const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
-      expect(src).toContain('if (rateLimited) break');
-      expect(src).toContain('rateLimited = true');
+      expect(src).toContain('zoho.getInvoicesModifiedSince(window.since)');
+      expect(src).toContain('rateLimited = isZohoRateLimitError(error)');
+      expect(src).toContain('markInvoiceSyncTerminal');
     });
 
-    it('O8: syncAllInvoices returns rateLimited in return shape', async () => {
+    it('O8: Component C returns an explicit rate-limit and terminal invoice-status shape', async () => {
       const fs = await import('fs');
       const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
       // Return type annotation
       expect(src).toContain('rateLimited: boolean');
+      expect(src).toContain('invoiceStatus: InvoiceSyncStatus');
       // Early-return false path (DB unavailable)
       expect(src).toContain('rateLimited: false');
-      // The rateLimited flag is set to true and returned
-      expect(src).toContain('rateLimited = true');
-      expect(src).toContain('return { success, failed, total: customersWithZoho.length, rateLimited }');
+      expect(src).toContain('classifyInvoiceSyncResult({ rateLimited, failed })');
+      expect(src).toContain('return { success, failed, total: modifiedInvoices.length, rateLimited, invoiceStatus }');
     });
   });
 
@@ -636,7 +637,7 @@ describe('T48 — syncAllInvoices() rewrite', () => {
     it('P13: source code logs a warning for unmapped FM names', async () => {
       const fs = await import('fs');
       const src = fs.readFileSync('./server/services/zohoFinancialSync.ts', 'utf8');
-      expect(src).toContain('Unmapped FM name');
+      expect(src).toContain('Invoice field manager was unmapped');
       expect(src).toContain('console.warn');
     });
 

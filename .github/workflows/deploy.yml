@@ -75,6 +75,18 @@ jobs:
           echo "Migrations complete!"
           ENDSSH
 
+      - name: Run Component C invoice-sync migration
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          node dist/migrate-component-c.js
+          ENDSSH
+
       - name: Deploy on server
         run: |
           ssh -i ~/.ssh/deploy_key \

@@ -409,6 +409,8 @@ export const zohoSyncHistory = mysqlTable("zohoSyncHistory", {
   // T48 Fix 4: invoice sync tracking columns
   invoiceSyncedCount: int("invoiceSyncedCount").default(0),
   invoiceFailedCount: int("invoiceFailedCount").default(0),
+  // Component C: explicit invoice-phase terminal classification.
+  invoiceStatus: varchar("invoiceStatus", { length: 32 }),
   errorMessage: text("errorMessage"),
   errorStack: text("errorStack"),
   durationMs: int("durationMs"),
@@ -500,6 +502,18 @@ export const invoices = mysqlTable("invoices", {
 
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = typeof invoices.$inferInsert;
+
+// Component C: a singleton durable high-water mark for the global
+// `last_modified_time` invoice reader. It is intentionally separate from sync
+// history so rate-limited/failed attempts cannot advance the checkpoint.
+export const zohoInvoiceSyncState = mysqlTable("zohoInvoiceSyncState", {
+  stateKey: varchar("stateKey", { length: 64 }).primaryKey(),
+  lastSuccessfulModifiedAt: timestamp("lastSuccessfulModifiedAt"),
+  lastAttemptAt: timestamp("lastAttemptAt"),
+  lastStatus: varchar("lastStatus", { length: 32 }).notNull().default("not_initialized"),
+  lastError: text("lastError"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
 
 
 export const invoiceItems = mysqlTable("invoiceItems", {
