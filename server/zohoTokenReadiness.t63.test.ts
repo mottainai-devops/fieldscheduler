@@ -1,0 +1,12 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+
+describe("Component C — Zoho token readiness", () => {
+  it("shares one database-token initialization promise and awaits it before any token refresh", () => {
+    const source = readFileSync("server/services/zoho.ts", "utf8");
+    expect(source).toContain("let tokenLoadPromise: Promise<void> | null = null");
+    expect(source).toContain("export function ensureZohoTokensLoaded(): Promise<void>");
+    expect(source).toContain("await ensureZohoTokensLoaded();");
+    expect(source).toContain("void ensureZohoTokensLoaded();");
+  });
+});
