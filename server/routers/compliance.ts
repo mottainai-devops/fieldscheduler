@@ -1,5 +1,6 @@
 import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManagerProcedure, workerProcedure } from '../_core/trpc';
-import { z } from 'zod';
+import { z } from "zod";
+import { getInsertedId } from "../utils/mobileMutationEnvelope";
 import * as complianceDb from '../complianceDb';
 import { uploadViolationPhoto as storageUploadViolationPhoto } from '../storageService';
 import * as notificationDb from '../notificationDb';
@@ -199,7 +200,10 @@ export const complianceRouter = router({
         }
       });
 
-      return result;
+      return {
+        success: true,
+        violation: { id: getInsertedId(result, "violation") },
+      };
     }),
 
   /**
