@@ -30,7 +30,7 @@ export async function markInvoiceSyncAttempt(db: DbClient): Promise<void> {
 
 export async function markInvoiceSyncTerminal(
   db: DbClient,
-  input: { status: "complete" | "rate_limited" | "failed"; checkpoint?: Date; error?: string | null },
+  input: { status: "complete" | "rate_limited" | "rate_limited_incomplete" | "failed"; checkpoint?: Date; error?: string | null },
 ): Promise<void> {
   const set: Record<string, unknown> = {
     lastAttemptAt: new Date(),

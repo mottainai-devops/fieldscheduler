@@ -8,23 +8,32 @@ import { buildInvoiceUpsertContext, isZohoRateLimitError, upsertZohoInvoice } fr
 export const TAIL_START_CUSTOMER_ID = 12284;
 export const TAIL_END_CUSTOMER_ID = 16757;
 
-export type TailBaselineStatus = "complete" | "rate_limited" | "failed";
+export type FullBaselineStatus = "complete" | "rate_limited_incomplete" | "failed";
 
-export interface TailBaselineResult {
-  status: TailBaselineStatus;
+export interface FullBaselineResult {
+  status: FullBaselineStatus;
+  selectedFullCustomers: number;
   selectedTailCustomers: number;
+  fullInvoiceCount: number;
   tailCustomersWithZohoInvoices: number;
   tailDebtors: number;
   tailInvoiceCount: number;
   previouslyInvisibleOutstanding: string;
   invoiceSyncedCount: number;
   invoiceFailedCount: number;
+  invoiceListRequestCount: number;
+  rateLimitCount: number;
+  firstResponseQuota: Record<string, string | null> | null;
   startedAt: Date;
   completedAt: Date;
   error: string | null;
 }
 
 type DbClient = any;
+
+export function isApprovedTailCustomer(customerId: number): boolean {
+  return customerId >= TAIL_START_CUSTOMER_ID && customerId <= TAIL_END_CUSTOMER_ID;
+}
 
 function decimalToMinorUnits(value: unknown): number {
   const match = String(value ?? "0").trim().match(/^(-?)(\d+)(?:\.(\d{1,2}))?$/);
@@ -44,20 +53,26 @@ function formatMinorUnits(value: number): string {
 }
 
 /**
- * Walks the known zero-local-invoice tail only. It is intentionally not
- * reachable from tRPC and is guarded by a server-side CLI flag.
+ * Walks every currently Zoho-linked customer exactly once and calculates the
+ * historical tail metrics as a subset. It is intentionally not reachable from
+ * tRPC and is guarded by a server-side CLI flag.
  */
-export async function runTailInvoiceBaseline(db: DbClient): Promise<TailBaselineResult> {
+export async function runFullInvoiceBaseline(db: DbClient): Promise<FullBaselineResult> {
   const startedAt = new Date();
-  const result: TailBaselineResult = {
+  const result: FullBaselineResult = {
     status: "complete",
+    selectedFullCustomers: 0,
     selectedTailCustomers: 0,
+    fullInvoiceCount: 0,
     tailCustomersWithZohoInvoices: 0,
     tailDebtors: 0,
     tailInvoiceCount: 0,
     previouslyInvisibleOutstanding: "0.00",
     invoiceSyncedCount: 0,
     invoiceFailedCount: 0,
+    invoiceListRequestCount: 0,
+    rateLimitCount: 0,
+    firstResponseQuota: null,
     startedAt,
     completedAt: startedAt,
     error: null,
@@ -67,53 +82,62 @@ export async function runTailInvoiceBaseline(db: DbClient): Promise<TailBaseline
 
   try {
     const upsertContext = await buildInvoiceUpsertContext(db);
-    const tailCandidates = await db
-      .select({ id: customers.id, zohoContactId: customers.zohoContactId, name: customers.name })
+    const fullCandidates = await db
+      .select({ id: customers.id, zohoContactId: customers.zohoContactId })
       .from(customers)
-      .where(and(gte(customers.id, TAIL_START_CUSTOMER_ID), lte(customers.id, TAIL_END_CUSTOMER_ID)));
-    // Keep the approved historical tail scope stable on a retry. A rate-limited
-    // attempt can already have imported a prefix; excluding newly linked rows on
-    // the next attempt would understate the baseline’s original visibility gap.
-    const selected = tailCandidates.filter((customer: { zohoContactId: string | null }) => Boolean(customer.zohoContactId));
-    result.selectedTailCustomers = selected.length;
+      .where(and(gte(customers.id, 1), lte(customers.id, Number.MAX_SAFE_INTEGER)));
+    const selected = fullCandidates.filter((customer: { zohoContactId: string | null }) => Boolean(customer.zohoContactId));
+    result.selectedFullCustomers = selected.length;
+    result.selectedTailCustomers = selected.filter((customer: { id: number }) => isApprovedTailCustomer(customer.id)).length;
 
-    let outstanding = 0;
+    let tailOutstanding = 0;
     for (const customer of selected) {
+      const isTail = isApprovedTailCustomer(customer.id);
       try {
-        const remoteInvoices = await zoho.getCustomerInvoices(customer.zohoContactId!);
-        if (remoteInvoices.length > 0) result.tailCustomersWithZohoInvoices++;
+        const remote = await zoho.getCustomerInvoicesWithTelemetry(customer.zohoContactId!);
+        result.invoiceListRequestCount += remote.requestCount;
+        result.rateLimitCount += remote.rateLimitCount;
+        if (!result.firstResponseQuota && remote.firstResponseQuota) result.firstResponseQuota = remote.firstResponseQuota;
+        if (isTail && remote.invoices.length > 0) result.tailCustomersWithZohoInvoices++;
 
-        let customerOutstanding = 0;
-        for (const invoice of remoteInvoices) {
-          result.tailInvoiceCount++;
-          if (OUTSTANDING_STATUSES.includes(invoice.status)) {
-            customerOutstanding += decimalToMinorUnits(invoice.balance);
+        let tailCustomerOutstanding = 0;
+        for (const invoice of remote.invoices) {
+          result.fullInvoiceCount++;
+          if (isTail) {
+            result.tailInvoiceCount++;
+            if (OUTSTANDING_STATUSES.includes(invoice.status)) {
+              tailCustomerOutstanding += decimalToMinorUnits(invoice.balance);
+            }
           }
           try {
             await upsertZohoInvoice(db, invoice, upsertContext);
             result.invoiceSyncedCount++;
           } catch (invoiceError) {
-            console.error("[Component C tail baseline] Invoice upsert failed", invoiceError);
+            console.error("[Component C full baseline] Invoice upsert failed", invoiceError);
             result.invoiceFailedCount++;
           }
         }
-        if (customerOutstanding > 0) result.tailDebtors++;
-        outstanding += customerOutstanding;
+        if (isTail && tailCustomerOutstanding > 0) result.tailDebtors++;
+        tailOutstanding += tailCustomerOutstanding;
       } catch (error) {
+        const telemetry = zoho.getInvoiceReadTelemetry(error);
+        result.invoiceListRequestCount += telemetry.requestCount;
+        result.rateLimitCount += telemetry.rateLimitCount;
+        if (!result.firstResponseQuota && telemetry.firstResponseQuota) result.firstResponseQuota = telemetry.firstResponseQuota;
         if (isZohoRateLimitError(error)) {
-          result.status = "rate_limited";
-          result.error = "Zoho rate limit reached while walking approved tail";
+          result.status = "rate_limited_incomplete";
+          result.error = "Zoho rate limit reached while walking approved full baseline";
           break;
         }
-        console.error("[Component C tail baseline] Customer invoice list failed", error);
+        console.error("[Component C full baseline] Customer invoice list failed", error);
         result.invoiceFailedCount++;
         result.status = "failed";
-        result.error = "One or more approved-tail customer invoice reads failed";
+        result.error = "One or more full-baseline customer invoice reads failed";
         break;
       }
     }
 
-    result.previouslyInvisibleOutstanding = formatMinorUnits(outstanding);
+    result.previouslyInvisibleOutstanding = formatMinorUnits(tailOutstanding);
     result.completedAt = new Date();
     await markInvoiceSyncTerminal(db, {
       status: result.status,
@@ -123,9 +147,13 @@ export async function runTailInvoiceBaseline(db: DbClient): Promise<TailBaseline
     return result;
   } catch (error) {
     result.status = "failed";
-    result.error = error instanceof Error ? error.message : "Tail baseline failed";
+    result.error = error instanceof Error ? error.message : "Full invoice baseline failed";
     result.completedAt = new Date();
     await markInvoiceSyncTerminal(db, { status: "failed", error: result.error });
     return result;
   }
 }
+
+// Compatibility alias: the guarded CLI name remains stable, but its scope is
+// explicitly the owner-authorized full coverage pass.
+export const runTailInvoiceBaseline = runFullInvoiceBaseline;
