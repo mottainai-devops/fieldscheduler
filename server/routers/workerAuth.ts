@@ -25,6 +25,7 @@ import * as zoho from "../services/zoho";
 import { SKIP_REASONS } from '../../shared/const';
 import { verifyPinBcrypt } from '../utils/pinHashing';
 import { isLockedOut, recordFailedAttempt, clearAttempts } from '../utils/rateLimiter';
+import { getInsertedId } from '../utils/mobileMutationEnvelope';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -250,10 +251,14 @@ export const workerAuthRouter = router({
       annexCustomerId: z.number(),
     }))
     .mutation(async ({ input, ctx }) => {
-      return await buildingIdLinkageDb.createLinkageRequest({
+      const result = await buildingIdLinkageDb.createLinkageRequest({
         ...input,
         requestedBy: ctx.workerId,
       });
+      return {
+        success: true,
+        linkageRequest: { id: getInsertedId(result, "linkage request") },
+      };
     }),
 
   // Get all violation types
@@ -290,10 +295,14 @@ export const workerAuthRouter = router({
       evidenceUrls: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      return await complianceDb.createViolation({
+      const result = await complianceDb.createViolation({
         ...input,
         reportedBy: ctx.workerId,
       });
+      return {
+        success: true,
+        violation: { id: getInsertedId(result, "violation") },
+      };
     }),
 
   // Get customer payment status
