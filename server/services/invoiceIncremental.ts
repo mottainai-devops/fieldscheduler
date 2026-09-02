@@ -16,9 +16,10 @@ export interface IncrementalWindow {
 
 export function formatZohoLastModifiedTime(value: Date): string {
   if (Number.isNaN(value.getTime())) throw new Error("Invalid invoice checkpoint timestamp");
-  // Zoho documents an ISO-8601 timestamp with an offset. Keep the UTC basis
-  // explicit rather than relying on the server's locale.
-  return value.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+  // Zoho’s invoice API examples use the compact numeric offset form
+  // (`2013-11-18T02:02:51-0800`). Keep the UTC basis explicit and do not emit
+  // the colon offset form, which the live preflight rejected with HTTP 400.
+  return value.toISOString().replace(/\.\d{3}Z$/, "-0000");
 }
 
 export function buildIncrementalWindow(lastSuccessfulModifiedAt: Date, now = new Date()): IncrementalWindow {

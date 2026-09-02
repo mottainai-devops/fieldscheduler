@@ -7,8 +7,8 @@ import {
 } from "./services/invoiceIncremental";
 
 describe("Component C — incremental invoice policy", () => {
-  it("formats the Zoho documented offset timestamp in UTC", () => {
-    expect(formatZohoLastModifiedTime(new Date("2026-09-02T09:10:11.123Z"))).toBe("2026-09-02T09:10:11+00:00");
+  it("formats the Zoho documented compact numeric offset timestamp in UTC", () => {
+    expect(formatZohoLastModifiedTime(new Date("2026-09-02T09:10:11.123Z"))).toBe("2026-09-02T09:10:11-0000");
   });
 
   it("deliberately overlaps a completed checkpoint to make retries idempotent", () => {

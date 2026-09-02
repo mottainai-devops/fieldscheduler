@@ -1,5 +1,6 @@
 import axios from "axios";
 import { INVOICE_STATUS } from '../../shared/constants/invoice-status';
+import { formatZohoLastModifiedTime } from './invoiceIncremental';
 
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || '';
 const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || '';
@@ -1012,7 +1013,7 @@ export async function getInvoicesModifiedSince(lastModifiedAfter: Date): Promise
   const accessToken = await getAccessToken();
   if (!accessToken) throw new Error("No valid access token available");
 
-  const last_modified_time = lastModifiedAfter.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+  const last_modified_time = formatZohoLastModifiedTime(lastModifiedAfter);
   const allInvoices: any[] = [];
   let page = 1;
   let hasMorePages = true;
