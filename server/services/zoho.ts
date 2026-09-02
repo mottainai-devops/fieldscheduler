@@ -941,67 +941,97 @@ export async function getCustomerStatement(zohoContactId: string): Promise<any> 
     return { pdfBase64: null, zohoContactId, total: 0, balance: 0, invoices: [] };
   }
 }
-/**
- * Get customer invoices from Zoho Books
- */
-export async function getCustomerInvoices(zohoContactId: string): Promise<any[]> {
+export interface InvoiceReadTelemetry {
+  requestCount: number;
+  rateLimitCount: number;
+  firstResponseQuota: Record<string, string | null> | null;
+}
+
+export interface CustomerInvoiceRead extends InvoiceReadTelemetry {
+  invoices: any[];
+}
+
+function quotaHeaders(headers: Record<string, unknown> | undefined): Record<string, string | null> | null {
+  if (!headers) return null;
+  const get = (key: string) => {
+    const value = headers[key] ?? headers[key.toLowerCase()] ?? null;
+    return value === null || value === undefined ? null : String(value);
+  };
+  return {
+    limit: get("x-ratelimit-limit"),
+    remaining: get("x-ratelimit-remaining"),
+    reset: get("x-ratelimit-reset"),
+    retryAfter: get("retry-after"),
+  };
+}
+
+function attachInvoiceReadTelemetry(error: any, telemetry: InvoiceReadTelemetry): any {
+  error.componentCInvoiceReadTelemetry = telemetry;
+  return error;
+}
+
+export function getInvoiceReadTelemetry(error: unknown): InvoiceReadTelemetry {
+  const telemetry = (error as any)?.componentCInvoiceReadTelemetry;
+  return telemetry && typeof telemetry.requestCount === "number"
+    ? telemetry
+    : { requestCount: 0, rateLimitCount: 0, firstResponseQuota: null };
+}
+
+/** Get customer invoices with safe request/quota telemetry for the controlled full baseline. */
+export async function getCustomerInvoicesWithTelemetry(zohoContactId: string): Promise<CustomerInvoiceRead> {
   const accessToken = await getAccessToken();
+  if (!accessToken) throw new Error("No valid access token available. Please authorize the application.");
 
-  if (!accessToken) {
-    throw new Error("No valid access token available. Please authorize the application.");
-  }
-
+  const telemetry: InvoiceReadTelemetry = { requestCount: 0, rateLimitCount: 0, firstResponseQuota: null };
   try {
-    // T48 Fix 2: Paginate with per_page=200 to avoid missing invoices for high-volume customers
     const allInvoices: any[] = [];
     let page = 1;
     let hasMorePages = true;
-
     while (hasMorePages) {
-      // T57: inter-page delay to reduce API quota consumption
       if (page > 1) await sleep(300);
-
-      // T57: 429 retry with exponential backoff (max 3 retries)
       let response: any;
       let rateLimitRetries = 0;
       while (true) {
         try {
+          telemetry.requestCount++;
           response = await axios.get(`${ZOHO_API_URL}/invoices`, {
             headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
             params: { customer_id: zohoContactId, organization_id: ZOHO_ORGANIZATION_ID, per_page: 200, page },
           });
+          if (!telemetry.firstResponseQuota) telemetry.firstResponseQuota = quotaHeaders(response.headers);
           break;
         } catch (reqErr: any) {
+          if (!telemetry.firstResponseQuota) telemetry.firstResponseQuota = quotaHeaders(reqErr.response?.headers);
           if (isZohoRateLimitError(reqErr) && rateLimitRetries < 3) {
+            telemetry.rateLimitCount++;
             const backoff = Math.pow(2, rateLimitRetries) * 1000;
             console.warn(`[Zoho] 429 on invoices for ${zohoContactId} page ${page}, retry ${rateLimitRetries + 1}/3 after ${backoff}ms`);
             await sleep(backoff);
             rateLimitRetries++;
           } else {
-            throw reqErr;
+            if (isZohoRateLimitError(reqErr)) telemetry.rateLimitCount++;
+            throw attachInvoiceReadTelemetry(reqErr, telemetry);
           }
         }
       }
-
       const pageInvoices = response.data.invoices || [];
       allInvoices.push(...pageInvoices);
-
-      const pageContext = response.data.page_context;
-      hasMorePages = !!(pageContext && pageContext.has_more_page);
+      hasMorePages = Boolean(response.data.page_context?.has_more_page);
       page++;
     }
-
-    return allInvoices;
+    return { invoices: allInvoices, ...telemetry };
   } catch (error: any) {
     if (error.response?.status === 401) {
       const newToken = await refreshAccessToken();
-      if (newToken) {
-        return getCustomerInvoices(zohoContactId);
-      }
+      if (newToken) return getCustomerInvoicesWithTelemetry(zohoContactId);
     }
     console.error("Error fetching customer invoices:", error);
-    throw error;
+    throw attachInvoiceReadTelemetry(error, getInvoiceReadTelemetry(error));
   }
+}
+
+export async function getCustomerInvoices(zohoContactId: string): Promise<any[]> {
+  return (await getCustomerInvoicesWithTelemetry(zohoContactId)).invoices;
 }
 
 /**

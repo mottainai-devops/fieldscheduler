@@ -1,6 +1,6 @@
 import "../_core/runtimeConfig";
 import { getDb } from "../db";
-import { runTailInvoiceBaseline } from "../services/invoiceTailBaseline";
+import { runFullInvoiceBaseline } from "../services/invoiceTailBaseline";
 import { zohoSyncHistory } from "../../drizzle/schema";
 
 async function main() {
@@ -10,7 +10,7 @@ async function main() {
   const db = await getDb();
   if (!db) throw new Error("Component C tail baseline cannot run: database unavailable");
 
-  const result = await runTailInvoiceBaseline(db);
+  const result = await runFullInvoiceBaseline(db);
   await db.insert(zohoSyncHistory).values({
     syncType: "manual",
     status: result.status === "complete" ? "success" : "failed",
@@ -22,7 +22,7 @@ async function main() {
     errorMessage: result.error,
   });
 
-  console.log(JSON.stringify({ component: "C", action: "tail_baseline", ...result }));
+  console.log(JSON.stringify({ component: "C", action: "full_invoice_baseline", ...result }));
   if (result.status !== "complete") process.exitCode = 1;
 }
 
