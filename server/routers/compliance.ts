@@ -2,7 +2,7 @@ import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManag
 import { z } from "zod";
 import { getInsertedId } from "../utils/mobileMutationEnvelope";
 import * as complianceDb from '../complianceDb';
-import { uploadViolationPhoto as storageUploadViolationPhoto } from '../storageService';
+import { uploadViolationPhoto as storageUploadViolationPhoto, violationEvidenceKeysFromReferences } from '../storageService';
 import * as notificationDb from '../notificationDb';
 import * as emailService from '../emailService';
 import { getDb } from '../db';
@@ -136,26 +136,30 @@ export const complianceRouter = router({
   /**
    * Create/Report a violation — triggers notifications
    */
-  // SECURITY DEBT: This endpoint is publicly accessible and writes data without authenticating the caller.
-  // The mobile Flutter app uses this endpoint without a session. Risk accepted for Tranche 14 because
-  // system is pre-operational. To be hardened in a future security tranche by adding surveyToken
-  // validation inside the handler. See SECURITY_DEBT.md.
-  createViolation: publicProcedure
+  // Private evidence keys can only be attached by an authenticated field worker.
+  // The existing Flutter _post path already supplies its bearer token.
+  createViolation: workerProcedure
     .input(z.object({
       customerId: z.number(),
       violationTypeId: z.number(),
-      reportedBy: z.number().optional(),
       notes: z.string().optional(),
-      // T24: wired to client. Array of S3 URLs uploaded via uploadViolationPhoto.
-      // Serialized as JSON string in TEXT column. Max 5 photos per violation.
+      // Existing APKs pass the upload's fileUrl string. The S3 adapter returns an
+      // opaque evidence-s3 reference, which this mutation converts to durable keys.
       evidenceUrls: z.array(z.string()).max(5).optional(),
     }))
-    .mutation(async ({ input }) => {
-      // 1. Serialize evidenceUrls array to JSON string for TEXT column storage
+    .mutation(async ({ input, ctx }) => {
+      const evidenceKeys = input.evidenceUrls
+        ? violationEvidenceKeysFromReferences(input.evidenceUrls)
+        : [];
+
+      // Persist only durable S3 keys for new records. The old URL column remains
+      // intact for legacy data and is not populated with expiring presigned URLs.
       const dbInput = {
         ...input,
-        evidenceUrls: input.evidenceUrls && input.evidenceUrls.length > 0
-          ? JSON.stringify(input.evidenceUrls)
+        reportedBy: ctx.workerId,
+        evidenceUrls: undefined,
+        evidenceKeys: evidenceKeys.length > 0
+          ? JSON.stringify(evidenceKeys)
           : undefined,
       };
       // 2. Create the violation
@@ -175,10 +179,10 @@ export const complianceRouter = router({
             relatedId: input.customerId,
           });
 
-          // 2b. Worker notification (if reportedBy is set)
-          if (input.reportedBy) {
+          // 2b. Worker notification (identity is derived from the bearer token)
+          if (ctx.workerId) {
             await notificationDb.createWorkerNotification({
-              workerId: input.reportedBy,
+              workerId: ctx.workerId,
               type: 'violation_submitted',
               title: 'Violation Report Submitted',
               message: `Your ${violationTypeName} violation report for ${customer?.name || `customer #${input.customerId}`} has been recorded.`,

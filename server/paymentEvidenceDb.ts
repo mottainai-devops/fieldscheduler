@@ -5,6 +5,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { paymentEvidence, notifications, type InsertPaymentEvidence, type InsertNotification } from "../drizzle/schema";
+import { storageGet } from "./storage";
 
 /**
  * Create new payment evidence record
@@ -13,7 +14,7 @@ export async function createPaymentEvidence(data: {
   customerId: number;
   invoiceId?: string;
   workerId: number;
-  fileUrl: string;
+  fileKey: string;
   fileName: string;
   fileType: string;
   notes?: string;
@@ -27,7 +28,7 @@ export async function createPaymentEvidence(data: {
     customerId: data.customerId,
     invoiceId: data.invoiceId,
     uploadedBy: data.workerId,
-    fileUrl: data.fileUrl,
+    fileKey: data.fileKey,
     fileName: data.fileName,
     fileType: data.fileType,
     notes: data.notes,
@@ -42,6 +43,18 @@ export async function createPaymentEvidence(data: {
   return result.insertId;
 }
 
+async function hydratePaymentEvidence<T extends { fileKey: string | null; fileUrl: string | null }>(evidence: T) {
+  if (!evidence.fileKey) return evidence;
+  try {
+    const { url } = await storageGet(evidence.fileKey);
+    const { fileKey: _fileKey, ...safeEvidence } = evidence;
+    return { ...safeEvidence, fileUrl: url };
+  } catch {
+    const { fileKey: _fileKey, ...safeEvidence } = evidence;
+    return { ...safeEvidence, fileUrl: null };
+  }
+}
+
 /**
  * Get payment evidence by ID
  */
@@ -52,7 +65,7 @@ export async function getPaymentEvidenceById(id: number) {
     .select()
     .from(paymentEvidence)
     .where(eq(paymentEvidence.id, id));
-  return evidence;
+  return evidence ? await hydratePaymentEvidence(evidence) : null;
 }
 
 /**
@@ -61,11 +74,12 @@ export async function getPaymentEvidenceById(id: number) {
 export async function getPaymentEvidenceByCustomer(customerId: number) {
   const db = await getDb();
   if (!db) return [];
-  return await db
+  const records = await db
     .select()
     .from(paymentEvidence)
     .where(eq(paymentEvidence.customerId, customerId))
     .orderBy(paymentEvidence.createdAt);
+  return await Promise.all(records.map(hydratePaymentEvidence));
 }
 
 /**
@@ -74,11 +88,12 @@ export async function getPaymentEvidenceByCustomer(customerId: number) {
 export async function getPaymentEvidenceByWorker(workerId: number) {
   const db = await getDb();
   if (!db) return [];
-  return await db
+  const records = await db
     .select()
     .from(paymentEvidence)
     .where(eq(paymentEvidence.uploadedBy, workerId))
     .orderBy(paymentEvidence.createdAt);
+  return await Promise.all(records.map(hydratePaymentEvidence));
 }
 
 /**
@@ -168,4 +183,3 @@ export async function markAllNotificationsAsRead() {
     .update(notifications)
     .set({ isRead: 1 }); // true
 }
-

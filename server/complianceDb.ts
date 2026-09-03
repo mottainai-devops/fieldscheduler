@@ -9,6 +9,36 @@ import {
   customers,
   workers,
 } from "../drizzle/schema";
+import { storageGet } from "./storage";
+
+function parseStoredStringArray(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every(item => typeof item === "string") ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function mintEvidenceUrls(keys: string[], legacyUrls: string | null): Promise<string[]> {
+  if (keys.length === 0) return parseStoredStringArray(legacyUrls);
+  const urls = await Promise.all(keys.map(async key => {
+    try {
+      return (await storageGet(key)).url;
+    } catch {
+      // Fail closed: do not expose private object keys or stale URLs.
+      return null;
+    }
+  }));
+  return urls.filter((url): url is string => Boolean(url));
+}
+
+async function hydrateViolationEvidence<T extends { evidenceKeys: string | null; evidenceUrls: string | null }>(row: T) {
+  const evidenceUrls = await mintEvidenceUrls(parseStoredStringArray(row.evidenceKeys), row.evidenceUrls);
+  const { evidenceKeys: _evidenceKeys, ...safeRow } = row;
+  return { ...safeRow, evidenceUrls };
+}
 
 // Violation Types Management
 export async function getAllViolationTypes() {
@@ -108,6 +138,7 @@ export async function getAllViolations() {
       status: complianceViolations.status,
       notes: complianceViolations.notes,
       evidenceUrls: complianceViolations.evidenceUrls,
+      evidenceKeys: complianceViolations.evidenceKeys,
       reportedAt: complianceViolations.reportedAt,
       resolvedAt: complianceViolations.resolvedAt,
       customer: customers,
@@ -120,11 +151,7 @@ export async function getAllViolations() {
     .leftJoin(workers, eq(complianceViolations.reportedBy, workers.id))
     .orderBy(desc(complianceViolations.reportedAt));
 
-  // T24: deserialize evidenceUrls JSON string to string[] for client consumption
-  return result.map(row => ({
-    ...row,
-    evidenceUrls: row.evidenceUrls ? (() => { try { return JSON.parse(row.evidenceUrls!); } catch { return []; } })() : [],
-  }));
+  return await Promise.all(result.map(hydrateViolationEvidence));
 }
 
 export async function getViolationsByCustomer(customerId: number) {
@@ -139,6 +166,7 @@ export async function getViolationsByCustomer(customerId: number) {
       status: complianceViolations.status,
       notes: complianceViolations.notes,
       evidenceUrls: complianceViolations.evidenceUrls,
+      evidenceKeys: complianceViolations.evidenceKeys,
       reportedAt: complianceViolations.reportedAt,
       resolvedAt: complianceViolations.resolvedAt,
       violationType: violationTypes,
@@ -150,11 +178,7 @@ export async function getViolationsByCustomer(customerId: number) {
     .where(eq(complianceViolations.customerId, customerId))
     .orderBy(desc(complianceViolations.reportedAt));
 
-  // T24: deserialize evidenceUrls JSON string to string[] for client consumption
-  return result.map(row => ({
-    ...row,
-    evidenceUrls: row.evidenceUrls ? (() => { try { return JSON.parse(row.evidenceUrls!); } catch { return []; } })() : [],
-  }));
+  return await Promise.all(result.map(hydrateViolationEvidence));
 }
 
 export async function createViolation(data: {
@@ -163,6 +187,7 @@ export async function createViolation(data: {
   reportedBy?: number;
   notes?: string;
   evidenceUrls?: string;
+  evidenceKeys?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -410,4 +435,3 @@ export async function upsertCustomerPaymentStatus(data: {
     await db.insert(customerPaymentStatus).values(data);
   }
 }
-

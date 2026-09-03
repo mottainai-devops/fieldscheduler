@@ -267,12 +267,12 @@ export const workerAuthRouter = router({
   }),
 
   // Get all violations
-  getAllViolations: publicProcedure.query(async () => {
+  getAllViolations: workerOrAuthenticatedProcedure.query(async () => {
     return await complianceDb.getAllViolations();
   }),
 
   // Get violations by customer
-  getViolationsByCustomer: publicProcedure
+  getViolationsByCustomer: workerOrAuthenticatedProcedure
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
       return await complianceDb.getViolationsByCustomer(input.customerId);
@@ -848,7 +848,7 @@ export const workerAuthRouter = router({
     }),
 
   // ===== CUSTOMER VISIT NOTES =====
-  getCustomerNotes: publicProcedure
+  getCustomerNotes: workerOrAuthenticatedProcedure
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
       const notesDb = await import('../notesDb');

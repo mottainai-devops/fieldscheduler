@@ -30,10 +30,9 @@ const createViolationInput = z.object({
   violationTypeId: z.number().int().positive(),
   reportedBy: z.number().optional(),
   notes: z.string().optional(),
-  // T24: evidenceUrls is now an array of S3 URLs (max 5), serialized as JSON in TEXT column
-  // @drift-suppress: flutter-only upload path; React web client uploads via compliance.uploadViolationPhoto
-  // then passes the resulting URLs here. Both clients now wire this field.
-  evidenceUrls: z.array(z.string().url()).max(5).optional(),
+  // The existing APK sends the upload response in this field. The private-S3
+  // adapter uses an opaque durable reference instead of a public S3 URL.
+  evidenceUrls: z.array(z.string().startsWith('evidence-s3://')).max(5).optional(),
 });
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -92,13 +91,13 @@ describe('compliance.createViolation — evidenceUrls field', () => {
     expect(result.data?.evidenceUrls).toBeUndefined();
   });
 
-  it('accepts evidenceUrls as array of valid URLs', () => {
+  it('accepts adapter-issued opaque evidence references from the existing APK flow', () => {
     const result = createViolationInput.safeParse({
       customerId: 1,
       violationTypeId: 2,
       evidenceUrls: [
-        'https://s3.amazonaws.com/bucket/violation-photos/worker-1/photo1.jpg',
-        'https://s3.amazonaws.com/bucket/violation-photos/worker-1/photo2.jpg',
+        'evidence-s3://violation-photos/worker-1/photo1.jpg',
+        'evidence-s3://violation-photos/worker-1/photo2.jpg',
       ],
     });
     expect(result.success).toBe(true);
@@ -119,7 +118,7 @@ describe('compliance.createViolation — evidenceUrls field', () => {
     const result = createViolationInput.safeParse({
       customerId: 1,
       violationTypeId: 2,
-      evidenceUrls: 'https://example.com/photo.jpg',
+      evidenceUrls: 'evidence-s3://violation-photos/worker-1/photo.jpg',
     });
     expect(result.success).toBe(false);
   });
@@ -129,12 +128,12 @@ describe('compliance.createViolation — evidenceUrls field', () => {
       customerId: 1,
       violationTypeId: 2,
       evidenceUrls: [
-        'https://s3.amazonaws.com/bucket/p1.jpg',
-        'https://s3.amazonaws.com/bucket/p2.jpg',
-        'https://s3.amazonaws.com/bucket/p3.jpg',
-        'https://s3.amazonaws.com/bucket/p4.jpg',
-        'https://s3.amazonaws.com/bucket/p5.jpg',
-        'https://s3.amazonaws.com/bucket/p6.jpg',
+        'evidence-s3://violation-photos/worker-1/p1.jpg',
+        'evidence-s3://violation-photos/worker-1/p2.jpg',
+        'evidence-s3://violation-photos/worker-1/p3.jpg',
+        'evidence-s3://violation-photos/worker-1/p4.jpg',
+        'evidence-s3://violation-photos/worker-1/p5.jpg',
+        'evidence-s3://violation-photos/worker-1/p6.jpg',
       ],
     });
     expect(result.success).toBe(false);
@@ -145,11 +144,11 @@ describe('compliance.createViolation — evidenceUrls field', () => {
       customerId: 1,
       violationTypeId: 2,
       evidenceUrls: [
-        'https://s3.amazonaws.com/bucket/p1.jpg',
-        'https://s3.amazonaws.com/bucket/p2.jpg',
-        'https://s3.amazonaws.com/bucket/p3.jpg',
-        'https://s3.amazonaws.com/bucket/p4.jpg',
-        'https://s3.amazonaws.com/bucket/p5.jpg',
+        'evidence-s3://violation-photos/worker-1/p1.jpg',
+        'evidence-s3://violation-photos/worker-1/p2.jpg',
+        'evidence-s3://violation-photos/worker-1/p3.jpg',
+        'evidence-s3://violation-photos/worker-1/p4.jpg',
+        'evidence-s3://violation-photos/worker-1/p5.jpg',
       ],
     });
     expect(result.success).toBe(true);
@@ -160,8 +159,8 @@ describe('compliance.createViolation — evidenceUrls field', () => {
 describe('evidenceUrls JSON round-trip (TEXT column serialization)', () => {
   it('serialize → deserialize produces the same array', () => {
     const original = [
-      'https://s3.amazonaws.com/bucket/violation-photos/worker-5/1720000000000-abc123.jpg',
-      'https://s3.amazonaws.com/bucket/violation-photos/worker-5/1720000000001-def456.jpg',
+      'violation-photos/worker-5/1720000000000-abc123.jpg',
+      'violation-photos/worker-5/1720000000001-def456.jpg',
     ];
     const serialized = JSON.stringify(original);
     const deserialized = JSON.parse(serialized) as string[];
