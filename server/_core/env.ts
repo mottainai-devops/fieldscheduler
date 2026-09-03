@@ -7,6 +7,10 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  // Owner-managed private evidence storage. These are non-secret deployment
+  // selectors; AWS credentials resolve exclusively through the EC2 role.
+  awsRegion: process.env.AWS_REGION ?? "",
+  evidenceS3Bucket: process.env.FIELD_SCHEDULER_EVIDENCE_BUCKET ?? "",
   // === Routing Hardening ===
   useVRP: (process.env.USE_VRP ?? "false").toLowerCase() === "true",
   arcgisVrpUrl: process.env.ARCGIS_VRP_URL ?? "https://route-api.arcgis.com/arcgis/rest/services/World/VehicleRoutingProblem/NAServer/VehicleRoutingProblem_World/solveVehicleRoutingProblem",

@@ -1,4 +1,4 @@
-import { publicProcedure, adminProcedure, workerProcedure, router, driftLogger } from "../_core/trpc";
+import { adminProcedure, workerProcedure, workerOrAuthenticatedProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 
 export const paymentsRouter = router({
@@ -41,7 +41,7 @@ export const paymentsRouter = router({
         customerId: input.customerId,
         invoiceId: input.invoiceId,
         workerId: ctx.workerId,
-        fileUrl,
+        fileKey,
         fileName: input.fileName,
         fileType: input.fileType,
         notes: input.notes,
@@ -63,7 +63,7 @@ export const paymentsRouter = router({
     }),
 
   // Get payment evidence for a customer
-  getPaymentEvidence: publicProcedure
+  getPaymentEvidence: workerOrAuthenticatedProcedure
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
       const { getPaymentEvidenceByCustomer } = await import("../paymentEvidenceDb");

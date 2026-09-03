@@ -237,6 +237,8 @@ export const complianceViolations = mysqlTable("complianceViolations", {
   status: mysqlEnum("status", ["reported", "under_review", "resolved", "dismissed"]).default("reported"),
   notes: text("notes"),
   evidenceUrls: text("evidenceUrls"),
+  // Stable private S3 object keys. evidenceUrls remains for legacy coexistence.
+  evidenceKeys: text("evidenceKeys"),
   reportedAt: timestamp("reportedAt").defaultNow().notNull(),
   resolvedAt: timestamp("resolvedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -267,6 +269,8 @@ export const paymentEvidence = mysqlTable("paymentEvidence", {
   paymentMethod: varchar("paymentMethod", { length: 100 }),
   evidenceType: mysqlEnum("evidenceType", ["receipt", "bank_statement", "invoice", "other"]).default("receipt"),
   fileUrl: varchar("fileUrl", { length: 500 }),
+  // Durable private S3 key; fileUrl is retained for legacy records only.
+  fileKey: varchar("fileKey", { length: 1024 }),
   fileName: varchar("fileName", { length: 255 }),
   fileType: varchar("fileType", { length: 50 }), // mime type
   uploadedBy: int("uploadedBy").references(() => workers.id),
@@ -539,6 +543,8 @@ export const customerVisitNotes = mysqlTable("customerVisitNotes", {
   authorName: varchar("authorName", { length: 255 }),
   noteText: text("noteText"),
   photoUrl: varchar("photoUrl", { length: 1024 }),
+  // Durable private S3 key; photoUrl is a runtime-only presigned URL on reads.
+  photoStorageKey: varchar("photoStorageKey", { length: 1024 }),
   visitDate: varchar("visitDate", { length: 50 }),
   parentNoteId: int("parentNoteId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

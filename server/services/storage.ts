@@ -1,6 +1,6 @@
 /**
  * S3 Storage Service for Payment Evidence Files
- * Uses Manus built-in S3 storage helpers
+ * Deprecated compatibility wrapper for private owner-managed S3 evidence.
  */
 
 import { storagePut } from "../storage";
@@ -15,7 +15,7 @@ export interface UploadResult {
  * @param file - File buffer or base64 string
  * @param fileName - Original file name
  * @param contentType - MIME type (e.g., 'image/jpeg', 'application/pdf')
- * @returns S3 key and public URL
+ * @returns S3 key and opaque private evidence reference
  */
 export async function uploadPaymentEvidence(
   file: Buffer | string,
@@ -26,7 +26,7 @@ export async function uploadPaymentEvidence(
     // Generate unique key with timestamp
     const timestamp = Date.now();
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const key = `payment-evidence/${timestamp}-${sanitizedFileName}`;
+    const key = `payment-proofs/legacy/${timestamp}-${sanitizedFileName}`;
 
     // Convert base64 to buffer if needed
     let fileBuffer: Buffer;
@@ -38,7 +38,7 @@ export async function uploadPaymentEvidence(
       fileBuffer = file;
     }
 
-    // Upload to S3 using Manus storage helper
+    // Upload using the private evidence adapter and its approved prefix.
     const result = await storagePut(key, fileBuffer, contentType);
 
     console.log(`Payment evidence uploaded: ${result.key}`);
@@ -64,4 +64,3 @@ export async function deletePaymentEvidence(key: string): Promise<void> {
     throw new Error('Failed to delete payment evidence');
   }
 }
-

@@ -46,6 +46,12 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o LogLevel=ERROR -q" \
             dist/ \
             ubuntu@${{ secrets.DEPLOY_HOST }}:/home/ubuntu/field-worker-scheduler/dist/
+          # The AWS SDK is external to the server bundle. Keep the runtime
+          # manifest and lockfile aligned before any controlled PM2 restart.
+          rsync -az \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o LogLevel=ERROR -q" \
+            package.json pnpm-lock.yaml \
+            ubuntu@${{ secrets.DEPLOY_HOST }}:/home/ubuntu/field-worker-scheduler/
 
       - name: Run database migrations
         run: |
@@ -57,7 +63,7 @@ jobs:
           set -e
           cd /home/ubuntu/field-worker-scheduler
           echo "Running targeted database migrations..."
-          # Inline idempotent migration: add fieldManagerId to users table.
+          # Inline idempotent migrations for the currently deployed schema.
           # Uses node -e to avoid needing a script file on the server.
           # The .env file on the server provides DATABASE_URL.
           node -e "
@@ -69,6 +75,16 @@ jobs:
               const [rows] = await conn.execute(\"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='fieldManagerId'\");
               if (rows.length) { console.log('fieldManagerId already exists, skipping'); }
               else { await conn.execute(\"ALTER TABLE users ADD COLUMN fieldManagerId int NULL\"); console.log('fieldManagerId column added'); }
+              const additions = [
+                ['complianceViolations', 'evidenceKeys', 'ALTER TABLE complianceViolations ADD COLUMN evidenceKeys text NULL'],
+                ['paymentEvidence', 'fileKey', 'ALTER TABLE paymentEvidence ADD COLUMN fileKey varchar(1024) NULL'],
+                ['customerVisitNotes', 'photoStorageKey', 'ALTER TABLE customerVisitNotes ADD COLUMN photoStorageKey varchar(1024) NULL'],
+              ];
+              for (const [table, column, sql] of additions) {
+                const [existing] = await conn.execute('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [table, column]);
+                if (existing.length) { console.log(table + '.' + column + ' already exists, skipping'); }
+                else { await conn.execute(sql); console.log(table + '.' + column + ' added'); }
+              }
               await conn.end();
             }).catch(e => { console.error(e.message); process.exit(1); });
           "
@@ -85,6 +101,18 @@ jobs:
           set -e
           cd /home/ubuntu/field-worker-scheduler
           node dist/migrate-component-c.js
+          ENDSSH
+
+      - name: Install production runtime dependencies
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o LogLevel=ERROR \
+            -q \
+            ubuntu@${{ secrets.DEPLOY_HOST }} << 'ENDSSH'
+          set -e
+          cd /home/ubuntu/field-worker-scheduler
+          pnpm install --frozen-lockfile --prod
           ENDSSH
 
       - name: Deploy on server
