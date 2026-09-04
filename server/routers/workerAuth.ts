@@ -27,6 +27,7 @@ import { verifyPinBcrypt } from '../utils/pinHashing';
 import { isLockedOut, recordFailedAttempt, clearAttempts } from '../utils/rateLimiter';
 import { getInsertedId } from '../utils/mobileMutationEnvelope';
 import { issuePhonePinSession } from '../phonePinSessions';
+import { requireActiveSupervisorMapping } from '../supervisorLoginGuard';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -431,6 +432,12 @@ export const workerAuthRouter = router({
 
       // Step 3: Find or auto-provision shadow worker row
       let worker = await fieldWorkerDb.getWorkerBySurveyAppUserId(surveyAppUserId);
+
+      // Fail closed for an existing disabled mapping. In particular, do not
+      // allow a Survey-authenticated person to inherit an inactive worker row.
+      // A missing mapping remains eligible for the established auto-provision
+      // flow below.
+      requireActiveSupervisorMapping(worker);
 
       if (!worker) {
         // Step 4: Auto-provision shadow worker
