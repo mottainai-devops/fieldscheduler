@@ -40,6 +40,16 @@ async function hydrateViolationEvidence<T extends { evidenceKeys: string | null;
   return { ...safeRow, evidenceUrls };
 }
 
+/**
+ * Phone/PIN field sessions intentionally receive violation metadata only.
+ * Do not return durable keys, legacy locations, or short-lived private URLs
+ * from a route that cannot prove a worker session.
+ */
+export function withoutViolationEvidence<T extends { evidenceKeys: string | null; evidenceUrls: string | null }>(row: T) {
+  const { evidenceKeys: _evidenceKeys, evidenceUrls: _evidenceUrls, ...metadata } = row;
+  return metadata;
+}
+
 // Violation Types Management
 export async function getAllViolationTypes() {
   const db = await getDb();
@@ -154,7 +164,10 @@ export async function getAllViolations() {
   return await Promise.all(result.map(hydrateViolationEvidence));
 }
 
-export async function getViolationsByCustomer(customerId: number) {
+export async function getViolationsByCustomer(
+  customerId: number,
+  options: { includeEvidence?: boolean } = {},
+) {
   const db = await getDb();
   if (!db) return [];
   
@@ -178,6 +191,12 @@ export async function getViolationsByCustomer(customerId: number) {
     .where(eq(complianceViolations.customerId, customerId))
     .orderBy(desc(complianceViolations.reportedAt));
 
+  if (options.includeEvidence === false) {
+    return result.map(withoutViolationEvidence);
+  }
+
+  // Authenticated management routes retain the existing private URL-minting
+  // path. Callers that cannot authenticate must opt into metadata-only reads.
   return await Promise.all(result.map(hydrateViolationEvidence));
 }
 
