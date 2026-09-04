@@ -14,14 +14,29 @@ async function hydrateNotePhoto<T extends { photoStorageKey: string | null; phot
   }
 }
 
-export async function getCustomerNotes(customerId: number) {
+/**
+ * Phone/PIN field sessions cannot prove a bearer or web session. Preserve
+ * ordinary note metadata while suppressing all evidence locations, including
+ * legacy file URLs and durable S3 keys.
+ */
+export function withoutNotePhoto<T extends { photoStorageKey: string | null; photoUrl: string | null }>(note: T) {
+  const { photoStorageKey: _photoStorageKey, photoUrl: _photoUrl, ...metadata } = note;
+  return { ...metadata, photoUrl: null };
+}
+
+export async function getCustomerNotes(
+  customerId: number,
+  options: { includePhoto?: boolean } = {},
+) {
   const db = await getDb();
   if (!db) return [];
   const { customerVisitNotes } = await import("../drizzle/schema");
   const notes = await db.select().from(customerVisitNotes)
     .where(and(eq(customerVisitNotes.customerId, customerId), isNull(customerVisitNotes.parentNoteId)))
     .orderBy(desc(customerVisitNotes.createdAt));
-  return await Promise.all(notes.map(hydrateNotePhoto));
+  return options.includePhoto === false
+    ? notes.map(withoutNotePhoto)
+    : await Promise.all(notes.map(hydrateNotePhoto));
 }
 
 export async function getNoteReplies(parentNoteId: number) {
@@ -34,14 +49,19 @@ export async function getNoteReplies(parentNoteId: number) {
   return await Promise.all(notes.map(hydrateNotePhoto));
 }
 
-export async function getCustomerNotesWithReplies(customerId: number) {
+export async function getCustomerNotesWithReplies(
+  customerId: number,
+  options: { includePhoto?: boolean } = {},
+) {
   const db = await getDb();
   if (!db) return [];
   const { customerVisitNotes } = await import("../drizzle/schema");
   const notes = await db.select().from(customerVisitNotes)
     .where(eq(customerVisitNotes.customerId, customerId))
     .orderBy(customerVisitNotes.createdAt);
-  const hydratedNotes = await Promise.all(notes.map(hydrateNotePhoto));
+  const hydratedNotes = options.includePhoto === false
+    ? notes.map(withoutNotePhoto)
+    : await Promise.all(notes.map(hydrateNotePhoto));
   
   // Build thread structure
   const noteMap = new Map<number, any>();

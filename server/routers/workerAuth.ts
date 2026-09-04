@@ -271,11 +271,13 @@ export const workerAuthRouter = router({
     return await complianceDb.getAllViolations();
   }),
 
-  // Get violations by customer
-  getViolationsByCustomer: workerOrAuthenticatedProcedure
+  // Phone/PIN sessions do not carry a server-verifiable bearer. Restore the
+  // existing field metadata list without exposing evidence keys or URLs.
+  // Authenticated management reads continue through compliance.getViolationsByCustomer.
+  getViolationsByCustomer: publicProcedure
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
-      return await complianceDb.getViolationsByCustomer(input.customerId);
+      return await complianceDb.getViolationsByCustomer(input.customerId, { includeEvidence: false });
     }),
 
   // Create violation report
@@ -848,11 +850,13 @@ export const workerAuthRouter = router({
     }),
 
   // ===== CUSTOMER VISIT NOTES =====
-  getCustomerNotes: workerOrAuthenticatedProcedure
+  // Same phone/PIN compatibility treatment as violation metadata: notes stay
+  // readable, but private or legacy photo locations are never returned here.
+  getCustomerNotes: publicProcedure
     .input(z.object({ customerId: z.number() }))
     .query(async ({ input }) => {
       const notesDb = await import('../notesDb');
-      return await notesDb.getCustomerNotesWithReplies(input.customerId);
+      return await notesDb.getCustomerNotesWithReplies(input.customerId, { includePhoto: false });
     }),
 
   // T20: workerProcedure — workerId derived from ctx.workerId (no longer client-sent)
