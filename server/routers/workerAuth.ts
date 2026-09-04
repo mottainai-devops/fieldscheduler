@@ -16,7 +16,7 @@
  * Bearer token support in the tRPC middleware.
  */
 // T20: workerProcedure added — Bearer token authentication for mobile write mutations
-import { publicProcedure, workerProcedure, workerOrAuthenticatedProcedure, router, driftLogger } from "../_core/trpc";
+import { publicProcedure, workerProcedure, workerOrAuthenticatedProcedure, phonePinOrWorkerProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 import * as fieldWorkerDb from "../fieldWorkerDb";
 import * as buildingIdLinkageDb from "../buildingIdLinkageDb";
@@ -26,6 +26,7 @@ import { SKIP_REASONS } from '../../shared/const';
 import { verifyPinBcrypt } from '../utils/pinHashing';
 import { isLockedOut, recordFailedAttempt, clearAttempts } from '../utils/rateLimiter';
 import { getInsertedId } from '../utils/mobileMutationEnvelope';
+import { issuePhonePinSession } from '../phonePinSessions';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -98,10 +99,20 @@ export const workerAuthRouter = router({
       if (!worker) {
         return { success: false, message: "Worker not found" };
       }
+      if (worker.status !== "active") {
+        return { success: false, message: "Worker account is inactive" };
+      }
+      const rateLimitKey = worker.email || `worker:${worker.id}`;
+      if (await isLockedOut(rateLimitKey)) {
+        return { success: false, message: "Too many failed login attempts. Please try again later." };
+      }
       
       if (!worker.pin) {
-        // No PIN set, allow access
-        return { success: true, worker };
+        // Phone/PIN mode may issue a server credential only after a real bcrypt
+        // PIN verification. Never convert a missing PIN into an authenticated
+        // session, even for an otherwise active worker.
+        await recordFailedAttempt(rateLimitKey);
+        return { success: false, message: "PIN login is unavailable for this worker" };
       }
 
       // T35 Item #2: bcrypt-only comparison. Plaintext fallback removed.
@@ -110,9 +121,21 @@ export const workerAuthRouter = router({
       const pinValid = await verifyPinBcrypt(input.pin, worker.pin);
 
       if (pinValid) {
-        return { success: true, worker };
+        const phonePinSession = await issuePhonePinSession(worker.id);
+        await clearAttempts(rateLimitKey);
+        return {
+          success: true,
+          worker: {
+            id: worker.id,
+            name: worker.name,
+            role: worker.role,
+          },
+          phonePinSession: phonePinSession.token,
+          phonePinSessionExpiresAt: phonePinSession.expiresAt.toISOString(),
+        };
       }
 
+      await recordFailedAttempt(rateLimitKey);
       return { success: false, message: "Invalid PIN" };
     }),
 
@@ -133,13 +156,12 @@ export const workerAuthRouter = router({
     .input(z.object({ phone: z.string().min(7) }))
     .query(async ({ input }) => {
       const worker = await fieldWorkerDb.getWorkerByPhone(input.phone);
-      if (!worker) return null;
+      if (!worker || worker.status !== "active") return null;
       // Return only safe fields — never return pin
       return {
         id: worker.id,
         name: worker.name,
-        phone: worker.phone,
-        role: (worker as any).role ?? 'field_manager',
+        role: worker.role,
       };
     }),
 
@@ -618,7 +640,7 @@ export const workerAuthRouter = router({
 
   // Mark a customer stop as completed
   // T20: workerProcedure — authentication enforced via Bearer token
-  markCustomerComplete: workerProcedure
+  markCustomerComplete: phonePinOrWorkerProcedure
     .input(z.object({ routeId: z.number(), customerId: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("../db");
@@ -635,7 +657,7 @@ export const workerAuthRouter = router({
 
   // Mark a customer stop as incomplete (undo)
   // T20: workerProcedure — authentication enforced via Bearer token
-  markCustomerIncomplete: workerProcedure
+  markCustomerIncomplete: phonePinOrWorkerProcedure
     .input(z.object({ routeId: z.number(), customerId: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("../db");
@@ -652,7 +674,7 @@ export const workerAuthRouter = router({
 
   // Complete an entire route
   // T20: workerProcedure — authentication enforced via Bearer token
-  completeRoute: workerProcedure
+  completeRoute: phonePinOrWorkerProcedure
     .input(z.object({ routeId: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.updateRouteStatus(input.routeId, "completed");
@@ -660,7 +682,7 @@ export const workerAuthRouter = router({
 
   // Start a route (set to in_progress)
   // T20: workerProcedure — authentication enforced via Bearer token
-  startRoute: workerProcedure
+  startRoute: phonePinOrWorkerProcedure
     .input(z.object({ routeId: z.number() }))
     .mutation(async ({ input }) => {
       return await fieldWorkerDb.updateRouteStatus(input.routeId, "in_progress");
@@ -676,7 +698,7 @@ export const workerAuthRouter = router({
   // optionally on routeInstanceCustomerOverrides (occurrence-level).
   // T16 Item 5: driftLogger applied
   // T20: workerProcedure — workerId derived from ctx.workerId (no longer client-sent)
-  skipCustomer: workerProcedure
+  skipCustomer: phonePinOrWorkerProcedure
     .use(driftLogger('skipCustomer', {
       shape: {
         scheduleId: true, routeId: true, customerId: true,
@@ -860,7 +882,7 @@ export const workerAuthRouter = router({
     }),
 
   // T20: workerProcedure — workerId derived from ctx.workerId (no longer client-sent)
-  addCustomerNote: workerProcedure
+  addCustomerNote: phonePinOrWorkerProcedure
     .input(z.object({
       customerId: z.number(),
       routeId: z.number().optional().nullable(),

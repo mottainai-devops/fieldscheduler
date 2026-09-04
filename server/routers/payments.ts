@@ -1,4 +1,4 @@
-import { adminProcedure, workerProcedure, workerOrAuthenticatedProcedure, router, driftLogger } from "../_core/trpc";
+import { adminProcedure, workerProcedure, workerOrAuthenticatedProcedure, phonePinOrWorkerProcedure, router, driftLogger } from "../_core/trpc";
 import { z } from "zod";
 
 export const paymentsRouter = router({
@@ -7,7 +7,7 @@ export const paymentsRouter = router({
   // Flutter client still sends workerId in payload (legacy) — silently stripped by Zod
   // (same harmless drift as T20 procedures). React client updated to not send workerId.
   // T16 Item 5: driftLogger applied
-  uploadPaymentProof: workerProcedure
+  uploadPaymentProof: phonePinOrWorkerProcedure
     .use(driftLogger('uploadPaymentProof', {
       shape: {
         customerId: true, invoiceId: true,

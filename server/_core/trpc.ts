@@ -1,5 +1,6 @@
 import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import * as fieldWorkerDb from '../fieldWorkerDb';
+import { PHONE_PIN_SESSION_HEADER, resolvePhonePinSession } from '../phonePinSessions';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
@@ -242,6 +243,35 @@ export const workerProcedure = t.procedure.use(
         workerSurveyAppUserId: surveyAppUserId,
       },
     });
+  }),
+);
+
+/**
+ * Field-write tier for either an existing Survey bearer or a server-issued
+ * phone/PIN session. It deliberately does not grant access to private-evidence
+ * reads, admin routes, financial reporting, or general metadata reads.
+ */
+export const phonePinOrWorkerProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    const authHeader = ctx.req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      if (!token) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Empty Bearer token' });
+      const { workerId, surveyAppUserId } = await resolveWorkerFromToken(token);
+      return next({ ctx: { ...ctx, workerId, workerSurveyAppUserId: surveyAppUserId } });
+    }
+
+    const phonePinToken = ctx.req.headers[PHONE_PIN_SESSION_HEADER] as string | undefined;
+    if (!phonePinToken) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Missing worker session' });
+    }
+    try {
+      const { workerId } = await resolvePhonePinSession(phonePinToken);
+      return next({ ctx: { ...ctx, workerId } });
+    } catch {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Phone/PIN session expired' });
+    }
   }),
 );
 

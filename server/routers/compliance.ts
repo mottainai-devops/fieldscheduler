@@ -1,4 +1,4 @@
-import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManagerProcedure, workerProcedure } from '../_core/trpc';
+import { router, protectedProcedure, publicProcedure, adminProcedure, fieldManagerProcedure, workerProcedure, phonePinOrWorkerProcedure } from '../_core/trpc';
 import { z } from "zod";
 import { getInsertedId } from "../utils/mobileMutationEnvelope";
 import * as complianceDb from '../complianceDb';
@@ -70,7 +70,7 @@ export const complianceRouter = router({
    * Client sends one photo at a time; caller loops for multiple photos.
    * Max 5 photos per violation enforced at createViolation input level.
    */
-  uploadViolationPhoto: workerProcedure
+  uploadViolationPhoto: phonePinOrWorkerProcedure
     .input(z.object({
       fileData: z.string(),   // base64-encoded image (may include data URL prefix)
       fileName: z.string(),
@@ -138,7 +138,7 @@ export const complianceRouter = router({
    */
   // Private evidence keys can only be attached by an authenticated field worker.
   // The existing Flutter _post path already supplies its bearer token.
-  createViolation: workerProcedure
+  createViolation: phonePinOrWorkerProcedure
     .input(z.object({
       customerId: z.number(),
       violationTypeId: z.number(),
