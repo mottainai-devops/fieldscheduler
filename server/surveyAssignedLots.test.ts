@@ -32,10 +32,14 @@ describe("buildSurveyAssignedLots", () => {
     }));
     const result = await buildSurveyAssignedLots(
       { companyId: "COMPANY-A", assignedLots: [{ lotCode: "REG-001", lotName: "Regular lot" }] },
-      { adminApi: "https://admin.example", fetchImpl },
+      { adminApi: "https://admin.example", fieldSchedulerServiceToken: "test-service-token", fetchImpl },
     );
 
     expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0]?.[0]).toContain("lots.lookupForFieldScheduler");
+    expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "x-field-scheduler-service-token": "test-service-token",
+    });
     expect(result).toEqual([
       expect.objectContaining({ lotCode: "REG-001", paytWebhook: "payt", monthlyWebhook: "monthly", lotId: 7 }),
     ]);

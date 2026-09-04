@@ -46,11 +46,11 @@ function readAdminLots(payload: unknown): AdminLot[] {
 /**
  * Builds the cache consumed by supervisor login and Refresh Lots.
  * A Franchisee-scoped cherry-picker response carries webhook values itself.
- * Regular company-bound responses keep the established one-call enrichment.
+ * Regular company-bound responses keep a credentialed one-call enrichment.
  */
 export async function buildSurveyAssignedLots(
   surveyUser: SurveyUserLots,
-  options: { adminApi?: string; fetchImpl?: FetchLike } = {},
+  options: { adminApi?: string; fieldSchedulerServiceToken?: string; fetchImpl?: FetchLike } = {},
 ): Promise<CachedAssignedLot[]> {
   const rawLots = Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
   const adminLotMap = new Map<string, AdminLot>();
@@ -58,14 +58,19 @@ export async function buildSurveyAssignedLots(
 
   if (surveyCompanyId) {
     const adminApi = options.adminApi || process.env.ADMIN_DASHBOARD_URL || "https://admin.kowope.xyz";
+    const serviceToken = options.fieldSchedulerServiceToken || process.env.FIELD_SCHEDULER_LOT_LOOKUP_TOKEN || "";
     const fetchImpl = options.fetchImpl || globalThis.fetch;
     try {
+      if (!serviceToken) throw new Error("Field Scheduler lot lookup credential is not configured");
       const input = encodeURIComponent(JSON.stringify({
         "0": { json: { companyId: surveyCompanyId, page: 1, limit: 200 } },
       }));
       const response = await fetchImpl(
-        `${adminApi}/api/trpc/lots.list?batch=1&input=${input}`,
-        { signal: AbortSignal.timeout(8000) },
+        `${adminApi}/api/trpc/lots.lookupForFieldScheduler?batch=1&input=${input}`,
+        {
+          headers: { "x-field-scheduler-service-token": serviceToken },
+          signal: AbortSignal.timeout(8000),
+        },
       );
       if (response.ok) {
         for (const lot of readAdminLots(await response.json())) {
