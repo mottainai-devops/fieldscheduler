@@ -2,6 +2,7 @@ import { eq, desc, and, sql, or, inArray, like, max } from "drizzle-orm";
 import { getDb } from "./db";
 import { workers, vehicles, customers, routes, routeCustomers, workerLocations, calendarAuditLog, invoices } from "../drizzle/schema";
 import { hashPin } from "./utils/pinHashing";
+import { revokePhonePinSessionsForWorker } from "./phonePinSessions";
 import { RoutingReasonValue } from '../shared/const';
 import { EDITABLE_ROUTE_STATUSES, DELETABLE_ROUTE_STATUSES, routeStatusGateMessage, routeDeleteGateMessage } from '../shared/constants/routes';
 import { OUTSTANDING_STATUSES } from '../shared/constants/invoice-status';
@@ -162,7 +163,14 @@ export async function updateWorker(id: number, data: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
+  // PIN rotation and worker deactivation immediately invalidate every issued
+  // phone/PIN session. Revoking first is safer than leaving an older credential
+  // usable if the subsequent worker update fails.
+  if (data.pin || (data.status !== undefined && data.status !== "active")) {
+    await revokePhonePinSessionsForWorker(id);
+  }
+
   // T35 (Rule #71): Hash PIN before writing to DB.
   // Only hash if a new PIN is being set; leave other fields unchanged.
   let dataToWrite: typeof data = data;

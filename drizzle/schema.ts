@@ -79,6 +79,20 @@ export const workers = mysqlTable("workers", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+/**
+ * Revocable, server-side session records for the phone/PIN worker flow.
+ * Raw tokens are never persisted; only a SHA-256 hash is stored.
+ */
+export const workerPhonePinSessions = mysqlTable("workerPhonePinSessions", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  workerId: int("workerId").notNull().references(() => workers.id),
+  tokenHash: varchar("tokenHash", { length: 64 }).notNull(),
+  issuedAt: timestamp("issuedAt").defaultNow().notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  revokedAt: timestamp("revokedAt"),
+  lastUsedAt: timestamp("lastUsedAt").defaultNow().notNull(),
+});
+
 export const vehicles = mysqlTable("vehicles", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),

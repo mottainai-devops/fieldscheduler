@@ -85,6 +85,8 @@ jobs:
                 if (existing.length) { console.log(table + '.' + column + ' already exists, skipping'); }
                 else { await conn.execute(sql); console.log(table + '.' + column + ' added'); }
               }
+              await conn.execute("CREATE TABLE IF NOT EXISTS workerPhonePinSessions (id varchar(64) NOT NULL PRIMARY KEY, workerId int NOT NULL, tokenHash varchar(64) NOT NULL, issuedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, expiresAt timestamp NOT NULL, revokedAt timestamp NULL, lastUsedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY workerPhonePinSessions_workerId_idx (workerId), KEY workerPhonePinSessions_expiresAt_idx (expiresAt))");
+              console.log('workerPhonePinSessions ready');
               await conn.end();
             }).catch(e => { console.error(e.message); process.exit(1); });
           "
