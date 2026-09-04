@@ -64,32 +64,46 @@ jobs:
           cd /home/ubuntu/field-worker-scheduler
           echo "Running targeted database migrations..."
           # Inline idempotent migrations for the currently deployed schema.
-          # Uses node -e to avoid needing a script file on the server.
-          # The .env file on the server provides DATABASE_URL.
-          node -e "
-            const mysql = require('mysql2/promise');
-            require('dotenv').config();
+          # A quoted Node heredoc prevents the remote shell from interpreting
+          # SQL or JavaScript characters before Node executes the migration.
+          # The server-local .env provides DATABASE_URL.
+          node <<'NODE'
+          const mysql = require('mysql2/promise');
+          require('dotenv').config();
+
+          async function main() {
             const url = process.env.DATABASE_URL;
-            if (!url) { console.error('No DATABASE_URL'); process.exit(1); }
-            mysql.createConnection(url).then(async conn => {
-              const [rows] = await conn.execute(\"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='fieldManagerId'\");
-              if (rows.length) { console.log('fieldManagerId already exists, skipping'); }
-              else { await conn.execute(\"ALTER TABLE users ADD COLUMN fieldManagerId int NULL\"); console.log('fieldManagerId column added'); }
-              const additions = [
-                ['complianceViolations', 'evidenceKeys', 'ALTER TABLE complianceViolations ADD COLUMN evidenceKeys text NULL'],
-                ['paymentEvidence', 'fileKey', 'ALTER TABLE paymentEvidence ADD COLUMN fileKey varchar(1024) NULL'],
-                ['customerVisitNotes', 'photoStorageKey', 'ALTER TABLE customerVisitNotes ADD COLUMN photoStorageKey varchar(1024) NULL'],
-              ];
-              for (const [table, column, sql] of additions) {
-                const [existing] = await conn.execute('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [table, column]);
-                if (existing.length) { console.log(table + '.' + column + ' already exists, skipping'); }
-                else { await conn.execute(sql); console.log(table + '.' + column + ' added'); }
+            if (!url) throw new Error('No DATABASE_URL');
+            const conn = await mysql.createConnection(url);
+            const [rows] = await conn.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='fieldManagerId'");
+            if (rows.length) console.log('fieldManagerId already exists, skipping');
+            else {
+              await conn.execute('ALTER TABLE users ADD COLUMN fieldManagerId int NULL');
+              console.log('fieldManagerId column added');
+            }
+            const additions = [
+              ['complianceViolations', 'evidenceKeys', 'ALTER TABLE complianceViolations ADD COLUMN evidenceKeys text NULL'],
+              ['paymentEvidence', 'fileKey', 'ALTER TABLE paymentEvidence ADD COLUMN fileKey varchar(1024) NULL'],
+              ['customerVisitNotes', 'photoStorageKey', 'ALTER TABLE customerVisitNotes ADD COLUMN photoStorageKey varchar(1024) NULL'],
+            ];
+            for (const [table, column, sql] of additions) {
+              const [existing] = await conn.execute('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [table, column]);
+              if (existing.length) console.log(`${table}.${column} already exists, skipping`);
+              else {
+                await conn.execute(sql);
+                console.log(`${table}.${column} added`);
               }
-              await conn.execute("CREATE TABLE IF NOT EXISTS workerPhonePinSessions (id varchar(64) NOT NULL PRIMARY KEY, workerId int NOT NULL, tokenHash varchar(64) NOT NULL, issuedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, expiresAt timestamp NOT NULL, revokedAt timestamp NULL, lastUsedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY workerPhonePinSessions_workerId_idx (workerId), KEY workerPhonePinSessions_expiresAt_idx (expiresAt))");
-              console.log('workerPhonePinSessions ready');
-              await conn.end();
-            }).catch(e => { console.error(e.message); process.exit(1); });
-          "
+            }
+            await conn.execute('CREATE TABLE IF NOT EXISTS workerPhonePinSessions (id varchar(64) NOT NULL PRIMARY KEY, workerId int NOT NULL, tokenHash varchar(64) NOT NULL, issuedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, expiresAt timestamp NOT NULL, revokedAt timestamp NULL, lastUsedAt timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY workerPhonePinSessions_workerId_idx (workerId), KEY workerPhonePinSessions_expiresAt_idx (expiresAt))');
+            console.log('workerPhonePinSessions ready');
+            await conn.end();
+          }
+
+          main().catch(error => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
           echo "Migrations complete!"
           ENDSSH
 
