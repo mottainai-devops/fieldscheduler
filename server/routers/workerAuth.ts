@@ -28,6 +28,7 @@ import { isLockedOut, recordFailedAttempt, clearAttempts } from '../utils/rateLi
 import { getInsertedId } from '../utils/mobileMutationEnvelope';
 import { issuePhonePinSession } from '../phonePinSessions';
 import { requireActiveSupervisorMapping } from '../supervisorLoginGuard';
+import { buildSurveyAssignedLots } from '../surveyAssignedLots';
 
 export const workerAuthRouter = router({
   // Login with email and PIN
@@ -458,66 +459,7 @@ export const workerAuthRouter = router({
       // Each lot: { lotCode, lotName, companyName }
       // C1/C2/C3/D5: Enrich each lot with paytWebhook + monthlyWebhook from admin dashboard
       // so the client can resolve webhook URLs from the local cache without hitting the admin API at pickup time.
-      const rawLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
-        Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
-
-      const ADMIN_API = process.env.ADMIN_DASHBOARD_URL || "https://admin.kowope.xyz";
-
-      // C1/C2/C3/D5: Enrich assignedLots with paytWebhook + monthlyWebhook + lotId + lotNumber
-      // from admin dashboard lots.list.
-      //
-      // Strategy: call lots.list ONCE with companyId (from surveyUser.companyId) and a high
-      // limit so all company lots are returned in a single round-trip. Build a Map<lotCode, lot>
-      // and look up each assigned lot in it. This avoids N per-lot requests and bypasses the
-      // User.findById() lookup that fails for Survey App users not in the admin dashboard
-      // users collection.
-      //
-      // TODO(security): Passing companyId as service-to-service auth is interim.
-      // Long-term this should be a service-level shared secret or signed JWT
-      // (e.g. ADMIN_DASHBOARD_SERVICE_TOKEN env var) so the FieldScheduler server
-      // can authenticate against admin-dashboard endpoints without relying on user-level IDs.
-      const surveyCompanyId = String(surveyUser.companyId || "");
-
-      // Build a map of all lots for this company from a single lots.list call
-      const adminLotMap = new Map<string, any>();
-      if (surveyCompanyId) {
-        try {
-          const res = await fetch(
-            `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { companyId: surveyCompanyId, page: 1, limit: 200 } } }))}`,
-            { signal: AbortSignal.timeout(8000) }
-          );
-          if (res.ok) {
-            const data = await res.json() as any;
-            const adminLots: any[] = data?.[0]?.result?.data?.json?.lots ?? [];
-            for (const l of adminLots) {
-              if (l.lotCode) adminLotMap.set(l.lotCode, l);
-            }
-          }
-        } catch {
-          // Admin dashboard unreachable — lots will be enriched with null webhooks
-        }
-      }
-
-      const assignedLots: Array<{
-        lotCode: string;
-        lotName: string;
-        companyName: string | null;
-        paytWebhook: string | null;
-        monthlyWebhook: string | null;
-        lotId: number | null;
-        lotNumber: number | null;
-      }> = rawLots.map((lot) => {
-        const match = adminLotMap.get(lot.lotCode);
-        return {
-          ...lot,
-          paytWebhook: match?.paytWebhook ?? null,
-          monthlyWebhook: match?.monthlyWebhook ?? null,
-          // Tranche 1 carry-forward: include lotId + lotNumber so the
-          // login-seeded cache matches the getAssignedLots refresh shape.
-          lotId: match?.id ?? null,
-          lotNumber: match?.lotNumber ?? null,
-        };
-      });
+      const assignedLots = await buildSurveyAssignedLots(surveyUser);
 
       return {
         success: true,
@@ -1103,62 +1045,7 @@ export const workerAuthRouter = router({
         throw new Error(err?.message || "Failed to fetch Survey App user");
       }
 
-      const rawLots: Array<{ lotCode: string; lotName: string; companyName: string | null }> =
-        Array.isArray(surveyUser.assignedLots) ? surveyUser.assignedLots : [];
-
-      // Enrich assignedLots with paytWebhook + monthlyWebhook + lotId + lotNumber
-      // from admin dashboard lots.list.
-      //
-      // Strategy: call lots.list ONCE with companyId (from surveyUser.companyId) and a high
-      // limit so all company lots are returned in a single round-trip. Build a Map<lotCode, lot>
-      // and look up each assigned lot in it. This avoids N per-lot requests and bypasses the
-      // User.findById() lookup that fails for Survey App users not in the admin dashboard
-      // users collection.
-      //
-      // TODO(security): Passing companyId as service-to-service auth is interim.
-      // Long-term this should be a service-level shared secret or signed JWT
-      // (e.g. ADMIN_DASHBOARD_SERVICE_TOKEN env var) so the FieldScheduler server
-      // can authenticate against admin-dashboard endpoints without relying on user-level IDs.
-      const surveyCompanyId = String(surveyUser.companyId || "");
-
-      // Build a map of all lots for this company from a single lots.list call
-      const adminLotMap = new Map<string, any>();
-      if (surveyCompanyId) {
-        try {
-          const res = await fetch(
-            `${ADMIN_API}/api/trpc/lots.list?batch=1&input=${encodeURIComponent(JSON.stringify({ "0": { json: { companyId: surveyCompanyId, page: 1, limit: 200 } } }))}`,
-            { signal: AbortSignal.timeout(8000) }
-          );
-          if (res.ok) {
-            const data = await res.json() as any;
-            const adminLots: any[] = data?.[0]?.result?.data?.json?.lots ?? [];
-            for (const l of adminLots) {
-              if (l.lotCode) adminLotMap.set(l.lotCode, l);
-            }
-          }
-        } catch {
-          // Admin dashboard unreachable — lots will be enriched with null webhooks
-        }
-      }
-
-      const assignedLots: Array<{
-        lotCode: string;
-        lotName: string;
-        companyName: string | null;
-        paytWebhook: string | null;
-        monthlyWebhook: string | null;
-        lotId: number | null;
-        lotNumber: number | null;
-      }> = rawLots.map((lot) => {
-        const match = adminLotMap.get(lot.lotCode);
-        return {
-          ...lot,
-          paytWebhook: match?.paytWebhook ?? null,
-          monthlyWebhook: match?.monthlyWebhook ?? null,
-          lotId: match?.id ?? null,
-          lotNumber: match?.lotNumber ?? null,
-        };
-      });
+      const assignedLots = await buildSurveyAssignedLots(surveyUser);
 
       return { assignedLots };
     }),
